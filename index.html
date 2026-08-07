@@ -580,6 +580,20 @@
             .morph-pulse { transform: none !important; filter: none !important; }
             body.edit-mode .app-icon-wrapper .jiggle-target { animation: none !important; }
         }
+
+        /* Same collapse, driven by the user's own Settings -> Animations switch rather than the
+           OS preference. Deliberately duplicated instead of being folded into the media query:
+           a media query cannot be turned on by a class, and the two need to work independently —
+           the OS rule must still apply before any JS runs, and the user's choice must be able to
+           switch motion off on a device that never asked for reduced motion. */
+        body.no-motion *, body.no-motion *::before, body.no-motion *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+            scroll-behavior: auto !important;
+        }
+        body.no-motion .morph-pulse { transform: none !important; filter: none !important; }
+        body.no-motion.edit-mode .app-icon-wrapper .jiggle-target { animation: none !important; }
     </style>
 </head>
 <body class="w-full h-full text-white relative transition-colors duration-300">
@@ -696,6 +710,33 @@
                 <button id="btn-reset-wallpaper" class="w-full py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 active:scale-[0.98] rounded-xl flex items-center justify-center gap-2 font-medium transition-all hidden">
                     <i data-lucide="trash-2" class="w-5 h-5"></i> Reset Wallpaper
                 </button>
+            </div>
+            <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
+                <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Feedback &amp; Motion</div>
+                <div class="flex items-center justify-between pl-1 cursor-pointer" onclick="document.getElementById('haptics-toggle').click()">
+                    <div class="flex flex-col">
+                        <span class="text-white font-medium text-sm">Vibration</span>
+                        <span class="text-gray-500 text-[10.5px] leading-tight">Haptic feedback on taps and drags</span>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer pointer-events-none">
+                      <input type="checkbox" id="haptics-toggle" class="sr-only peer">
+                      <div class="apple-toggle-bg w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:bg-green-500 transition-colors duration-300">
+                          <div class="apple-toggle-knob absolute top-[2px] left-[2px] bg-white rounded-full h-5 w-5 shadow-sm peer-checked:translate-x-[20px]"></div>
+                      </div>
+                    </label>
+                </div>
+                <div class="flex items-center justify-between pl-1 cursor-pointer" onclick="document.getElementById('animations-toggle').click()">
+                    <div class="flex flex-col">
+                        <span class="text-white font-medium text-sm">Animations</span>
+                        <span class="text-gray-500 text-[10.5px] leading-tight">Icon jiggle, spring modals and screen transitions</span>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer pointer-events-none">
+                      <input type="checkbox" id="animations-toggle" class="sr-only peer">
+                      <div class="apple-toggle-bg w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:bg-green-500 transition-colors duration-300">
+                          <div class="apple-toggle-knob absolute top-[2px] left-[2px] bg-white rounded-full h-5 w-5 shadow-sm peer-checked:translate-x-[20px]"></div>
+                      </div>
+                    </label>
+                </div>
             </div>
             <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
                 <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Interface Style</div>
@@ -944,6 +985,14 @@
          *    run. Boot went from ~25s (eight doomed CDN requests) to near-instant, and the test
          *    suite from 3.2min to ~20s. See HARD RULE 8.
          *  - Skins "glass" and "soft" (Phase 1, 2 of 4): see the skin notes below.
+         *  - Feedback & Motion (Settings): Vibration and Animations switches. Every haptic in
+         *    the app routes through one window.haptic() gate — a dozen call sites did their own
+         *    `if (navigator.vibrate)`, and any new one that skips the helper silently ignores the
+         *    user's setting. Animations off adds body.no-motion, which mirrors the
+         *    prefers-reduced-motion block; both exist because a media query cannot be switched on
+         *    by a class, and the OS rule must still apply before any JS runs. Both settings sync.
+         *  - Tap targets meet 44x44 (Apple HIG) and prefers-reduced-motion is honoured; audited
+         *    by measuring the rendered app, and both pinned by tests.
          *  - Accent contrast: OSThemeManager.contrastTextFor() now measures real WCAG 2.1
          *    relative luminance instead of a YIQ brightness cutoff. Measured across the restored
          *    palette this took accents meeting AA for normal text from 2234/2704 to 2576/2704.
@@ -1051,6 +1100,7 @@
         const DEFAULT_STATE = {
             currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: false,
             gridSize: 'auto', wallpaper: null, skin: 'dock', accent: '#3b82f6',
+            haptics: true, animations: true,
             apps: [
                 { id: 'bc_1', title: 'My WiFi', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'WIFI:S:MyNetwork;T:WPA;P:Password;;' },
                 { id: 'bc_2', title: 'Website', type: 'grid', page: 0, order: 1, bcid: 'azteccode', data: 'https://neodrag.dev' },
@@ -1074,6 +1124,8 @@
             if(!window.OS_STATE.gridSize) window.OS_STATE.gridSize = 'auto';
             if(!window.OS_STATE.skin) window.OS_STATE.skin = 'dock';
             if(!window.OS_STATE.accent) window.OS_STATE.accent = '#3b82f6';
+            if(window.OS_STATE.haptics === undefined) window.OS_STATE.haptics = true;
+            if(window.OS_STATE.animations === undefined) window.OS_STATE.animations = true;
             
             window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== 'sys_settings');
             
@@ -1099,6 +1151,22 @@
             error: (msg, e) => console.error(`[XanOS ERROR] ${msg}`, e)
         };
         
+        // Single gate for every haptic in the app (Settings -> Vibration). There are a dozen
+        // call sites; without one helper, each new one silently bypasses the user's setting —
+        // which is exactly how a preference ends up half-respected.
+        window.haptic = function(pattern) {
+            if (!window.OS_STATE || window.OS_STATE.haptics === false) return;
+            try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) {}
+        };
+
+        // Motion is off when the user turns it off OR the OS asks for reduced motion. The CSS
+        // handles the OS case on its own so it still works before this runs; this adds the
+        // user's explicit choice on top.
+        window.applyMotionPreference = function() {
+            const off = window.OS_STATE && window.OS_STATE.animations === false;
+            document.body.classList.toggle('no-motion', !!off);
+        };
+
         window.showToast = function(message, type = 'success') {
             const toast = document.createElement('div');
             toast.className = 'fixed top-16 left-1/2 -translate-x-1/2 bg-[#1c1c1e]/95 text-white px-6 py-3 rounded-full shadow-2xl backdrop-blur-md z-[400] transition-all duration-300 transform -translate-y-4 opacity-0 font-semibold text-sm flex items-center gap-2 border border-white/10';
@@ -1528,7 +1596,7 @@
             
             openSearch() {
                 this.isSearchActive = true;
-                if(navigator.vibrate) navigator.vibrate(15);
+                haptic(15);
                 this.workspace.classList.add('search-active-workspace');
                 this.workspace.style.transform = '';
                 this.workspace.style.filter = '';
@@ -1650,7 +1718,7 @@
                 this.draggedEl.style.transform = `translate3d(${this.currentX - this.offsetX}px, ${this.currentY - this.offsetY}px, 0) scale(1.15)`;
                 this.draggedEl.style.pointerEvents = 'none';
                 
-                if (navigator.vibrate) navigator.vibrate(15);
+                haptic(15);
             }
 
             onPointerMove(e) {
@@ -2320,7 +2388,7 @@
                         window.showToast("Flashlight not supported on this lens.");
                         return;
                     }
-                    if (navigator.vibrate) navigator.vibrate(10);
+                    haptic(10);
                     this.flashOn = !this.flashOn;
                     await this.html5Qrcode.applyVideoConstraints({ advanced: [{ torch: this.flashOn }] });
                     this.updateFlashUI();
@@ -2499,7 +2567,7 @@
             }
 
             handleSuccess(data, format) {
-                if(navigator.vibrate) navigator.vibrate([40, 60, 40]);
+                haptic([40, 60, 40]);
 
                 this.stopCamera();
                 this.currentResult = data;
@@ -2634,8 +2702,28 @@
                 this.autoArrangeToggle.addEventListener('change', (e) => {
                     window.OS_STATE.autoArrange = e.target.checked;
                     saveState();
-                    if (navigator.vibrate) navigator.vibrate(10);
+                    haptic(10);
                     window.Renderer.render();
+                });
+
+                // Feedback & Motion. Both persist the instant they change (HARD RULE 3).
+                this.hapticsToggle = document.getElementById('haptics-toggle');
+                this.hapticsToggle.checked = window.OS_STATE.haptics !== false;
+                this.hapticsToggle.addEventListener('change', (e) => {
+                    window.OS_STATE.haptics = e.target.checked;
+                    saveState();
+                    // Fire one buzz on enable so the setting confirms itself. Ordering matters:
+                    // state is written first, so haptic() sees the new value.
+                    haptic(12);
+                });
+
+                this.animationsToggle = document.getElementById('animations-toggle');
+                this.animationsToggle.checked = window.OS_STATE.animations !== false;
+                this.animationsToggle.addEventListener('change', (e) => {
+                    window.OS_STATE.animations = e.target.checked;
+                    saveState();
+                    window.applyMotionPreference();
+                    haptic(10);
                 });
 
                 this.wallpaperInput.addEventListener('change', (e) => this.handleWallpaperUpload(e));
@@ -2670,7 +2758,7 @@
                 window.OS_STATE.gridSize = size;
                 saveState();
                 this.syncGridButtonsUI();
-                if (navigator.vibrate) navigator.vibrate(10);
+                haptic(10);
                 window.Layout.calculateGrid();
             }
 
@@ -2834,7 +2922,7 @@
                     pressTimer = setTimeout(() => {
                         longPressed = true;
                         this.toggleFavorite(pinnedHex || this.current);
-                        if (navigator.vibrate) navigator.vibrate(30);
+                        haptic(30);
                     }, 550);
                 };
                 const cancelPress = () => { if (pressTimer) clearTimeout(pressTimer); };
@@ -2858,7 +2946,7 @@
                     const pool = candidates.length ? candidates : quad;
                     hex = pool[Math.floor(Math.random() * pool.length)];
                 }
-                if (navigator.vibrate) navigator.vibrate(10);
+                haptic(10);
                 this.applyAccent(hex, true);
                 this.syncActiveRings();
             }
@@ -2964,7 +3052,7 @@
                 this.current = id;
                 window.OS_STATE.skin = id;
                 saveState();
-                if (navigator.vibrate) navigator.vibrate(15);
+                haptic(15);
 
                 const workspace = document.getElementById('workspace-container');
                 document.body.classList.add('skin-morphing');
@@ -3083,6 +3171,18 @@
                 if (data.autoArrange !== undefined) window.OS_STATE.autoArrange = data.autoArrange;
                 if (data.skin) { window.OS_STATE.skin = data.skin; if (window.SkinManager) { window.SkinManager.current = data.skin; document.body.setAttribute('data-skin', data.skin); window.SkinManager.render(); } }
                 if (data.accent) { window.OS_STATE.accent = data.accent; if (window.ThemeManager) { window.ThemeManager.applyAccent(data.accent, false); window.ThemeManager.render(); } }
+                // Feedback & Motion sync too, so a device you set up carries its preferences over.
+                // Compared against undefined, not truthiness — these are booleans, and `false` is
+                // a real value a plain `if (data.haptics)` would silently drop.
+                if (data.haptics !== undefined) {
+                    window.OS_STATE.haptics = data.haptics;
+                    if (window.SettingsManager) window.SettingsManager.hapticsToggle.checked = data.haptics !== false;
+                }
+                if (data.animations !== undefined) {
+                    window.OS_STATE.animations = data.animations;
+                    if (window.SettingsManager) window.SettingsManager.animationsToggle.checked = data.animations !== false;
+                    window.applyMotionPreference();
+                }
                 saveState();
                 window.Renderer.render();
                 if (window.Layout) window.Layout.calculateGrid();
@@ -3248,7 +3348,7 @@
                         this.sort = btn.dataset.sort;
                         this.sortRow.querySelectorAll('.library-sort-btn')
                             .forEach(b => b.classList.toggle('active', b === btn));
-                        if (navigator.vibrate) navigator.vibrate(8);
+                        haptic(8);
                         this.renderList();
                     });
                 });
@@ -3389,6 +3489,7 @@
         window.InteractionManager = new OSInteractionManager();
         window.CodeGenerator = new OSCodeGenerator();
         window.ScannerEngine = new OSScannerEngine();
+        window.applyMotionPreference();
         window.SettingsManager = new OSSettingsManager();
         window.LibraryManager = new OSLibraryManager();
         window.SkinManager = new OSSkinManager();
@@ -3413,7 +3514,7 @@
             pressTimer = setTimeout(() => {
                 window.OS_STATE.isEditMode = true;
                 document.body.classList.add('edit-mode');
-                if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
+                haptic([10, 30, 10]);
                 window.Renderer.render(); 
             }, 600);
         };

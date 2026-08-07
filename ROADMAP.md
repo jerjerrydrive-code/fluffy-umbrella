@@ -24,7 +24,7 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 30 passing in ~30s):
+Built and covered by the regression suite (`npm test`, 32 passing in ~40s):
 
 | Area | State |
 |---|---|
@@ -34,6 +34,7 @@ Built and covered by the regression suite (`npm test`, 30 passing in ~30s):
 | Library | Browse-all view: filter + sort by Recent / Name / Format |
 | Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin, WCAG-measured accent text |
 | Skins | `dock` (default), `scancard`, `glass`, `soft` — layered over one DOM via `OSSkinManager` |
+| Settings | Grid density, auto-arrange, wallpaper, accent, skin, **Vibration & Animations switches** |
 | Platform | Installable PWA, **fully self-contained** (no CDN needed to render), Firebase cloud sync (strictly optional) |
 
 The foundation is done. Everything below is building **on** it — never forking it (HARD RULE 5).

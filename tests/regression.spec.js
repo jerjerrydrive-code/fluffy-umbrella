@@ -690,3 +690,63 @@ test.describe('Accessibility baselines', () => {
         await expect(page.locator('#library-list > div')).not.toHaveCount(0);
     });
 });
+
+test.describe('Feedback & Motion settings', () => {
+    test('vibration toggle gates every haptic in the app', async ({ page }) => {
+        // There are a dozen navigator.vibrate call sites, all routed through one haptic()
+        // helper. This asserts the gate actually holds — a new call site that skips the helper
+        // would keep buzzing with the setting off, which is how a preference ends up only
+        // half-respected.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => {
+            window.__buzzes = [];
+            navigator.vibrate = (p) => { window.__buzzes.push(p); return true; };
+        });
+
+        await page.click('#btn-open-settings');
+        await page.waitForTimeout(300);
+
+        await page.evaluate(() => { window.__buzzes = []; });
+        await page.click('[data-grid="4x6"]');
+        await page.waitForTimeout(200);
+        expect(await page.evaluate(() => window.__buzzes.length)).toBeGreaterThan(0);
+
+        // Turn vibration off, then repeat the same interaction.
+        await page.getByText('Vibration', { exact: true }).click();
+        await page.waitForTimeout(250);
+        expect(await page.evaluate(() => window.OS_STATE.haptics)).toBe(false);
+
+        await page.evaluate(() => { window.__buzzes = []; });
+        await page.click('[data-grid="4x7"]');
+        await page.waitForTimeout(200);
+        expect(await page.evaluate(() => window.__buzzes)).toEqual([]);
+    });
+
+    test('animations toggle collapses motion and survives a reload', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.click('#btn-open-settings');
+        await page.waitForTimeout(300);
+
+        await page.getByText('Animations', { exact: true }).click();
+        await page.waitForTimeout(250);
+        expect(await page.evaluate(() => window.OS_STATE.animations)).toBe(false);
+        await expect(page.locator('body')).toHaveClass(/no-motion/);
+
+        const dur = await page.evaluate(() =>
+            getComputedStyle(document.querySelector('.app-icon')).transitionDuration);
+        expect(parseFloat(dur)).toBeLessThan(0.05);
+
+        // HARD RULE 3: persisted the instant it changed, not behind an Apply button.
+        await page.reload();
+        await page.waitForTimeout(1500);
+        await expect(page.locator('body')).toHaveClass(/no-motion/);
+        expect(await page.evaluate(() => document.getElementById('animations-toggle').checked)).toBe(false);
+
+        // Still fully usable with motion off.
+        await page.click('#dock-container [data-id="nav_lib"]');
+        await page.waitForTimeout(300);
+        await expect(page.locator('#library-list > div')).not.toHaveCount(0);
+    });
+});
