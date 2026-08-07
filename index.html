@@ -251,6 +251,101 @@
         .stat-row-label { display: flex; align-items: center; gap: 0.55rem; color: #6b7280; font-size: 0.8rem; font-weight: 600; }
         .stat-row-value { color: #111827; font-weight: 700; font-size: 0.85rem; }
 
+        /* ---------- SKIN: "glass" (glassmorphism) ----------
+           Frosted translucent surfaces over a soft ambient colour field.
+           Every tint is derived from var(--accent) via color-mix rather than the
+           reference's hardcoded lavender, so the skin supplies the MATERIAL and the
+           user's chosen accent supplies the HUE (HARD RULE 7) — glass reads as ScanIT's
+           lavender on a purple accent and as something else entirely on a teal one.
+
+           Deliberate exception: the white plate behind a barcode stays opaque. A code
+           rendered on a translucent surface can fail to scan, and scannability is
+           functional, not decorative. The frosted world surrounds the code; it never
+           covers it. */
+        body[data-skin="glass"]::before {
+            content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+            background:
+                radial-gradient(120% 80% at 15% 0%, color-mix(in srgb, var(--accent) 55%, transparent) 0%, transparent 60%),
+                radial-gradient(100% 70% at 95% 15%, color-mix(in srgb, var(--accent) 30%, #7fd8e8) 0%, transparent 55%),
+                radial-gradient(130% 90% at 50% 105%, color-mix(in srgb, var(--accent) 40%, #ffffff) 0%, transparent 65%),
+                linear-gradient(160deg, rgba(233,232,255,0.55) 0%, rgba(214,240,246,0.45) 100%);
+            backdrop-filter: blur(60px) saturate(150%);
+            -webkit-backdrop-filter: blur(60px) saturate(150%);
+        }
+
+        body[data-skin="glass"] .ios-glass {
+            background: color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.42));
+            backdrop-filter: blur(40px) saturate(200%);
+            -webkit-backdrop-filter: blur(40px) saturate(200%);
+            border: 1px solid rgba(255, 255, 255, 0.55);
+            box-shadow: 0 12px 40px -8px color-mix(in srgb, var(--accent) 35%, transparent),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.6);
+        }
+
+        body[data-skin="glass"] #os-header button {
+            background: rgba(255, 255, 255, 0.35);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+
+        /* Accent-tinted halo around each code tile — the plate itself stays opaque. */
+        body[data-skin="glass"] .app-icon {
+            box-shadow: 0 6px 20px -4px color-mix(in srgb, var(--accent) 45%, transparent),
+                        0 0 0 1px rgba(255, 255, 255, 0.45);
+        }
+        body[data-skin="glass"] .app-label {
+            text-shadow: 0 1px 3px rgba(60, 50, 90, 0.55), 0 2px 10px rgba(60, 50, 90, 0.35);
+        }
+        body[data-skin="glass"] .pagination-dot { background: rgba(255, 255, 255, 0.6); }
+
+        /* Overlays and panels: frosted, accent-tinted, light. */
+        body[data-skin="glass"] #library-overlay,
+        body[data-skin="glass"] #item-fullscreen-layer {
+            background: color-mix(in srgb, var(--accent) 18%, rgba(255, 255, 255, 0.72));
+            backdrop-filter: blur(40px) saturate(200%);
+            -webkit-backdrop-filter: blur(40px) saturate(200%);
+        }
+        body[data-skin="glass"] #library-overlay .bg-white\/10,
+        body[data-skin="glass"] #library-list > div {
+            background: rgba(255, 255, 255, 0.5);
+            border-color: rgba(255, 255, 255, 0.65);
+        }
+        body[data-skin="glass"] #library-overlay h2,
+        body[data-skin="glass"] #library-list h4 { color: #241f3d; }
+        body[data-skin="glass"] #library-overlay #library-count,
+        body[data-skin="glass"] #library-list p { color: rgba(36, 31, 61, 0.6); }
+        body[data-skin="glass"] #library-search { color: #241f3d; }
+        body[data-skin="glass"] #library-search::placeholder { color: rgba(36, 31, 61, 0.45); }
+        body[data-skin="glass"] #btn-close-library {
+            background: rgba(255, 255, 255, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.7);
+        }
+        body[data-skin="glass"] #btn-close-library i { color: #241f3d; }
+        body[data-skin="glass"] .library-sort-btn {
+            background: rgba(255, 255, 255, 0.45);
+            color: rgba(36, 31, 61, 0.65);
+        }
+        body[data-skin="glass"] .library-sort-btn.active {
+            background: color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.6));
+            color: color-mix(in srgb, var(--accent) 75%, #241f3d);
+        }
+
+        body[data-skin="glass"] #settings-panel,
+        body[data-skin="glass"] #account-panel {
+            background: color-mix(in srgb, var(--accent) 22%, rgba(28, 24, 48, 0.82));
+            backdrop-filter: blur(40px) saturate(200%);
+            -webkit-backdrop-filter: blur(40px) saturate(200%);
+            border: 1px solid rgba(255, 255, 255, 0.22);
+        }
+        body[data-skin="glass"] #create-panel,
+        body[data-skin="glass"] #rename-panel {
+            background: color-mix(in srgb, var(--accent) 10%, rgba(255, 255, 255, 0.88));
+            backdrop-filter: blur(40px) saturate(200%);
+            -webkit-backdrop-filter: blur(40px) saturate(200%);
+            border: 1px solid rgba(255, 255, 255, 0.7);
+        }
+
         /* Brief whole-app blur/scale pulse while a skin swap is committed underneath it */
         .morph-pulse { transform: scale(0.93) translateY(15px); filter: blur(12px) brightness(0.7); }
     </style>
@@ -629,8 +724,14 @@
          *  Immediately next (Phase 1 in ROADMAP.md) — the morphism skin family. Each is a
          *  SKINS entry + a body[data-skin="..."] CSS block, layered over the SAME DOM per
          *  HARD RULE 5. The scan-card skin is the template to follow:
-         *    - "glass"  — glassmorphism: lavender/aqua gradient field, frosted translucent
-         *      cards, soft purple accents (ScanIT reference).
+         *    - "glass"  — DONE. Glassmorphism: ambient colour field behind frosted translucent
+         *      chrome. Note how it handles colour, because the remaining three should copy it:
+         *      the skin supplies the MATERIAL and var(--accent) supplies the HUE, via
+         *      color-mix() on every tinted surface. Nothing in it is a hardcoded lavender, so
+         *      it re-tints with the user's theme instead of fighting it (HARD RULE 7), and a
+         *      test asserts exactly that. One deliberate exception: the white plate behind a
+         *      barcode stays OPAQUE — a code on a translucent surface can fail to scan, and
+         *      scannability is functional, not decorative.
          *    - "soft"   — neumorphism: near-white, dual-light extruded shadows, minimal chrome
          *      (white QR-scanner reference).
          *    - "aurora" — dark mesh/aurora gradient cards, high-contrast vivid blooms (AI OS
@@ -2505,7 +2606,8 @@
         // never fork the app itself.
         const SKINS = [
             { id: 'dock', label: 'iOS Dock', icon: 'layout-grid', description: 'The classic home-screen dock & pages layout.' },
-            { id: 'scancard', label: 'Scan Card', icon: 'credit-card', description: 'A clean result-card view for your codes.' }
+            { id: 'scancard', label: 'Scan Card', icon: 'credit-card', description: 'A clean result-card view for your codes.' },
+            { id: 'glass', label: 'Glass', icon: 'droplets', description: 'Frosted glass over an ambient colour field.' }
         ];
 
         class OSSkinManager {

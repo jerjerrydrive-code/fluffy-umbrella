@@ -48,7 +48,7 @@ same DOM and the same interaction contract. `scancard` is the template to copy.
 
 | Skin | Aesthetic | Reference |
 |---|---|---|
-| `glass` | Glassmorphism — lavender/aqua gradient field, frosted translucent cards, soft purple accents, 4-tab bottom bar | ScanIT |
+| `glass` ✅ | **Shipped.** Ambient colour field behind frosted translucent chrome. Tints entirely from `var(--accent)` via `color-mix()`, so it follows the user's theme rather than pinning the reference's lavender — the pattern the other three should copy | ScanIT |
 | `soft` | Neumorphism — near-white, dual-light extruded shadows, minimal chrome, one big tactile capture button | white QR-scanner |
 | `aurora` | Dark mesh/aurora gradients, vivid colour blooms behind high-contrast type | AI OS collage |
 | `classic` | **Polished original.** Not a new look — the current dock aesthetic with tightened spacing, type scale, shadow depth and corner radii | our own v2 |
@@ -201,8 +201,16 @@ being built.
 
 1. **Scope creep through skins.** Every new aesthetic tempts a DOM change. The moment a skin
    forks the structure we are back to the failure that destroyed the alpha. Skins are CSS.
-2. **CDN dependency.** Four external scripts at boot is both a performance and an offline
-   liability. Phase 5 self-hosts them; pull it earlier if it starts hurting.
+2. **CDN dependency — worse than it looks, and now measured.** In a network-restricted
+   environment every external request fails (`ERR_CONNECTION_RESET`): Tailwind, bwip-js, lucide,
+   html5-qrcode, the Unsplash wallpaper and Firebase. Tailwind failing is the severe one — it
+   carries essentially all the layout, so the app renders as unstyled scattered text. The
+   regression suite still passes, because it asserts behaviour and DOM rather than pixels, which
+   is exactly why this went unnoticed. Two consequences: the ~25s cold boot is the browser
+   waiting on eight doomed requests, and **"works offline" is currently only true for a warm
+   cache** — a genuinely cold offline load has nothing to render. This makes Phase 5's
+   self-hosting the highest-value item on the list; strongly consider pulling it forward ahead
+   of Phase 4.
 3. **The palette is irreplaceable.** The 338-theme string was lost once and recovered by luck.
    It is in git now and pinned by a test — never "tidy" it.
 4. **Store review friction.** Camera-permission apps get scrutinised. Budget a rejection round.

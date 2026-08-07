@@ -353,3 +353,58 @@ test.describe('Library (regression: nav_lib was a dead "coming soon" dock button
         await expect(page.locator('#library-list')).toContainText('<b>payload</b>');
     });
 });
+
+test.describe('Glass skin (Phase 1)', () => {
+    // The glass skin's whole design contract is that it supplies the *material* (frosted,
+    // translucent, ambient field) while the user's accent supplies the *hue* — every tint is a
+    // color-mix over var(--accent) rather than the reference's hardcoded lavender. If someone
+    // ever swaps one of those for a literal hex, the skin silently stops following the theme,
+    // which is HARD RULE 7's exact failure mode. These assertions catch that.
+    test('applies, and every tinted surface tracks the accent', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        await page.evaluate(() => window.SkinManager.setSkin('glass'));
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('glass');
+
+        const sample = () => page.evaluate(() => {
+            const field = getComputedStyle(document.body, '::before');
+            const dock = getComputedStyle(document.getElementById('main-dock'));
+            return {
+                fieldImage: field.backgroundImage,
+                fieldFilter: field.backdropFilter || field.webkitBackdropFilter,
+                dockBg: dock.backgroundColor,
+                dockFilter: dock.backdropFilter || dock.webkitBackdropFilter
+            };
+        });
+
+        const before = await sample();
+        // The ambient field and the frosted dock must actually be there.
+        expect(before.fieldImage).toContain('gradient');
+        expect(before.fieldFilter).toContain('blur');
+        expect(before.dockFilter).toContain('blur');
+
+        // Change the accent; the glass must re-tint with it.
+        await page.evaluate(() => window.ThemeManager.applyAccent('#E0432F', true));
+        await page.waitForTimeout(250);
+        const after = await sample();
+
+        expect(after.dockBg).not.toBe(before.dockBg);
+        expect(after.fieldImage).not.toBe(before.fieldImage);
+    });
+
+    test('switching to glass and back leaves the home screen intact', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        const iconsBefore = await page.locator('.app-icon-wrapper').count();
+
+        await page.evaluate(() => window.SkinManager.setSkin('glass'));
+        await page.waitForTimeout(600);
+        await page.evaluate(() => window.SkinManager.setSkin('dock'));
+        await page.waitForTimeout(600);
+
+        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('dock');
+        await expect(page.locator('.app-icon-wrapper')).toHaveCount(iconsBefore);
+    });
+});
