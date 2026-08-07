@@ -559,6 +559,15 @@
          *    48-theme set (192 reachable accents) — NOT the alpha's original ~400, which never
          *    fully survived; the original packedThemes string drops in verbatim if it turns up.
          *    Syncs through cloud (accent field) same as everything else in OS_STATE.
+         *  - Regression test suite (tests/regression.spec.js, Playwright): Stage 3 work. Every
+         *    fix above used to be verified once by hand with a throwaway script and then thrown
+         *    away — this is that verification made permanent. Run with `npm test` (needs
+         *    `npm install` first; `npx playwright install chromium` if you don't already have a
+         *    browser). Covers: the destroy() fix, the modal pointer-events fix, Settings (grid
+         *    size / skin switch / theme reroll+favorite), Quick Add (tab defaulting + WiFi
+         *    payload correctness), the scanner opening/closing without a camera, and — the
+         *    important one — that a *blocked* Firebase CDN request still leaves the entire rest
+         *    of the app fully working. All 10 passing as of this writing.
          *
          *  IN PROGRESS / NEXT UP
          *  --------------------------------------------------------------------------------
@@ -603,6 +612,10 @@
          *     .accent-border (or the CSS var(--accent) directly) — never a hardcoded blue-500
          *     or #hex literal. Hardcoding a color is exactly how the theme system silently stops
          *     covering part of the app.
+         *  8. When you fix a real bug or ship a real feature, add or update a test in
+         *     tests/regression.spec.js in the same change. That suite is the only thing standing
+         *     between "I tested this once by hand" and it silently breaking again next session —
+         *     don't let it go stale.
          * =====================================================================================
          */
 

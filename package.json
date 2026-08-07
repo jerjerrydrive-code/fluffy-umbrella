@@ -1,0 +1,19 @@
+{
+  "name": "xancode-os",
+  "private": true,
+  "version": "1.0.0",
+  "description": "XanCode OS — premium iOS-style home screen for scanning, generating, and organizing barcodes and QR codes. Single-file PWA (index.html); this package.json exists only to run its Playwright regression suite.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "serve": "node scripts/dev-server.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jerjerrydrive-code/fluffy-umbrella.git"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@playwright/test": "^1.56.1"
+  }
+}
