@@ -24,7 +24,7 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 32 passing in ~40s):
+Built and covered by the regression suite (`npm test`, 35 passing in ~35s):
 
 | Area | State |
 |---|---|
@@ -33,7 +33,7 @@ Built and covered by the regression suite (`npm test`, 32 passing in ~40s):
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, smart payload parsing |
 | Library | Browse-all view: filter + sort by Recent / Name / Format |
 | Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin, WCAG-measured accent text |
-| Skins | `dock` (default), `scancard`, `glass`, `soft` — layered over one DOM via `OSSkinManager` |
+| Skins | `dock` (default), `scancard`, `glass`, `soft`, `aurora` — layered over one DOM via `OSSkinManager` |
 | Settings | Grid density, auto-arrange, wallpaper, accent, skin, **Vibration & Animations switches** |
 | Platform | Installable PWA, **fully self-contained** (no CDN needed to render), Firebase cloud sync (strictly optional) |
 
@@ -51,7 +51,7 @@ same DOM and the same interaction contract. `scancard` is the template to copy.
 |---|---|---|
 | `glass` ✅ | **Shipped.** Ambient colour field behind frosted translucent chrome. Tints entirely from `var(--accent)` via `color-mix()`, so it follows the user's theme rather than pinning the reference's lavender — the pattern the other three should copy | ScanIT |
 | `soft` ✅ | **Shipped.** Neumorphism — surfaces the same colour as the ground, separated only by a two-light shadow pair. Covers the wallpaper (extruded shadows need a flat ground) and inverts text polarity, both of which `aurora` will need too | white QR-scanner |
-| `aurora` | Dark mesh/aurora gradients, vivid colour blooms behind high-contrast type | AI OS collage |
+| `aurora` ✅ | **Shipped.** Drifting colour blooms behind near-black glass. Keeps the native dark polarity, so no text inversion — the structural difference from `soft`. Blooms derive from `var(--accent)` against three fixed anchors, near-even so they stay distinguishable | AI OS collage |
 | `classic` | **Polished original.** Not a new look — the current dock aesthetic with tightened spacing, type scale, shadow depth and corner radii | our own v2 |
 
 ### Open decision — the polished *XanCode alpha*: skin or separate app?

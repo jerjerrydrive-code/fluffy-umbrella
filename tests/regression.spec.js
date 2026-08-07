@@ -750,3 +750,55 @@ test.describe('Feedback & Motion settings', () => {
         await expect(page.locator('#library-list > div')).not.toHaveCount(0);
     });
 });
+
+test.describe('Aurora skin (Phase 1)', () => {
+    const toAurora = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.SkinManager.setSkin('aurora'));
+        await page.waitForTimeout(700);
+    };
+
+    test('keeps the dark polarity — no text inversion, unlike soft', async ({ page }) => {
+        // The distinguishing property of this skin: its ground is dark, so the app's native
+        // white-on-dark text is already correct and must be left alone. If someone ever copies
+        // soft's polarity-flip block into aurora, labels go dark-on-dark and vanish.
+        await toAurora(page);
+        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('aurora');
+        const label = await page.evaluate(() =>
+            getComputedStyle(document.querySelector('.app-label')).color);
+        expect(label).toBe('rgb(255, 255, 255)');
+    });
+
+    test('the three blooms stay distinguishable and all retune with the accent', async ({ page }) => {
+        // Weighting the mixes toward the accent collapsed all three blooms to one hue and the
+        // field read as a flat wash instead of an aurora. Both halves matter: they must differ
+        // from each other, AND they must all move when the accent changes.
+        await toAurora(page);
+        const blooms = () => page.evaluate(() => {
+            const cs = getComputedStyle(document.body);
+            return ['--aur-bloom-a', '--aur-bloom-b', '--aur-bloom-c']
+                .map(v => cs.getPropertyValue(v).trim());
+        });
+
+        const before = await blooms();
+        expect(new Set(before).size, `blooms collapsed to one hue: ${before.join(' ')}`).toBe(3);
+
+        await page.evaluate(() => window.ThemeManager.applyAccent('#E0432F', true));
+        await page.waitForTimeout(300);
+        const after = await blooms();
+        expect(new Set(after).size).toBe(3);
+        after.forEach((c, i) => expect(c).not.toBe(before[i]));
+    });
+
+    test('the drifting field freezes under reduced motion', async ({ page }) => {
+        // The drift is decorative. It is covered by the global reduced-motion collapse rather
+        // than by its own rule, so this checks that coverage actually reaches a pseudo-element
+        // animation and not just element transitions.
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await toAurora(page);
+        const dur = await page.evaluate(() =>
+            getComputedStyle(document.body, '::before').animationDuration);
+        expect(parseFloat(dur)).toBeLessThan(0.05);
+    });
+});
