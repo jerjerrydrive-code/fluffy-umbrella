@@ -180,6 +180,44 @@
         #scanner-reader__scan_region, #scanner-reader__dashboard_section_csr, #scanner-reader__dashboard_section_swaplink,
         #scanner-reader__dashboard { display: none !important; }
         #scanner-reader canvas { display: none !important; }
+
+        /* ================= UI/UX SKIN SYSTEM =================
+           A "skin" restyles how a scanned/created code is presented without
+           touching the DOM structure, OS_STATE, or any interaction logic —
+           it is a pure CSS + attribute swap keyed off body[data-skin].
+           See OSSkinManager. Adding a new skin = adding a new
+           body[data-skin="..."] block below, nothing else. */
+        .fullscreen-badge { display: none; }
+        .fullscreen-stats { display: none; }
+
+        body[data-skin="scancard"] #fullscreen-item-data { display: none; }
+        body[data-skin="scancard"] .fullscreen-badge {
+            display: inline-flex; align-items: center; align-self: center;
+            margin-top: 1.1rem; padding: 0.3rem 0.9rem; border-radius: 999px;
+            background: #dbeafe; color: #1d4ed8; font-size: 0.7rem; font-weight: 800;
+            letter-spacing: 0.05em; text-transform: uppercase;
+        }
+        body[data-skin="scancard"] .fullscreen-stats {
+            display: flex; flex-direction: column; width: 100%; margin-top: 1.25rem;
+            background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 1.25rem; padding: 0.9rem 1.1rem;
+        }
+        body[data-skin="scancard"] .fullscreen-canvas-panel {
+            border-radius: 1.5rem;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+        }
+        body[data-skin="scancard"] .fullscreen-actions {
+            width: 100%; justify-content: space-between; gap: 0.75rem; margin-top: 1.5rem;
+        }
+        .stat-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0.6rem 0.1rem; border-bottom: 1px solid rgba(0,0,0,0.06);
+        }
+        .stat-row:last-child { border-bottom: none; }
+        .stat-row-label { display: flex; align-items: center; gap: 0.55rem; color: #6b7280; font-size: 0.8rem; font-weight: 600; }
+        .stat-row-value { color: #111827; font-weight: 700; font-size: 0.85rem; }
+
+        /* Brief whole-app blur/scale pulse while a skin swap is committed underneath it */
+        .morph-pulse { transform: scale(0.93) translateY(15px); filter: blur(12px) brightness(0.7); }
     </style>
 </head>
 <body class="w-full h-full text-white relative transition-colors duration-300">
@@ -191,7 +229,10 @@
                 --:--
             </div>
             
-            <div class="flex justify-end pointer-events-auto">
+            <div class="flex justify-end items-center gap-2 pointer-events-auto">
+                <button id="btn-open-account" class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md" title="Account & Cloud Sync">
+                    <i data-lucide="cloud" id="account-status-icon" class="w-[18px] h-[18px] text-white drop-shadow-md"></i>
+                </button>
                 <button id="btn-open-settings" class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md">
                     <i data-lucide="settings" class="w-[18px] h-[18px] text-white drop-shadow-md"></i>
                 </button>
@@ -260,6 +301,49 @@
                     <i data-lucide="trash-2" class="w-5 h-5"></i> Reset Wallpaper
                 </button>
             </div>
+            <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
+                <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Interface Style</div>
+                <div id="skin-picker" class="flex flex-col gap-2"></div>
+                <p class="text-[10px] text-gray-500 px-1 leading-relaxed">Changes how your codes are presented — your data and layout stay exactly where you left them.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="account-modal" class="modal-spring fixed inset-0 z-[160] bg-black/60 backdrop-blur-xl opacity-0 pointer-events-none flex items-center justify-center p-4">
+        <div class="bg-[#1c1c1e] border border-white/10 rounded-[2.5rem] p-6 w-full max-w-sm transform scale-90 shadow-2xl modal-spring flex flex-col gap-5" id="account-panel">
+            <div class="flex justify-between items-center px-2">
+                <h3 class="text-xl font-bold text-white tracking-tight">Account</h3>
+                <button id="btn-close-account" class="p-2 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all duration-300">
+                    <i data-lucide="x" class="w-5 h-5 text-white"></i>
+                </button>
+            </div>
+
+            <div id="account-guest-view" class="flex flex-col gap-3">
+                <p class="text-white/60 text-sm leading-relaxed px-1">You're browsing as a <strong class="text-white">Guest</strong>. Your codes are saved on this device only. Sign in with Google to back them up and sync across your devices.</p>
+                <button id="btn-google-signin" class="w-full bg-white text-gray-900 py-3.5 rounded-2xl font-bold flex items-center justify-center gap-3 active:scale-95 transition-all shadow-md">
+                    <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                    Sign in with Google
+                </button>
+                <p id="account-guest-error" class="text-red-400 text-xs text-center px-2 hidden"></p>
+            </div>
+
+            <div id="account-synced-view" class="hidden flex-col items-center gap-3">
+                <div class="w-16 h-16 rounded-full bg-blue-500 flex items-center justify-center text-white text-2xl font-bold overflow-hidden shrink-0">
+                    <img id="account-avatar" src="" class="w-full h-full object-cover hidden">
+                    <span id="account-initial" class="hidden"></span>
+                    <i data-lucide="user" id="account-icon-fallback" class="w-7 h-7"></i>
+                </div>
+                <div class="text-center">
+                    <p id="account-name" class="font-bold text-white text-lg truncate max-w-[220px]">User</p>
+                    <p id="account-email" class="text-white/50 text-sm truncate max-w-[220px]">email</p>
+                </div>
+                <div class="w-full bg-green-500/10 border border-green-500/20 text-green-400 text-xs font-bold uppercase tracking-wider py-2.5 rounded-xl flex items-center justify-center gap-2 mt-1">
+                    <i data-lucide="cloud-lightning" class="w-4 h-4"></i> Cloud Sync Active
+                </div>
+                <button id="btn-sign-out" class="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 py-3.5 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all mt-2">
+                    <i data-lucide="log-out" class="w-4 h-4"></i> Sign Out &amp; Reset Device
+                </button>
+            </div>
         </div>
     </div>
 
@@ -272,11 +356,13 @@
             <div class="w-12"></div>
         </div>
         <div class="flex-1 flex flex-col items-center justify-center p-8 pb-32 w-full max-w-lg mx-auto">
-            <div class="bg-white p-6 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.12)] w-full aspect-square flex items-center justify-center relative group transition-transform duration-500 hover:scale-[1.02] hover:shadow-[0_30px_60px_rgba(0,0,0,0.15)]">
+            <div class="fullscreen-canvas-panel bg-white p-6 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.12)] w-full aspect-square flex items-center justify-center relative group transition-all duration-500 hover:scale-[1.02] hover:shadow-[0_30px_60px_rgba(0,0,0,0.15)]">
                 <canvas id="fullscreen-canvas" class="max-w-full max-h-full pixelated transition-transform duration-300"></canvas>
             </div>
+            <div id="fullscreen-badge" class="fullscreen-badge"></div>
             <p id="fullscreen-item-data" class="mt-8 text-gray-500 font-mono text-sm text-center break-all w-full transition-opacity duration-300"></p>
-            <div class="flex gap-8 mt-12">
+            <div id="fullscreen-stats" class="fullscreen-stats"></div>
+            <div class="fullscreen-actions flex gap-8 mt-12">
                 <button id="btn-action-copy" class="flex flex-col items-center gap-2 text-gray-600 hover:text-black hover:-translate-y-1 active:scale-90 transition-all duration-300">
                     <div class="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center shadow-sm"><i data-lucide="copy" class="w-6 h-6"></i></div>
                     <span class="text-[11px] font-bold tracking-wide">COPY</span>
@@ -387,9 +473,82 @@
     </div>
 
     <script type="module">
+        /**
+         * =====================================================================================
+         *  XANCODE OS — MASTER ROADMAP & ARCHITECTURE LEDGER
+         * =====================================================================================
+         *  This block is the single source of truth for what this project is, what's already
+         *  built, and what's next. Keep it current on every real change. It exists because this
+         *  project was previously rebuilt from scratch after a prior session mixed an old UI
+         *  paradigm into a new one mid-stream and lost most of the working code in the process.
+         *  A session picking this file back up (human or AI) should be able to read this block
+         *  alone and know exactly where things stand — never rediscover it from scratch, never
+         *  guess, never quietly reintroduce a fixed bug.
+         *
+         *  COMPLETED
+         *  --------------------------------------------------------------------------------
+         *  - Home-screen shell: paged icon grid, floating dock, physics-based drag reorder
+         *    (PhysicsDragEngine — pointer events, not the HTML5 DnD API), swipe-down search,
+         *    Settings (grid density, auto-arrange, wallpaper, interface skin picker).
+         *  - Code Generator + item viewer (OSInteractionManager): enlarge/copy/save-png/rename.
+         *  - Scanner Engine (OSScannerEngine): Html5Qrcode-based — multi-camera enumeration +
+         *    lens switching, continuous autofocus, zoom, torch, 4K-with-1080p-fallback video
+         *    constraints, tab-visibility pause/resume — plus smart result parsing that offers
+         *    a contextual action for URL / WiFi / email / phone payloads.
+         *  - PWA: manifest.json + sw.js (stale-while-revalidate), custom app icon, installable,
+         *    works offline after first load, locked to portrait.
+         *  - Cloud Sync (OSCloudSyncManager): Google sign-in via Firebase Auth, Firestore mirrors
+         *    a single per-account state document. Strictly optional — see HARD RULES below.
+         *  - UI/UX Skin System (OSSkinManager): body[data-skin] swaps how a code is *presented*
+         *    (currently: "dock" default, "scancard" — a result-card style pulling its visual
+         *    language from nutrition-scanner-app references) without touching OS_STATE, the DOM
+         *    structure, or any interaction logic. Switching skins is a CSS/attribute change with
+         *    a brief blur/scale morph pulse, not a rebuild.
+         *
+         *  IN PROGRESS / NEXT UP
+         *  --------------------------------------------------------------------------------
+         *  - More skins: port the remaining reference screenshots (e.g. the wireframe
+         *    "History / Create / Scan" tab-style generator) into additional SKINS entries +
+         *    body[data-skin="..."] CSS blocks. The scan-card skin is the template to follow.
+         *  - WiFi quick-add flow (currently: generic Create Code form only, user hand-types the
+         *    WIFI:S:...;T:...;P:...;; string).
+         *  - Library / browse-all-codes view (search overlay covers ad-hoc lookup today, not
+         *    a dedicated browsable list).
+         *
+         *  HARD RULES — violating these is exactly how this project broke last time
+         *  --------------------------------------------------------------------------------
+         *  1. localStorage is always the source of truth first. Firestore is a mirror, never a
+         *     dependency — if auth/Firestore fails for any reason, the app must keep working
+         *     exactly as if cloud sync didn't exist. Never gate a feature on being signed in.
+         *     CRITICAL: the Firebase SDKs are loaded with a dynamic `import()` *inside*
+         *     OSCloudSyncManager.init(), wrapped in try/catch — never hoist these back to a
+         *     static top-of-module `import`. A static import is all-or-nothing: if that one
+         *     CDN request fails (offline, ad-blocker, firewall — exactly the situation the
+         *     offline PWA support exists for), the ENTIRE module fails to evaluate and the
+         *     whole app renders nothing, not just cloud sync. Confirmed by testing offline
+         *     before this was caught: 0 icons rendered, OS_STATE undefined, total blank app.
+         *  2. On sign-out: detach every Firestore listener BEFORE calling signOut() (calling
+         *     signOut() first causes permission-denied races on in-flight listeners), THEN wipe
+         *     local state completely before signing back in as guest — otherwise account B
+         *     inherits account A's data. (This is the exact bug the alpha shipped with.)
+         *  3. Every settings toggle persists to localStorage the instant it changes — never gate
+         *     persistence behind a separate "Apply" button. Gating persistence behind an explicit
+         *     save action is exactly how "my auto-fit setting keeps turning off on refresh" bugs
+         *     happen.
+         *  4. Wallpaper is device-local only, deliberately excluded from the synced Firestore
+         *     document — a base64 image can blow past Firestore's 1MiB per-document cap.
+         *  5. Alternate UI styles are SKINS layered over the SAME state/DOM/interaction contract
+         *     via OSSkinManager — never a second parallel copy of the app, and never a fork of
+         *     this file's structure. That is literally how the old alpha and the new UI got
+         *     mixed together and destroyed each other before.
+         *  6. Aztec Code is the default barcode format everywhere a format picker defaults to
+         *     something. Do not silently change this default.
+         * =====================================================================================
+         */
+
         const DEFAULT_STATE = {
             currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: false,
-            gridSize: 'auto', wallpaper: null,
+            gridSize: 'auto', wallpaper: null, skin: 'dock',
             apps: [
                 { id: 'bc_1', title: 'My WiFi', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'WIFI:S:MyNetwork;T:WPA;P:Password;;' },
                 { id: 'bc_2', title: 'Website', type: 'grid', page: 0, order: 1, bcid: 'azteccode', data: 'https://neodrag.dev' },
@@ -408,9 +567,10 @@
             window.OS_STATE = saved ? JSON.parse(saved) : DEFAULT_STATE;
             if(!window.OS_STATE || !Array.isArray(window.OS_STATE.apps)) window.OS_STATE = DEFAULT_STATE;
             
-            window.OS_STATE.isEditMode = false; 
+            window.OS_STATE.isEditMode = false;
             if(window.OS_STATE.autoArrange === undefined) window.OS_STATE.autoArrange = false;
             if(!window.OS_STATE.gridSize) window.OS_STATE.gridSize = 'auto';
+            if(!window.OS_STATE.skin) window.OS_STATE.skin = 'dock';
             
             window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== 'sys_settings');
             
@@ -421,16 +581,20 @@
         } catch(e) { window.OS_STATE = DEFAULT_STATE; }
 
         function saveState() {
-            try { localStorage.setItem('xancode_v2_state', JSON.stringify(window.OS_STATE)); } 
+            try { localStorage.setItem('xancode_v2_state', JSON.stringify(window.OS_STATE)); }
             catch(e) { console.warn("Local storage write failed."); window.showToast("Storage Limit Reached!"); }
+            // Cloud sync is a mirror layered on top of local save, never a dependency of it — see HARD RULE 1.
+            if (window.CloudSync) window.CloudSync.queueSave();
         }
 
         const XanLogger = { log: (msg) => console.log(`[XanOS] ${msg}`), error: (msg, e) => console.error(`[XanOS ERROR] ${msg}`, e) };
         
-        window.showToast = function(message) {
+        window.showToast = function(message, type = 'success') {
             const toast = document.createElement('div');
             toast.className = 'fixed top-16 left-1/2 -translate-x-1/2 bg-[#1c1c1e]/95 text-white px-6 py-3 rounded-full shadow-2xl backdrop-blur-md z-[400] transition-all duration-300 transform -translate-y-4 opacity-0 font-semibold text-sm flex items-center gap-2 border border-white/10';
-            toast.innerHTML = `<i data-lucide="check-circle-2" class="w-4 h-4 text-green-400"></i> ${message}`;
+            const icon = type === 'error' ? 'alert-circle' : 'check-circle-2';
+            const iconColor = type === 'error' ? 'text-red-400' : 'text-green-400';
+            toast.innerHTML = `<i data-lucide="${icon}" class="w-4 h-4 ${iconColor}"></i> ${message}`;
             document.body.appendChild(toast);
             safeCreateIcons();
             
@@ -446,8 +610,22 @@
         }
 
         function safeCreateIcons() {
-            try { if (typeof lucide !== 'undefined') lucide.createIcons(); } 
+            try { if (typeof lucide !== 'undefined') lucide.createIcons(); }
             catch (e) { XanLogger.error("Icon render skipped", e); }
+        }
+
+        function getItemCreatedLabel(item) {
+            const match = /^bc_(\d{10,})$/.exec(item.id || '');
+            const ts = match ? parseInt(match[1], 10) : NaN;
+            if (!ts || isNaN(ts)) return 'Preloaded';
+            const mins = Math.floor((Date.now() - ts) / 60000);
+            if (mins < 1) return 'Just now';
+            if (mins < 60) return `${mins}m ago`;
+            const hours = Math.floor(mins / 60);
+            if (hours < 24) return `${hours}h ago`;
+            const days = Math.floor(hours / 24);
+            if (days < 30) return `${days}d ago`;
+            return new Date(ts).toLocaleDateString();
         }
 
         class OSTimeEngine {
@@ -1120,16 +1298,48 @@
                 this.activeItem = itemData;
                 this.enlargeTitle.innerText = itemData.title;
                 this.enlargeData.innerText = itemData.data;
-                
+                this.populateEnlargeExtras(itemData);
+
                 try {
                     bwipjs.toCanvas('fullscreen-canvas', {
-                        bcid: itemData.bcid, text: itemData.data, scale: 5, padding: 3, 
+                        bcid: itemData.bcid, text: itemData.data, scale: 5, padding: 3,
                         backgroundcolor: 'ffffff', barcolor: '000000', textcolor: '000000'
                     });
                 } catch(e) { XanLogger.error(e) }
 
                 this.enlargeLayer.classList.remove('opacity-0', 'pointer-events-none', 'scale-[0.97]', 'rounded-[3rem]');
                 this.enlargeLayer.classList.add('opacity-100', 'pointer-events-auto', 'scale-100', 'rounded-none');
+            }
+
+            // Fills the skin-dependent "Scan Card" elements (badge + stat rows). These sit
+            // hidden-by-default in the DOM regardless of skin, so switching skins is a pure
+            // CSS/attribute change — see OSSkinManager — never a DOM rebuild.
+            populateEnlargeExtras(itemData) {
+                const FORMAT_NAMES = { azteccode: 'Aztec Code', qrcode: 'QR Code', pdf417: 'PDF417', datamatrix: 'Data Matrix', code128: 'Code 128' };
+                const formatLabel = FORMAT_NAMES[itemData.bcid] || itemData.bcid;
+
+                const badge = document.getElementById('fullscreen-badge');
+                if (badge) badge.textContent = formatLabel;
+
+                const stats = document.getElementById('fullscreen-stats');
+                if (stats) {
+                    const rows = [
+                        { icon: 'barcode', label: 'Format', value: formatLabel },
+                        { icon: 'ruler', label: 'Data Length', value: `${itemData.data.length} chars` },
+                        { icon: 'clock', label: 'Created', value: getItemCreatedLabel(itemData) }
+                    ];
+                    stats.innerHTML = rows.map(r => `
+                        <div class="stat-row">
+                            <div class="stat-row-label"><i data-lucide="${r.icon}" class="w-4 h-4"></i> ${r.label}</div>
+                            <div class="stat-row-value">${r.value}</div>
+                        </div>
+                    `).join('');
+                    safeCreateIcons();
+                }
+            }
+
+            refreshEnlargeSkin() {
+                if (this.activeItem) this.populateEnlargeExtras(this.activeItem);
             }
 
             closeEnlarge() {
@@ -1764,6 +1974,306 @@
             }
         }
 
+        // Registry for the skin system (HARD RULE 5). Add a new entry + a matching
+        // body[data-skin="..."] CSS block to introduce another interface style —
+        // never fork the app itself.
+        const SKINS = [
+            { id: 'dock', label: 'iOS Dock', icon: 'layout-grid', description: 'The classic home-screen dock & pages layout.' },
+            { id: 'scancard', label: 'Scan Card', icon: 'credit-card', description: 'A clean result-card view for your codes.' }
+        ];
+
+        class OSSkinManager {
+            constructor() {
+                this.pickerEl = document.getElementById('skin-picker');
+                this.current = window.OS_STATE.skin || 'dock';
+                document.body.setAttribute('data-skin', this.current);
+                this.render();
+            }
+
+            render() {
+                if (!this.pickerEl) return;
+                this.pickerEl.innerHTML = '';
+                SKINS.forEach(skin => {
+                    const active = skin.id === this.current;
+                    const btn = document.createElement('button');
+                    btn.className = `w-full flex items-center gap-3 p-3 rounded-2xl border transition-all text-left ${active ? 'bg-blue-500/15 border-blue-400/40' : 'bg-black/20 border-transparent hover:bg-black/30'}`;
+                    btn.innerHTML = `
+                        <div class="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${active ? 'bg-blue-500 text-white' : 'bg-white/10 text-gray-300'}">
+                            <i data-lucide="${skin.icon}" class="w-[18px] h-[18px]"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-white font-bold text-sm">${skin.label}</div>
+                            <div class="text-gray-400 text-[11px] leading-tight truncate">${skin.description}</div>
+                        </div>
+                        ${active ? '<i data-lucide="check-circle-2" class="w-5 h-5 text-blue-400 shrink-0"></i>' : ''}
+                    `;
+                    btn.addEventListener('click', () => this.setSkin(skin.id));
+                    this.pickerEl.appendChild(btn);
+                });
+                safeCreateIcons();
+            }
+
+            setSkin(id) {
+                if (id === this.current) return;
+                this.current = id;
+                window.OS_STATE.skin = id;
+                saveState();
+                if (navigator.vibrate) navigator.vibrate(15);
+
+                const workspace = document.getElementById('workspace-container');
+                document.body.classList.add('skin-morphing');
+                workspace.classList.add('morph-pulse');
+                setTimeout(() => {
+                    document.body.setAttribute('data-skin', id);
+                    if (window.InteractionManager) window.InteractionManager.refreshEnlargeSkin();
+                }, 220);
+                setTimeout(() => {
+                    workspace.classList.remove('morph-pulse');
+                    document.body.classList.remove('skin-morphing');
+                }, 480);
+
+                this.render();
+            }
+        }
+
+        // Your own existing Firebase project (the same one the alpha used) — Firebase web
+        // config values are meant to be public; the security boundary is Firestore rules and
+        // Auth, not secrecy of this object. If sync ever shows "Cloud sync paused (permissions)",
+        // the Firestore rules for this project need to allow a signed-in user to read/write
+        // their own `xancode_users/{uid}/**` documents, e.g.:
+        //   match /xancode_users/{uid}/{document=**} {
+        //     allow read, write: if request.auth != null && request.auth.uid == uid;
+        //   }
+        const firebaseConfig = {
+            apiKey: "AIzaSyBhDuvNq33M5R3cUHwBFVSxqRqzqucV3QI",
+            authDomain: "xangen-51925.firebaseapp.com",
+            projectId: "xangen-51925",
+            storageBucket: "xangen-51925.firebasestorage.app",
+            messagingSenderId: "865974879731",
+            appId: "1:865974879731:web:684630e289120645397e86",
+            measurementId: "G-PGZ7Q3DE0W"
+        };
+
+        class OSCloudSyncManager {
+            constructor() {
+                this.currentUser = null;
+                this.unsubscribeState = null;
+                this.saveTimer = null;
+                this.applyingRemote = false; // guard against a remote update immediately re-triggering a save
+                this.ready = false; // true only once the Firebase SDK actually loaded and auth is wired up
+                this.fb = null; // { app, auth, db, ...SDK functions } once loaded — see init()
+
+                this.statusIcon = document.getElementById('account-status-icon');
+                this.modal = document.getElementById('account-modal');
+                this.panel = document.getElementById('account-panel');
+                this.guestView = document.getElementById('account-guest-view');
+                this.syncedView = document.getElementById('account-synced-view');
+                this.guestError = document.getElementById('account-guest-error');
+
+                document.getElementById('btn-open-account').addEventListener('click', () => this.open());
+                document.getElementById('btn-close-account').addEventListener('click', () => this.close());
+                this.modal.addEventListener('click', (e) => { if (e.target === this.modal) this.close(); });
+                document.getElementById('btn-google-signin').addEventListener('click', () => this.signInGoogle());
+                document.getElementById('btn-sign-out').addEventListener('click', () => this.signOutAndReset());
+
+                this.init();
+            }
+
+            isGuest(user) { return !user || user.isAnonymous; }
+
+            // Loads the Firebase SDKs via a *dynamic* import, entirely inside this try/catch —
+            // see HARD RULE 1. A failure here (offline, blocked CDN, ad-blocker) only ever
+            // disables cloud sync; it can never take the rest of the app down with it.
+            async init() {
+                try {
+                    const [appMod, authMod, fsMod] = await Promise.all([
+                        import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"),
+                        import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"),
+                        import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js")
+                    ]);
+
+                    const app = appMod.initializeApp(firebaseConfig);
+                    const auth = authMod.getAuth(app);
+                    const db = fsMod.getFirestore(app);
+                    this.fb = { app, auth, db, ...authMod, ...fsMod };
+
+                    await authMod.setPersistence(auth, authMod.browserLocalPersistence);
+                    try { await authMod.getRedirectResult(auth); } catch (e) {}
+                    authMod.onAuthStateChanged(auth, (user) => this.handleAuthChange(user));
+                    if (!auth.currentUser) await authMod.signInAnonymously(auth);
+
+                    this.ready = true;
+                } catch (e) {
+                    XanLogger.error('Cloud sync unavailable (offline or blocked) — continuing local-only.', e);
+                    this.ready = false;
+                    this.updateStatusUI(null);
+                }
+            }
+
+            handleAuthChange(user) {
+                this.currentUser = user;
+                this.updateStatusUI(user);
+                if (this.unsubscribeState) { this.unsubscribeState(); this.unsubscribeState = null; }
+                if (user && !this.isGuest(user)) this.attachStateListener(user.uid);
+            }
+
+            attachStateListener(uid) {
+                const { doc, onSnapshot, db } = this.fb;
+                const ref = doc(db, 'xancode_users', uid, 'state', 'home');
+                this.unsubscribeState = onSnapshot(ref, (snap) => {
+                    if (snap.exists()) this.applyRemoteState(snap.data());
+                    else this.pushStateNow(); // first sync for this account: seed the cloud from local state
+                }, (err) => {
+                    XanLogger.error('Cloud sync listener error', err);
+                    window.showToast('Cloud sync paused (permissions).', 'error');
+                });
+            }
+
+            applyRemoteState(data) {
+                if (!data || !Array.isArray(data.apps)) return;
+                this.applyingRemote = true;
+                window.OS_STATE.apps = data.apps;
+                if (data.gridSize) window.OS_STATE.gridSize = data.gridSize;
+                if (data.autoArrange !== undefined) window.OS_STATE.autoArrange = data.autoArrange;
+                if (data.skin) { window.OS_STATE.skin = data.skin; if (window.SkinManager) { window.SkinManager.current = data.skin; document.body.setAttribute('data-skin', data.skin); window.SkinManager.render(); } }
+                saveState();
+                window.Renderer.render();
+                if (window.Layout) window.Layout.calculateGrid();
+                this.applyingRemote = false;
+            }
+
+            queueSave() {
+                if (!this.ready || !this.currentUser || this.isGuest(this.currentUser)) return;
+                if (this.applyingRemote) return;
+                clearTimeout(this.saveTimer);
+                this.saveTimer = setTimeout(() => this.pushStateNow(), 800);
+            }
+
+            async pushStateNow() {
+                if (!this.ready || !this.currentUser || this.isGuest(this.currentUser)) return;
+                try {
+                    const { doc, setDoc, db } = this.fb;
+                    const ref = doc(db, 'xancode_users', this.currentUser.uid, 'state', 'home');
+                    // Wallpaper is deliberately excluded — see HARD RULE 4.
+                    await setDoc(ref, {
+                        apps: window.OS_STATE.apps,
+                        gridSize: window.OS_STATE.gridSize,
+                        autoArrange: window.OS_STATE.autoArrange,
+                        skin: window.OS_STATE.skin,
+                        updatedAt: Date.now()
+                    });
+                } catch (e) {
+                    XanLogger.error('Cloud save failed', e);
+                }
+            }
+
+            updateStatusUI(user) {
+                if (this.statusIcon) this.statusIcon.setAttribute('data-lucide', (user && !this.isGuest(user)) ? 'cloud-lightning' : 'cloud');
+                safeCreateIcons();
+
+                const signedIn = user && !this.isGuest(user);
+                if (this.guestView) this.guestView.classList.toggle('hidden', signedIn);
+                if (this.syncedView) {
+                    this.syncedView.classList.toggle('hidden', !signedIn);
+                    this.syncedView.classList.toggle('flex', signedIn);
+                }
+                if (!signedIn) return;
+
+                const nameEl = document.getElementById('account-name');
+                const emailEl = document.getElementById('account-email');
+                const avatarImg = document.getElementById('account-avatar');
+                const initialEl = document.getElementById('account-initial');
+                const iconFallback = document.getElementById('account-icon-fallback');
+
+                if (nameEl) nameEl.textContent = user.displayName || 'XanCode User';
+                if (emailEl) emailEl.textContent = user.email || '';
+
+                if (user.photoURL && avatarImg) {
+                    avatarImg.src = user.photoURL;
+                    avatarImg.classList.remove('hidden');
+                    if (initialEl) initialEl.classList.add('hidden');
+                    if (iconFallback) iconFallback.classList.add('hidden');
+                } else if (user.displayName && initialEl) {
+                    initialEl.textContent = user.displayName.charAt(0).toUpperCase();
+                    initialEl.classList.remove('hidden');
+                    if (avatarImg) avatarImg.classList.add('hidden');
+                    if (iconFallback) iconFallback.classList.add('hidden');
+                } else if (iconFallback) {
+                    iconFallback.classList.remove('hidden');
+                    if (avatarImg) avatarImg.classList.add('hidden');
+                    if (initialEl) initialEl.classList.add('hidden');
+                }
+            }
+
+            open() {
+                if (this.guestError) this.guestError.classList.add('hidden');
+                if (!this.ready) this.showGuestError("Cloud sync isn't available right now (offline or blocked) — your codes are still safe on this device.");
+                this.modal.classList.remove('opacity-0', 'pointer-events-none');
+                this.modal.classList.add('opacity-100', 'pointer-events-auto');
+                this.panel.classList.remove('scale-90');
+                this.panel.classList.add('scale-100');
+            }
+
+            close() {
+                this.modal.classList.add('opacity-0', 'pointer-events-none');
+                this.modal.classList.remove('opacity-100', 'pointer-events-auto');
+                this.panel.classList.add('scale-90');
+                this.panel.classList.remove('scale-100');
+            }
+
+            async signInGoogle() {
+                if (!this.ready) { this.showGuestError("Cloud sync isn't available right now (offline or blocked)."); return; }
+                const { auth, GoogleAuthProvider, signInWithPopup, signInWithRedirect } = this.fb;
+                const provider = new GoogleAuthProvider();
+                if (this.guestError) this.guestError.classList.add('hidden');
+                try {
+                    await signInWithPopup(auth, provider);
+                    this.close();
+                } catch (e) {
+                    const msg = (e && e.message || '').toLowerCase();
+                    if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user' || msg.includes('popup')) {
+                        try { await signInWithRedirect(auth, provider); }
+                        catch (err) { this.showGuestError('Sign-in failed. Please try again.'); }
+                    } else {
+                        this.showGuestError('Sign-in error: ' + (e.message || '').replace('Firebase: ', ''));
+                    }
+                }
+            }
+
+            showGuestError(text) {
+                if (!this.guestError) return;
+                this.guestError.textContent = text;
+                this.guestError.classList.remove('hidden');
+            }
+
+            async signOutAndReset() {
+                try {
+                    // HARD RULE 2: detach listeners BEFORE signOut(), then wipe local state
+                    // completely before signing back in as guest.
+                    if (this.unsubscribeState) { this.unsubscribeState(); this.unsubscribeState = null; }
+
+                    localStorage.removeItem('xancode_v2_state');
+                    window.OS_STATE = JSON.parse(JSON.stringify(DEFAULT_STATE));
+                    window.OS_STATE.isEditMode = false;
+                    saveState();
+                    window.Renderer.render();
+                    if (window.Layout) window.Layout.calculateGrid();
+                    if (window.SkinManager) { window.SkinManager.current = window.OS_STATE.skin; document.body.setAttribute('data-skin', window.OS_STATE.skin); window.SkinManager.render(); }
+
+                    if (this.ready) {
+                        const { auth, signOut, signInAnonymously } = this.fb;
+                        await signOut(auth);
+                        await signInAnonymously(auth);
+                    }
+                    this.close();
+                    window.showToast('Signed out & app reset.');
+                } catch (e) {
+                    XanLogger.error('Sign out failed', e);
+                    window.showToast('Sign out failed.', 'error');
+                }
+            }
+        }
+
         // --- INIT ---
         window.TimeEngine = new OSTimeEngine();
         window.Renderer = new OSRenderer();
@@ -1774,7 +2284,9 @@
         window.CodeGenerator = new OSCodeGenerator();
         window.ScannerEngine = new OSScannerEngine();
         window.SettingsManager = new OSSettingsManager();
+        window.SkinManager = new OSSkinManager();
         window.Layout = new LayoutManager(window.Renderer);
+        window.CloudSync = new OSCloudSyncManager();
 
         const pager = document.getElementById('workspace-pager');
         pager.addEventListener('scroll', () => {
