@@ -618,3 +618,75 @@ test.describe('Soft skin (Phase 1)', () => {
         expect(label).toBe('rgb(255, 255, 255)');
     });
 });
+
+test.describe('Accessibility baselines', () => {
+    // Apple HIG puts the minimum tap target at 44x44pt, and WCAG 2.1 AA wants 4.5:1 on normal
+    // text. Both were audited by measuring the rendered app rather than by reading the markup:
+    // the offenders were the modal close buttons (36 and 40 square), the segmented grid buttons
+    // and Library sort pills (34-38 tall) and the search input (23 tall). Compact chips keep
+    // their look and carry an invisible centred hit area instead of being made physically
+    // bigger, so this test measures the ::after extension too — checking the box alone would
+    // pass elements that are still visually tiny, and checking only the box would fail elements
+    // that are genuinely fine to tap.
+    const measure = (page) => page.evaluate(() => {
+        const MIN = 44, bad = [];
+        document.querySelectorAll('button, [role="button"], a, input, .app-icon-wrapper').forEach(el => {
+            const r = el.getBoundingClientRect();
+            if (!r.width || !r.height) return;
+            const cs = getComputedStyle(el);
+            if (cs.visibility === 'hidden' || cs.display === 'none') return;
+            if (el.closest('.pointer-events-none')) return;
+            let { width: w, height: h } = r;
+            const after = getComputedStyle(el, '::after');
+            if (after && after.content === '""') {
+                const ah = parseFloat(after.height), aw = parseFloat(after.width);
+                if (!isNaN(ah)) h = Math.max(h, ah);
+                if (!isNaN(aw)) w = Math.max(w, aw);
+            }
+            if (w < MIN || h < MIN) {
+                bad.push(`${Math.round(w)}x${Math.round(h)} ${(el.id || el.className.toString().slice(0, 40))}`);
+            }
+        });
+        return [...new Set(bad)];
+    });
+
+    test('every interactive target meets 44x44 on the home screen', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const bad = await measure(page);
+        expect(bad, `under 44x44: ${bad.join(' | ')}`).toEqual([]);
+    });
+
+    test('every interactive target meets 44x44 in Settings and Library', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        await page.click('#btn-open-settings');
+        await page.waitForTimeout(400);
+        let bad = await measure(page);
+        expect(bad, `Settings under 44x44: ${bad.join(' | ')}`).toEqual([]);
+
+        await page.click('#btn-close-settings');
+        await page.waitForTimeout(400);
+        await page.click('#dock-container [data-id="nav_lib"]');
+        await page.waitForTimeout(500);
+        bad = await measure(page);
+        expect(bad, `Library under 44x44: ${bad.join(' | ')}`).toEqual([]);
+    });
+
+    test('prefers-reduced-motion collapses animation, and the app still works', async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const dur = await page.evaluate(() =>
+            getComputedStyle(document.querySelector('.app-icon')).transitionDuration);
+        expect(parseFloat(dur)).toBeLessThan(0.05);
+
+        // Nothing is disabled — interactions must still complete, just without the motion.
+        await page.click('#dock-container [data-id="nav_lib"]');
+        await page.waitForTimeout(300);
+        await expect(page.locator('#library-overlay')).not.toHaveClass(/pointer-events-none/);
+        await expect(page.locator('#library-list > div')).not.toHaveCount(0);
+    });
+});

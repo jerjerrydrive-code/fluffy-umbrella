@@ -24,7 +24,7 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 27 passing in ~25s):
+Built and covered by the regression suite (`npm test`, 30 passing in ~30s):
 
 | Area | State |
 |---|---|
@@ -140,8 +140,13 @@ install with nothing lost. This is the phase that makes the app trustworthy enou
 ## Phase 5 — Polish, Access & Hardening
 **Months 5–6 · Jan–Feb 2027**
 
-- **Accessibility**: full keyboard navigation, screen-reader labels on every control, focus
-  traps in modals, `prefers-reduced-motion` honoured by the physics engine. The accent contrast
+- **Accessibility** — partly done early, driven by an audit against Apple HIG + WCAG 2.1:
+  ~~44x44pt minimum tap targets~~ (audited by measuring the rendered app; close buttons were
+  36-40sq, pills/segments 34-38 tall, the search input 23 tall — all fixed and pinned by a test
+  that also counts invisible hit-area extensions) and ~~`prefers-reduced-motion`~~ (there was no
+  handling at all, in an app with jiggling icons, spring modals and a full-screen morph pulse).
+  Still to do: full keyboard navigation, screen-reader labels on every control, focus
+  traps in modals. The accent contrast
   calculator is **partly done early** — it now measures real WCAG luminance (95% of the palette
   meets AA, up from 83%); the remainder needs an `--accent-strong` darkened fill so white text
   can be used on light accents without failing

@@ -70,6 +70,7 @@
 
         /* Library sort pills. Active state is accent-driven per HARD RULE 7 — no hardcoded hex. */
         .library-sort-btn {
+            position: relative;
             padding: 0.4rem 0.9rem; border-radius: 999px; font-size: 12.5px; font-weight: 700;
             letter-spacing: 0.01em; color: rgba(255,255,255,0.55);
             background: rgba(255,255,255,0.08); border: 1px solid transparent;
@@ -542,6 +543,43 @@
 
         /* Brief whole-app blur/scale pulse while a skin swap is committed underneath it */
         .morph-pulse { transform: scale(0.93) translateY(15px); filter: blur(12px) brightness(0.7); }
+
+        /* ---------- Tap targets: Apple HIG 44x44pt minimum ----------
+           Audited with a script that measures every rendered interactive element; the offenders
+           were the two modal close buttons (36 and 40 square), the segmented grid buttons and
+           Library sort pills (34-38 tall) and the Library search input (23 tall).
+
+           Two different fixes on purpose. Icon buttons simply become 44x44 — at 36 they were
+           genuinely too small and iOS draws them at 44 anyway. The pills and segments keep their
+           deliberately compact look and get an INVISIBLE centred hit area instead, so the touch
+           target grows without the design changing. Extension is vertical only; these sit in
+           rows with horizontal gaps and are already wide enough, so no two targets overlap. */
+        .tap44 { min-width: 44px; min-height: 44px; }
+        .tap-extend { position: relative; }
+        .tap-extend::after {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100%; height: max(100%, 44px);
+        }
+
+        /* ---------- Reduced motion ----------
+           This app is unusually motion-heavy: jiggling icons in edit mode, spring modals, a
+           whole-screen blur/scale pulse on skin change, and a physics drag engine. For a user
+           with vestibular sensitivity that is not a nicety, and there was previously no handling
+           at all. Animations and transitions collapse to effectively instant; nothing is
+           disabled, so every interaction still completes and the app stays fully usable. The
+           drag engine writes transforms directly rather than transitioning them, so dragging is
+           unaffected. */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
+            }
+            .morph-pulse { transform: none !important; filter: none !important; }
+            body.edit-mode .app-icon-wrapper .jiggle-target { animation: none !important; }
+        }
     </style>
 </head>
 <body class="w-full h-full text-white relative transition-colors duration-300">
@@ -598,19 +636,19 @@
                 <h2 class="text-white text-[26px] font-bold tracking-tight leading-none">Library</h2>
                 <p id="library-count" class="text-white/50 text-[12px] font-medium mt-1.5"></p>
             </div>
-            <button id="btn-close-library" class="p-2.5 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all shrink-0">
+            <button id="btn-close-library" class="tap44 flex items-center justify-center p-2.5 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all shrink-0">
                 <i data-lucide="x" class="w-5 h-5 text-white"></i>
             </button>
         </div>
         <div class="px-5 pb-3 shrink-0 flex flex-col gap-3">
             <div class="bg-white/10 border border-white/10 rounded-[1.25rem] flex items-center px-4 py-3">
                 <i data-lucide="search" class="w-[18px] h-[18px] text-white/40 mr-2.5 shrink-0"></i>
-                <input type="text" id="library-search" class="bg-transparent text-white w-full outline-none placeholder:text-white/40 font-medium text-[15px]" placeholder="Filter by name, data or format">
+                <input type="text" id="library-search" class="bg-transparent text-white w-full h-11 outline-none placeholder:text-white/40 font-medium text-[15px]" placeholder="Filter by name, data or format">
             </div>
             <div class="flex gap-2" id="library-sort-row">
-                <button class="library-sort-btn active" data-sort="recent">Recent</button>
-                <button class="library-sort-btn" data-sort="name">Name</button>
-                <button class="library-sort-btn" data-sort="format">Format</button>
+                <button class="library-sort-btn tap-extend active" data-sort="recent">Recent</button>
+                <button class="library-sort-btn tap-extend" data-sort="name">Name</button>
+                <button class="library-sort-btn tap-extend" data-sort="format">Format</button>
             </div>
         </div>
         <div id="library-list" class="flex-1 overflow-y-auto hide-scrollbar px-5 pb-[calc(env(safe-area-inset-bottom,0px)+2.5rem)] flex flex-col gap-2.5"></div>
@@ -620,17 +658,17 @@
         <div class="bg-[#1c1c1e] border border-white/10 rounded-[2.5rem] p-6 w-full max-w-sm max-h-[88vh] overflow-y-auto hide-scrollbar transform scale-90 shadow-2xl modal-spring flex flex-col gap-6" id="settings-panel">
             <div class="flex justify-between items-center px-2">
                 <h3 class="text-xl font-bold text-white tracking-tight">OS Preferences</h3>
-                <button id="btn-close-settings" class="p-2 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all duration-300">
+                <button id="btn-close-settings" class="tap44 flex items-center justify-center p-2 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all duration-300">
                     <i data-lucide="x" class="w-5 h-5 text-white"></i>
                 </button>
             </div>
             <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
                 <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Screen Grid</div>
                 <div class="flex justify-between gap-2 bg-black/40 p-1.5 rounded-2xl">
-                    <button class="grid-select-btn flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="auto">Auto</button>
-                    <button class="grid-select-btn flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x5">4×5</button>
-                    <button class="grid-select-btn flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x6">4×6</button>
-                    <button class="grid-select-btn flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x7">4×7</button>
+                    <button class="grid-select-btn tap-extend flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="auto">Auto</button>
+                    <button class="grid-select-btn tap-extend flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x5">4×5</button>
+                    <button class="grid-select-btn tap-extend flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x6">4×6</button>
+                    <button class="grid-select-btn tap-extend flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x7">4×7</button>
                 </div>
                 <div class="flex items-center justify-between mt-2 pl-1 cursor-pointer" onclick="document.getElementById('auto-arrange-toggle').click()">
                     <span class="text-white font-medium text-sm">Auto-Arrange Layout</span>
@@ -671,7 +709,7 @@
         <div class="bg-[#1c1c1e] border border-white/10 rounded-[2.5rem] p-6 w-full max-w-sm max-h-[88vh] overflow-y-auto hide-scrollbar transform scale-90 shadow-2xl modal-spring flex flex-col gap-5" id="account-panel">
             <div class="flex justify-between items-center px-2">
                 <h3 class="text-xl font-bold text-white tracking-tight">Account</h3>
-                <button id="btn-close-account" class="p-2 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all duration-300">
+                <button id="btn-close-account" class="tap44 flex items-center justify-center p-2 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all duration-300">
                     <i data-lucide="x" class="w-5 h-5 text-white"></i>
                 </button>
             </div>
