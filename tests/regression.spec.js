@@ -1034,3 +1034,122 @@ test.describe('Quick Add template registry (Phase 2)', () => {
         expect(created.bcid).toBe('azteccode');
     });
 });
+
+test.describe('Format browser and encodability (Phase 2)', () => {
+    test('every advertised format actually encodes in bwip-js', async ({ page }) => {
+        // Offering a format the renderer cannot produce would save codes that render as a blank
+        // tile. This proves the registry and the encoder agree, rather than assuming they do.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const failures = await page.evaluate(() => {
+            const samples = {
+                azteccode: 'hello', qrcode: 'hello', datamatrix: 'hello', pdf417: 'hello',
+                code128: 'hello', code39: 'HELLO', code93: 'HELLO', ean13: '123456789012',
+                ean8: '1234567', upca: '12345678901', interleaved2of5: '12345678'
+            };
+            const bad = [];
+            for (const f of window.CODE_FORMATS) {
+                if (!samples[f.bcid]) { bad.push(`${f.bcid}: no sample in test`); continue; }
+                const cv = document.createElement('canvas');
+                document.body.appendChild(cv);
+                try { bwipjs.toCanvas(cv, { bcid: f.bcid, text: samples[f.bcid], scale: 2 }); }
+                catch (e) { bad.push(`${f.bcid}: ${e.message}`); }
+                cv.remove();
+            }
+            return bad;
+        });
+        expect(failures, failures.join(' | ')).toEqual([]);
+    });
+
+    test('format constraints are enforced before save, not silently at render', async ({ page }) => {
+        // bwip-js throws on data that does not fit a symbology; that throw is swallowed by the
+        // canvas guard, so the old behaviour was a saved code with a blank tile and no
+        // explanation. These are the symbologies' real rules.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const v = await page.evaluate(() => ({
+            eanLetters: window.validateForFormat('ean13', 'hello'),
+            eanShort: window.validateForFormat('ean13', '123'),
+            eanOk: window.validateForFormat('ean13', '123456789012'),
+            itfOdd: window.validateForFormat('interleaved2of5', '12345'),
+            itfOk: window.validateForFormat('interleaved2of5', '123456'),
+            code39Lower: window.validateForFormat('code39', 'hello'),
+            code39Ok: window.validateForFormat('code39', 'HELLO-1'),
+            aztecAnything: window.validateForFormat('azteccode', 'anything at all'),
+            empty: window.validateForFormat('qrcode', '')
+        }));
+
+        expect(v.eanLetters).toContain('digits');
+        expect(v.eanShort).toContain('digits');
+        expect(v.eanOk).toBeNull();
+        expect(v.itfOdd).toContain('even');
+        expect(v.itfOk).toBeNull();
+        expect(v.code39Lower).toContain('uppercase');
+        expect(v.code39Ok).toBeNull();
+        expect(v.aztecAnything).toBeNull(); // 2D formats take arbitrary text
+        expect(v.empty).toBeTruthy();
+    });
+
+    test('an invalid combination is blocked at save and explained', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const before = await page.evaluate(() => window.OS_STATE.apps.length);
+
+        await page.evaluate(() => window.CodeGenerator.open());
+        await page.waitForTimeout(300);
+        await page.click('.create-tab-btn[data-mode="custom"]');
+        await page.waitForTimeout(300);
+
+        await page.click('#format-picker-btn');
+        await page.waitForTimeout(300);
+        await page.fill('#format-search', 'EAN-13');
+        await page.waitForTimeout(300);
+        await page.locator('#format-options button').first().click();
+        await page.waitForTimeout(300);
+        expect(await page.evaluate(() => document.getElementById('create-input-type').value)).toBe('ean13');
+
+        await page.fill('#create-input-title', 'Test Product');
+        await page.fill('#create-input-data', 'not-a-barcode');
+        await page.waitForTimeout(300);
+        await expect(page.locator('#format-warning')).not.toHaveClass(/hidden/);
+
+        await page.click('#btn-save-create');
+        await page.waitForTimeout(400);
+        expect(await page.evaluate(() => window.OS_STATE.apps.length)).toBe(before);
+
+        // Correct the data and it saves.
+        await page.fill('#create-input-data', '123456789012');
+        await page.waitForTimeout(300);
+        await expect(page.locator('#format-warning')).toHaveClass(/hidden/);
+        await page.click('#btn-save-create');
+        await page.waitForTimeout(500);
+        expect(await page.evaluate(() => window.OS_STATE.apps.length)).toBe(before + 1);
+    });
+
+    test('search matches the blurb, not just the format name', async ({ page }) => {
+        // The browser exists for people who do not know the format's name — "boarding pass"
+        // has to find PDF417, and "retail" the EAN/UPC family.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.CodeGenerator.open());
+        await page.waitForTimeout(300);
+        await page.click('.create-tab-btn[data-mode="custom"]');
+        await page.click('#format-picker-btn');
+        await page.waitForTimeout(300);
+
+        await page.fill('#format-search', 'boarding pass');
+        await page.waitForTimeout(300);
+        await expect(page.locator('#format-options button')).toHaveCount(1);
+        await expect(page.locator('#format-options')).toContainText('PDF417');
+
+        await page.fill('#format-search', 'retail');
+        await page.waitForTimeout(300);
+        await expect(page.locator('#format-options button')).toHaveCount(3); // EAN-13, EAN-8, UPC-A
+
+        await page.fill('#format-search', 'zzzz');
+        await page.waitForTimeout(300);
+        await expect(page.locator('#format-options')).toContainText('No formats match');
+    });
+});

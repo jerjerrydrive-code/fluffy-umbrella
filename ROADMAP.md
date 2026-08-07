@@ -24,12 +24,12 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 43 passing in ~42s):
+Built and covered by the regression suite (`npm test`, 47 passing in ~46s):
 
 | Area | State |
 |---|---|
 | Home screen | Paged icon grid, floating dock, physics drag-reorder, swipe-down search, edit mode |
-| Codes | Generator + **22 Quick Add types in 4 categories**, item viewer (enlarge / copy / save PNG / rename) |
+| Codes | **22 Quick Add types in 4 categories**, **11-format browser with validation**, item viewer (enlarge / copy / save PNG / rename) |
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, smart payload parsing |
 | Library | Browse-all view: filter + sort by Recent / Name / Format |
 | Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin, WCAG-measured accent text |
@@ -91,14 +91,17 @@ by default and let every skin opt in — do not fork the structure.
 
 ~~Today: 7 Quick Add templates.~~ **Done: 22 types across four categories**, on a declarative
 registry — each entry carries its fields and a `build()`, so adding a type is one object rather
-than an arm in two parallel switch statements. Remaining in this phase: the format browser and
-code styling.
+than an arm in two parallel switch statements. ~~the format browser~~ is done too — 11 symbologies with plain-language blurbs, searchable
+across them, plus per-format input validation that closes a silent render failure. Remaining in
+this phase: **code styling**.
 
 - **Socials:** Instagram, WhatsApp, X, Facebook, YouTube, TikTok, LinkedIn, Telegram, Snapchat, Pinterest
 - **Personal:** Email, Phone, SMS, vCard/MeCard, Calendar event, Location/Geo
 - **Utilities:** Plain text, URL, WiFi, App Store link, Clipboard capture, Crypto address
-- **Format browser:** searchable list across QR / Aztec / PDF417 / Data Matrix / Code 128 /
-  Code 39 variants / EAN-13 / UPC, with a plain-language "what is this for" line each
+- ~~**Format browser**~~ ✅ 11 symbologies (Aztec, QR, Data Matrix, PDF417, Code 128, Code 39,
+  Code 93, EAN-13, EAN-8, UPC-A, ITF), each with a plain-language "what is this for" line, and
+  search that matches those blurbs. Every one is verified to encode in bwip-js by test, and each
+  1D format's real input rules are enforced before save
 
 Plus **code styling** — the feature that makes the theme engine pay off twice: foreground /
 background colour pickers (drawing on the same 338-theme palette), corner-dot styling, and

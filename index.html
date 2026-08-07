@@ -1027,15 +1027,28 @@
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Title</label>
                     <input type="text" id="create-input-title" class="w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none transition-all duration-300 shadow-sm" placeholder="">
                 </div>
+                <!-- Format picker. #create-input-type stays as a hidden input holding the bcid,
+                     because saveFromCustomForm reads it and the scanner's prefill writes to it —
+                     keeping the id means the browser is layered ON the existing contract rather
+                     than replacing it, so nothing downstream had to change. -->
                 <div>
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Code Format</label>
-                    <select id="create-input-type" class="w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none transition-all duration-300 appearance-none shadow-sm cursor-pointer">
-                        <option value="azteccode">Aztec Code (Compact)</option>
-                        <option value="qrcode">QR Code (Standard)</option>
-                        <option value="pdf417">PDF417 (Boarding Pass)</option>
-                        <option value="datamatrix">Data Matrix (Industrial)</option>
-                        <option value="code128">Code 128 (1D Barcode)</option>
-                    </select>
+                    <input type="hidden" id="create-input-type" value="azteccode">
+                    <button type="button" id="format-picker-btn" class="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-2xl px-5 py-4 text-left outline-none transition-all duration-300 shadow-sm flex items-center justify-between gap-3">
+                        <span class="min-w-0">
+                            <span id="format-picker-label" class="block text-gray-900 font-semibold truncate">Aztec Code</span>
+                            <span id="format-picker-blurb" class="block text-gray-400 text-[11px] leading-tight truncate mt-0.5"></span>
+                        </span>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 text-gray-400 shrink-0"></i>
+                    </button>
+                    <div id="format-picker-panel" class="hidden mt-2 border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                        <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 bg-gray-50">
+                            <i data-lucide="search" class="w-4 h-4 text-gray-400 shrink-0"></i>
+                            <input type="text" id="format-search" placeholder="Search formats" class="w-full h-11 bg-transparent outline-none text-gray-900 font-medium text-sm placeholder:text-gray-400">
+                        </div>
+                        <div id="format-options" class="max-h-64 overflow-y-auto hide-scrollbar"></div>
+                    </div>
+                    <p id="format-warning" class="hidden text-[11px] font-semibold text-red-500 mt-2 ml-1 leading-relaxed"></p>
                 </div>
                 <div>
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Data</label>
@@ -1136,6 +1149,19 @@
          *    object; `required` is enforced once centrally rather than per branch.
          *    Inputs are namespaced tpl-<template>-<field>. window.QUICK_TEMPLATES is
          *    exposed so tests assert payloads by calling build() directly.
+         *  - Format browser (CODE_FORMATS, Custom tab): 11 symbologies, each with a
+         *    plain-language line saying what it is FOR, searchable across those blurbs so
+         *    "boarding pass" finds PDF417 and "retail" finds the EAN/UPC family. The old
+         *    <select> is now a hidden input of the same id, so saveFromCustomForm and the
+         *    scanner prefill kept working untouched — the browser is layered ON that
+         *    contract, not a replacement for it.
+         *  - Format validation (window.validateForFormat): each 1D symbology's real input
+         *    rules, enforced on input AND again on save. This closes a silent failure —
+         *    bwip-js THROWS on data that does not fit (letters in an EAN-13, an odd digit
+         *    count in ITF), the canvas guard swallowed it, and the user got a saved code
+         *    with a blank tile and no explanation. A test also encodes every advertised
+         *    format through bwip-js, so the registry cannot drift from what actually
+         *    renders.
          *    GOTCHA: lucide ships NO brand logos — instagram/twitter/facebook/youtube/
          *    linkedin render as an empty tile with no glyph and no error. Generic icons are
          *    used and a test asserts every template icon resolves, since it fails silently.
@@ -2427,6 +2453,64 @@
             }
         ];
 
+        // ---------------------------------------------------------------------------------
+        //  BARCODE FORMAT REGISTRY
+        //  Every format the Custom tab offers, with a plain-language line saying what it is FOR.
+        //  "Aztec Code (Compact)" tells someone who already knows; the blurb is for everyone else.
+        //
+        //  validate() exists because a format mismatch previously failed SILENTLY: bwip-js throws
+        //  when the data does not fit the symbology (letters in an EAN-13, an odd digit count in
+        //  ITF), the throw is caught by the canvas guard, and the user gets a saved code with a
+        //  blank tile and no explanation. The rules below are the symbology's real constraints,
+        //  so the failure is now caught at the input instead of at render.
+        // ---------------------------------------------------------------------------------
+        const CODE_FORMATS = [
+            { bcid: 'azteccode', label: 'Aztec Code', kind: '2D',
+              blurb: 'Compact 2D code. Stays readable when small or partly damaged. The default here.' },
+            { bcid: 'qrcode', label: 'QR Code', kind: '2D',
+              blurb: 'The one phone cameras recognise natively. Required for WiFi and contact prompts.' },
+            { bcid: 'datamatrix', label: 'Data Matrix', kind: '2D',
+              blurb: 'Very small 2D code used on electronics and medical labels.' },
+            { bcid: 'pdf417', label: 'PDF417', kind: '2D',
+              blurb: 'Wide stacked code used on boarding passes and driving licences.' },
+            { bcid: 'code128', label: 'Code 128', kind: '1D',
+              blurb: 'Dense 1D barcode for any text. The general-purpose shipping and logistics choice.' },
+            { bcid: 'code39', label: 'Code 39', kind: '1D',
+              blurb: 'Older 1D barcode. Uppercase letters, digits and - . $ / + % space only.',
+              validate: (d) => /^[0-9A-Z\-. $\/+%]+$/.test(d) ? null
+                  : 'Code 39 allows only uppercase letters, digits and - . $ / + % and spaces.' },
+            { bcid: 'code93', label: 'Code 93', kind: '1D',
+              blurb: 'Compact successor to Code 39. Uppercase letters and digits.',
+              validate: (d) => /^[0-9A-Z\-. $\/+%]+$/.test(d) ? null
+                  : 'Code 93 allows only uppercase letters, digits and - . $ / + % and spaces.' },
+            { bcid: 'ean13', label: 'EAN-13', kind: '1D',
+              blurb: 'Retail product barcode used worldwide. Exactly 12 or 13 digits.',
+              validate: (d) => /^\d{12,13}$/.test(d) ? null
+                  : 'EAN-13 needs exactly 12 or 13 digits (the 13th is a check digit).' },
+            { bcid: 'ean8', label: 'EAN-8', kind: '1D',
+              blurb: 'Short retail barcode for small packaging. 7 or 8 digits.',
+              validate: (d) => /^\d{7,8}$/.test(d) ? null
+                  : 'EAN-8 needs exactly 7 or 8 digits.' },
+            { bcid: 'upca', label: 'UPC-A', kind: '1D',
+              blurb: 'North American retail barcode. 11 or 12 digits.',
+              validate: (d) => /^\d{11,12}$/.test(d) ? null
+                  : 'UPC-A needs exactly 11 or 12 digits.' },
+            { bcid: 'interleaved2of5', label: 'ITF (Interleaved 2 of 5)', kind: '1D',
+              blurb: 'Numeric-only code used on shipping cartons. Needs an even number of digits.',
+              validate: (d) => !/^\d+$/.test(d) ? 'ITF accepts digits only.'
+                  : (d.length % 2 ? 'ITF needs an even number of digits.' : null) }
+        ];
+        window.CODE_FORMATS = CODE_FORMATS;
+
+        // Single place to ask "will this data actually encode in this format?". Returns an error
+        // string or null. Used by the Custom form live and again on save.
+        window.validateForFormat = function(bcid, data) {
+            if (!data) return 'Enter some data first.';
+            const f = CODE_FORMATS.find(x => x.bcid === bcid);
+            if (!f || !f.validate) return null;
+            return f.validate(data);
+        };
+
         // Exposed for the regression suite, which asserts payload correctness per type by
         // calling build() directly rather than driving 22 forms through the UI.
         window.QUICK_TEMPLATES = QUICK_TEMPLATES;
@@ -2444,6 +2528,11 @@
                 this.customView = document.getElementById('create-custom-view');
                 this.templateGrid = document.getElementById('template-grid');
                 this.categoryRow = document.getElementById('template-category-row');
+                this.formatBtn = document.getElementById('format-picker-btn');
+                this.formatPanel = document.getElementById('format-picker-panel');
+                this.formatSearch = document.getElementById('format-search');
+                this.formatOptions = document.getElementById('format-options');
+                this.formatWarning = document.getElementById('format-warning');
                 this.activeCategory = 'popular';
                 this.templateFormContainer = document.getElementById('template-form-container');
                 this.tabButtons = document.querySelectorAll('.create-tab-btn');
@@ -2455,6 +2544,12 @@
 
                 this.tabButtons.forEach(btn => btn.addEventListener('click', () => this.setMode(btn.dataset.mode)));
 
+                this.formatBtn.addEventListener('click', () => this.toggleFormatPanel());
+                this.formatSearch.addEventListener('input', () => this.renderFormatOptions());
+                this.inputData.addEventListener('input', () => this.validateCustom());
+
+                this.renderFormatOptions();
+                this.syncFormatButton();
                 this.renderCategoryRow();
                 this.renderTemplateGrid();
             }
@@ -2613,14 +2708,95 @@
             }
 
 
+            fmt(bcid) { return CODE_FORMATS.find(f => f.bcid === bcid); }
+
+            syncFormatButton() {
+                const f = this.fmt(this.inputType.value) || CODE_FORMATS[0];
+                document.getElementById('format-picker-label').textContent = f.label;
+                document.getElementById('format-picker-blurb').textContent = f.blurb;
+            }
+
+            toggleFormatPanel(force) {
+                const open = force !== undefined ? force : this.formatPanel.classList.contains('hidden');
+                this.formatPanel.classList.toggle('hidden', !open);
+                if (open) {
+                    this.formatSearch.value = '';
+                    this.renderFormatOptions();
+                    setTimeout(() => this.formatSearch.focus(), 50);
+                }
+            }
+
+            renderFormatOptions() {
+                const q = (this.formatSearch.value || '').trim().toLowerCase();
+                // Search covers the blurb too, so "boarding pass" finds PDF417 and "retail" finds
+                // the EAN/UPC family — the point of the browser is to help someone who does not
+                // already know the format's name.
+                const matches = CODE_FORMATS.filter(f =>
+                    !q || f.label.toLowerCase().includes(q) || f.blurb.toLowerCase().includes(q) ||
+                    f.kind.toLowerCase() === q);
+
+                this.formatOptions.innerHTML = '';
+                if (!matches.length) {
+                    this.formatOptions.innerHTML = '<p class="px-4 py-6 text-center text-gray-400 text-sm font-medium">No formats match that.</p>';
+                    return;
+                }
+                matches.forEach(f => {
+                    const active = f.bcid === this.inputType.value;
+                    const row = document.createElement('button');
+                    row.type = 'button';
+                    row.dataset.bcid = f.bcid;
+                    row.className = 'w-full text-left px-4 py-3 border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors flex items-start gap-3 ' + (active ? 'bg-gray-50' : '');
+                    row.innerHTML = `
+                        <span class="mt-0.5 text-[9px] font-black tracking-widest px-1.5 py-0.5 rounded ${f.kind === '2D' ? 'accent-bg-soft accent-text' : 'bg-gray-200 text-gray-600'}">${f.kind}</span>
+                        <span class="flex-1 min-w-0">
+                            <span class="block font-bold text-[13.5px] text-gray-900">${f.label}</span>
+                            <span class="block text-[11px] text-gray-500 leading-snug mt-0.5">${f.blurb}</span>
+                        </span>
+                        ${active ? '<i data-lucide="check" class="w-4 h-4 accent-text shrink-0 mt-0.5"></i>' : ''}
+                    `;
+                    row.addEventListener('click', () => this.selectFormat(f.bcid));
+                    this.formatOptions.appendChild(row);
+                });
+                safeCreateIcons();
+            }
+
+            selectFormat(bcid) {
+                this.inputType.value = bcid;
+                haptic(8);
+                this.syncFormatButton();
+                this.toggleFormatPanel(false);
+                this.validateCustom();
+            }
+
+            // Live check against the chosen symbology's real constraints. Returns true when the
+            // data is encodable, so save() can reuse it rather than duplicating the rules.
+            validateCustom() {
+                const data = this.inputData.value.trim();
+                const err = data ? window.validateForFormat(this.inputType.value, data) : null;
+                this.formatWarning.textContent = err || '';
+                this.formatWarning.classList.toggle('hidden', !err);
+                return !err;
+            }
+
             saveFromCustomForm() {
-                this.saveCode(this.inputTitle.value.trim(), this.inputData.value.trim(), this.inputType.value);
+                const data = this.inputData.value.trim();
+                const err = window.validateForFormat(this.inputType.value, data);
+                if (err) {
+                    // Checked again here, not just on input: the format can be changed after the
+                    // data was typed, and prefilled scans never fire an input event at all.
+                    this.validateCustom();
+                    return window.showToast(err, 'error');
+                }
+                this.saveCode(this.inputTitle.value.trim(), data, this.inputType.value);
             }
 
             open(prefillData = null, prefillFormat = null) {
                 this.inputTitle.value = '';
                 this.inputData.value = prefillData || '';
                 this.inputType.value = prefillFormat || 'azteccode';
+                this.syncFormatButton();
+                this.toggleFormatPanel(false);
+                this.validateCustom();
 
                 this.closeTemplateForm();
                 this.setMode(prefillData ? 'custom' : 'templates');
