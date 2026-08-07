@@ -224,3 +224,132 @@ test.describe('Cloud sync resilience (regression: static Firebase import blankin
         await page.click('#btn-close-account');
     });
 });
+
+test.describe('Accent palette (regression: the recovered 338-theme packed string)', () => {
+    // The alpha's original packedThemes string was lost in the rebuild and stood in as a 48-theme
+    // curated placeholder for several sessions. It was recovered verbatim from the pre-rebuild
+    // exports. These assertions are deliberately exact: if someone reformats, truncates or
+    // "tidies" that string, the palette silently shrinks and this fails loudly instead.
+    test('the full recovered palette is present and parses cleanly', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        const stats = await page.evaluate(() => {
+            const row = document.getElementById('theme-swatch-row');
+            return {
+                swatches: row ? row.querySelectorAll('button').length : 0,
+                accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()
+            };
+        });
+
+        // 338 themes x 4 candidates. The row renders one button per theme (favorites add more).
+        expect(stats.swatches).toBeGreaterThanOrEqual(338);
+        expect(stats.accent).not.toBe('');
+    });
+
+    test('picking an accent does not rebuild the whole 338-swatch row', async ({ page }) => {
+        // Full render() on every tap made the row stutter once the palette grew past the old
+        // 48-theme placeholder. Selecting an accent must only repaint the active ring, so the
+        // DOM node under the pointer has to survive the tap.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await page.click('#btn-open-settings');
+
+        const swatch = page.locator('#theme-swatch-row button').nth(5);
+        await swatch.evaluate((el) => { el.dataset.identityProbe = 'original'; });
+
+        await swatch.dispatchEvent('pointerdown');
+        await page.waitForTimeout(80);
+        await swatch.dispatchEvent('pointerup');
+        await page.waitForTimeout(250);
+
+        // Still the same element -> the row was not torn down and rebuilt.
+        const survived = await page.locator('#theme-swatch-row button').nth(5)
+            .evaluate((el) => el.dataset.identityProbe);
+        expect(survived).toBe('original');
+
+        const ringed = await page.evaluate(() =>
+            document.querySelectorAll('#theme-swatch-row button.border-white').length);
+        expect(ringed).toBeGreaterThan(0);
+    });
+});
+
+test.describe('Library (regression: nav_lib was a dead "coming soon" dock button)', () => {
+    const openLibrary = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await page.click('#dock-container [data-id="nav_lib"]');
+        await page.waitForTimeout(400);
+    };
+
+    test('the dock button opens a list of every saved code', async ({ page }) => {
+        await openLibrary(page);
+
+        await expect(page.locator('#library-overlay')).not.toHaveClass(/pointer-events-none/);
+
+        const expected = await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'grid').length);
+        await expect(page.locator('#library-list > div')).toHaveCount(expected);
+        await expect(page.locator('#library-count')).toContainText(`${expected} saved`);
+    });
+
+    test('filtering narrows the list and reports an empty state', async ({ page }) => {
+        await openLibrary(page);
+
+        await page.fill('#library-search', 'wifi');
+        await page.waitForTimeout(200);
+        const filtered = await page.locator('#library-list > div').count();
+        expect(filtered).toBeGreaterThan(0);
+        await expect(page.locator('#library-count')).toContainText('of');
+
+        await page.fill('#library-search', 'zzzznotarealcode');
+        await page.waitForTimeout(200);
+        await expect(page.locator('#library-list')).toContainText('No matches');
+    });
+
+    test('sorting by name reorders the list', async ({ page }) => {
+        await openLibrary(page);
+
+        const titles = () => page.locator('#library-list h4').allTextContents();
+        const recentOrder = await titles();
+
+        await page.click('.library-sort-btn[data-sort="name"]');
+        await page.waitForTimeout(250);
+        const nameOrder = await titles();
+
+        expect(nameOrder).toEqual([...recentOrder].sort((a, b) => a.localeCompare(b)));
+    });
+
+    test('tapping a row opens that code in the item viewer', async ({ page }) => {
+        await openLibrary(page);
+
+        const firstTitle = await page.locator('#library-list h4').first().textContent();
+        await page.locator('#library-list > div').first().click();
+        await page.waitForTimeout(600);
+
+        await expect(page.locator('#item-fullscreen-layer')).not.toHaveClass(/pointer-events-none/);
+        await expect(page.locator('#item-fullscreen-layer')).toContainText(firstTitle.trim());
+    });
+
+    test('a scanned payload containing markup is rendered as text, never as HTML', async ({ page }) => {
+        // Code titles and payloads are arbitrary attacker-controlled text — a malicious QR can
+        // carry markup. The Library builds those fields with textContent for exactly this reason.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        await page.evaluate(() => {
+            window.OS_STATE.apps.push({
+                id: 'bc_xsstest', title: '<img src=x onerror="window.__pwned=1">',
+                type: 'grid', page: 0, order: 20, bcid: 'qrcode', data: '<b>payload</b>'
+            });
+        });
+
+        await page.click('#dock-container [data-id="nav_lib"]');
+        await page.waitForTimeout(500);
+
+        expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
+        expect(await page.evaluate(() =>
+            document.querySelectorAll('#library-list img, #library-list b').length)).toBe(0);
+        await expect(page.locator('#library-list')).toContainText('<b>payload</b>');
+    });
+});

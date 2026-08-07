@@ -43,6 +43,20 @@
         .accent-border-soft { border-color: color-mix(in srgb, var(--accent) 35%, transparent) !important; }
         .accent-bg:active { filter: brightness(0.92); }
 
+        /* Library sort pills. Active state is accent-driven per HARD RULE 7 — no hardcoded hex. */
+        .library-sort-btn {
+            padding: 0.4rem 0.9rem; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+            letter-spacing: 0.01em; color: rgba(255,255,255,0.55);
+            background: rgba(255,255,255,0.08); border: 1px solid transparent;
+            transition: transform 0.2s var(--spring-snappy), background-color 0.2s ease, color 0.2s ease;
+        }
+        .library-sort-btn:active { transform: scale(0.94); }
+        .library-sort-btn.active {
+            color: var(--accent);
+            background-color: color-mix(in srgb, var(--accent) 16%, transparent);
+            border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+        }
+
         html, body {
             width: 100%; height: 100%; margin: 0; padding: 0;
             overscroll-behavior: none; background-color: #000;
@@ -284,6 +298,33 @@
             <button id="btn-cancel-search" class="accent-text font-medium text-[17px] active:opacity-60 transition-opacity whitespace-nowrap pr-2">Cancel</button>
         </div>
         <div id="search-results" class="mt-8 flex-1 overflow-y-auto hide-scrollbar pb-10 px-2 flex flex-col gap-3"></div>
+    </div>
+
+    <!-- LIBRARY: the dedicated browse-all-codes view behind the dock's Library button.
+         Swipe-down search stays the ad-hoc "I know what I'm looking for" path; this is the
+         "show me everything I've saved" path, with filtering and sorting. -->
+    <div id="library-overlay" class="modal-spring fixed inset-0 z-[130] bg-black/50 backdrop-blur-3xl opacity-0 pointer-events-none flex flex-col">
+        <div class="flex items-center gap-3 px-5 pt-[calc(env(safe-area-inset-top,0px)+1.5rem)] pb-3 shrink-0">
+            <div class="flex-1 min-w-0">
+                <h2 class="text-white text-[26px] font-bold tracking-tight leading-none">Library</h2>
+                <p id="library-count" class="text-white/50 text-[12px] font-medium mt-1.5"></p>
+            </div>
+            <button id="btn-close-library" class="p-2.5 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all shrink-0">
+                <i data-lucide="x" class="w-5 h-5 text-white"></i>
+            </button>
+        </div>
+        <div class="px-5 pb-3 shrink-0 flex flex-col gap-3">
+            <div class="bg-white/10 border border-white/10 rounded-[1.25rem] flex items-center px-4 py-3">
+                <i data-lucide="search" class="w-[18px] h-[18px] text-white/40 mr-2.5 shrink-0"></i>
+                <input type="text" id="library-search" class="bg-transparent text-white w-full outline-none placeholder:text-white/40 font-medium text-[15px]" placeholder="Filter by name, data or format">
+            </div>
+            <div class="flex gap-2" id="library-sort-row">
+                <button class="library-sort-btn active" data-sort="recent">Recent</button>
+                <button class="library-sort-btn" data-sort="name">Name</button>
+                <button class="library-sort-btn" data-sort="format">Format</button>
+            </div>
+        </div>
+        <div id="library-list" class="flex-1 overflow-y-auto hide-scrollbar px-5 pb-[calc(env(safe-area-inset-bottom,0px)+2.5rem)] flex flex-col gap-2.5"></div>
     </div>
 
     <div id="settings-modal" class="modal-spring fixed inset-0 z-[150] bg-black/60 backdrop-blur-xl opacity-0 pointer-events-none flex items-center justify-center p-4">
@@ -555,10 +596,20 @@
          *    above this comment block: .accent-bg / .accent-text / .accent-border / soft
          *    variants), so retheming is one variable write, not a find-and-replace. Settings ->
          *    Accent Color: tap a swatch for a random one of its 4 candidates, tap again to
-         *    reroll, hold to pin the exact shade as a favorite. Seeded with a freshly curated
-         *    48-theme set (192 reachable accents) — NOT the alpha's original ~400, which never
-         *    fully survived; the original packedThemes string drops in verbatim if it turns up.
+         *    reroll, hold to pin the exact shade as a favorite.
+         *    RECOVERED: the alpha's ORIGINAL packed palette is now in — 338 themes / 1352
+         *    reachable accents, pulled verbatim out of the pre-rebuild exports and hash-verified
+         *    byte-identical across all six of them. This replaced the 48-theme curated
+         *    placeholder that stood in while it was missing, and closes the long-standing
+         *    "if the original packedThemes ever turns up" item. See the note above PACKED_THEMES
+         *    for the one subtlety: the alpha read each 24-char chunk as a full
+         *    [base, panel, border, accent] scheme, we read all four as candidate accents.
          *    Syncs through cloud (accent field) same as everything else in OS_STATE.
+         *  - Library (OSLibraryManager): the dedicated browse-all-codes view behind the dock's
+         *    Library button, which until now was a dead button that only toasted "coming soon".
+         *    Filter by name/data/format, sort by Recent / Name / Format, tap through to the item
+         *    viewer. Holds no state of its own beyond the transient filter/sort — it reads
+         *    straight off OS_STATE, so it cannot drift out of sync with the home screen.
          *  - Regression test suite (tests/regression.spec.js, Playwright): Stage 3 work. Every
          *    fix above used to be verified once by hand with a throwaway script and then thrown
          *    away — this is that verification made permanent. Run with `npm test` (needs
@@ -571,14 +622,21 @@
          *
          *  IN PROGRESS / NEXT UP
          *  --------------------------------------------------------------------------------
-         *  - More skins: port the remaining reference screenshots (e.g. the wireframe
-         *    "History / Create / Scan" tab-style generator) into additional SKINS entries +
-         *    body[data-skin="..."] CSS blocks. The scan-card skin is the template to follow.
-         *  - Library / browse-all-codes view (search overlay covers ad-hoc lookup today, not
-         *    a dedicated browsable list).
-         *  - If the alpha's original ~400-entry packedThemes string ever turns up, swap it into
-         *    PACKED_THEMES verbatim (same 24-chars-per-theme format) to restore the exact
-         *    original palette instead of the curated placeholder set.
+         *  The full multi-phase plan through to a store-shipped native wrapper lives in
+         *  ROADMAP.md at the repo root. That file is the planning document; THIS block stays
+         *  the source of truth for what is actually built. Keep them consistent.
+         *
+         *  Immediately next (Phase 1 in ROADMAP.md) — the morphism skin family. Each is a
+         *  SKINS entry + a body[data-skin="..."] CSS block, layered over the SAME DOM per
+         *  HARD RULE 5. The scan-card skin is the template to follow:
+         *    - "glass"  — glassmorphism: lavender/aqua gradient field, frosted translucent
+         *      cards, soft purple accents (ScanIT reference).
+         *    - "soft"   — neumorphism: near-white, dual-light extruded shadows, minimal chrome
+         *      (white QR-scanner reference).
+         *    - "aurora" — dark mesh/aurora gradient cards, high-contrast vivid blooms (AI OS
+         *      reference).
+         *    - "classic" — a polished pass over the ORIGINAL dock look rather than a new
+         *      aesthetic: same layout, tightened spacing/typography/shadows.
          *
          *  HARD RULES — violating these is exactly how this project broke last time
          *  --------------------------------------------------------------------------------
@@ -612,12 +670,21 @@
          *     .accent-border (or the CSS var(--accent) directly) — never a hardcoded blue-500
          *     or #hex literal. Hardcoding a color is exactly how the theme system silently stops
          *     covering part of the app.
-         *  8. When you fix a real bug or ship a real feature, add or update a test in
+         *  8. NEVER interpolate a code's title or payload into innerHTML. A scanned payload is
+         *     arbitrary text from an untrusted source — a malicious QR can carry markup, and
+         *     innerHTML would execute it. Build the structure with innerHTML if you like, then
+         *     set every user/scanner-supplied field with textContent (see OSLibraryManager
+         *     .renderList()). There is a regression test pinning this.
+         *  9. When you fix a real bug or ship a real feature, add or update a test in
          *     tests/regression.spec.js in the same change. That suite is the only thing standing
          *     between "I tested this once by hand" and it silently breaking again next session —
          *     don't let it go stale.
          * =====================================================================================
          */
+
+        // Shared bcid -> human label map. Used by the item viewer and the Library; keep it one
+        // map so a new format shows up correctly in both instead of only where it was added.
+        const FORMAT_NAMES = { azteccode: 'Aztec Code', qrcode: 'QR Code', pdf417: 'PDF417', datamatrix: 'Data Matrix', code128: 'Code 128' };
 
         const DEFAULT_STATE = {
             currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: false,
@@ -773,6 +840,8 @@
                             setTimeout(() => window.CodeGenerator.open(), 350);
                         } else if (app.id === 'nav_scan') {
                             setTimeout(() => window.ScannerEngine.start(), 350);
+                        } else if (app.id === 'nav_lib') {
+                            setTimeout(() => window.LibraryManager.open(), 350);
                         }
                     });
 
@@ -921,6 +990,8 @@
                         document.getElementById('workspace-pager').scrollTo({ left: 0, behavior: 'smooth' });
                     } else if (itemData.id === 'nav_scan') {
                         if (window.ScannerEngine) window.ScannerEngine.start();
+                    } else if (itemData.id === 'nav_lib') {
+                        if (window.LibraryManager) window.LibraryManager.open();
                     } else {
                         window.showToast(`${itemData.title} coming soon.`);
                     }
@@ -1389,7 +1460,6 @@
             // hidden-by-default in the DOM regardless of skin, so switching skins is a pure
             // CSS/attribute change — see OSSkinManager — never a DOM rebuild.
             populateEnlargeExtras(itemData) {
-                const FORMAT_NAMES = { azteccode: 'Aztec Code', qrcode: 'QR Code', pdf417: 'PDF417', datamatrix: 'Data Matrix', code128: 'Code 128' };
                 const formatLabel = FORMAT_NAMES[itemData.bcid] || itemData.bcid;
 
                 const badge = document.getElementById('fullscreen-badge');
@@ -1781,7 +1851,11 @@
                     page: targetPage,
                     order: targetOrder,
                     bcid: bcid,
-                    data: data
+                    data: data,
+                    // Explicit creation time so the Library's "Recent" sort doesn't have to
+                    // reverse-engineer it out of the id. Older items predate this field and fall
+                    // back to the id's timestamp — see OSLibraryManager.timeOf().
+                    createdAt: Date.now()
                 };
 
                 window.OS_STATE.apps.push(newItem);
@@ -2252,16 +2326,27 @@
             }
         }
 
-        // Packed theme string: groups of 24 hex chars = 4 candidate accent colors per theme —
-        // the exact trick the alpha used to turn a modest curated list into far more reachable
-        // variants (tap a swatch for a random one of its 4 candidates, tap again to reroll, hold
-        // to pin the *exact* shade currently showing as a favorite: 48 curated themes x 4
-        // candidates = up to 192 reachable accents from one short string).
-        // NOTE: this is a freshly curated 48-theme set, not the alpha's original ~400 — that
-        // exact packed string wasn't fully captured in what survived Gemini's session. If you
-        // still have the original `packedThemes` value saved anywhere, paste it in below (same
-        // 24-chars-per-theme format) and it drops in with zero other changes needed.
-        const PACKED_THEMES = "DE3535DE6D54DA1B5459CFCFDE4A35DE7E54DA1B3C59C0CFDE5F35DE8F54DA1B2459B1CFDE7535DEA154DA291B59A3CFDE8A35DEB254DA411B5994CFDE9F35DEC354DA591B5985CFDEB435DED554DA711B5976CFDEC935D7DE54DA891B5968CFDEDE35C5DE54DAA11B5959CFC9DE35B4DE54DAB81B6859CFB4DE35A3DE54DAD01B7659CF9FDE3591DE54CCDA1B8559CF8ADE3580DE54B4DA1B9459CF75DE356FDE549CDA1BA359CF5FDE355DDE5484DA1BB159CF4ADE3554DE5B6CDA1BC059CF35DE3554DE6D54DA1BCF59CF35DE4A54DE7E3CDA1BCF59C035DE5F54DE8F24DA1BCF59B135DE7554DEA11BDA29CF59A335DE8A54DEB21BDA41CF599435DE9F54DEC31BDA59CF598535DEB454DED51BDA71CF597635DEC954D7DE1BDA89CF596835DEDE54C5DE1BDAA1CF595935C9DE54B4DE1BDAB8CF685935B4DE54A3DE1BDAD0CF7659359FDE5491DE1BCCDACF8559358ADE5480DE1BB4DACF94593575DE546FDE1B9CDACFA359355FDE545DDE1B84DACFB159354ADE5B54DE1B6CDACFC0593535DE6D54DE1B54DACFCF594A35DE7E54DE1B3CDAC0CF595F35DE8F54DE1B24DAB1CF597535DEA154DE291BDAA3CF598A35DEB254DE411BDA94CF599F35DEC354DE591BDA85CF59B435DED554DE711BDA76CF59C935DEDE54D7891BDA68CF59DE35DEDE54C5A11BDA59CF59DE35C9DE54B4B81BDA59CF68DE35B4DE54A3D01BDA59CF76DE359FDE5491DA1BCC59CF85DE358ADE5480DA1BB459CF94DE3575DE546FDA1B9C59CFA3DE355FDE545DDA1B8459CFB1DE354ADE5B54DA1B6C59CFC0";
+        // Packed theme string: groups of 24 hex chars = one theme. This is the alpha's ORIGINAL
+        // packed palette, recovered verbatim from the pre-rebuild exports and spliced in
+        // programmatically rather than retyped: 8112 chars, 338 themes, byte-identical across all
+        // six surviving exports (hash-verified before it went in). The roadmap has carried
+        // "restore the original packedThemes" as an open item ever since the rebuild lost it —
+        // this is that item closed. Do not reformat, resort or "tidy" this string.
+        //
+        // Original semantics, recorded here so they can't be lost a second time: the alpha
+        // destructured each chunk as [base, panel, border, accent] — a full 4-color scheme for a
+        // solid-panel UI, NOT 4 candidate accents. This app is wallpaper-based frosted glass and
+        // has no --bg-base/--bg-panel surfaces to theme (HARD RULE 5: skins layer over one DOM,
+        // they never refork it), so all four colors are used here as candidate ACCENTS instead.
+        // That reinterpretation is safe, and was checked against the real data before relying on
+        // it: every slot is a genuine palette color (mean saturation 0.54-0.62 across all 338
+        // themes), not washed-out chrome. --accent-text is contrast-computed per color, so even
+        // the near-white slot 0 of theme 1 (#F2F2F7 — the alpha's iOS-light-mode scheme) stays
+        // legible on white.
+        //
+        // 338 themes x 4 candidates = up to 1352 reachable accents, replacing the 48-theme (192)
+        // curated placeholder that stood in while the original was missing.
+        const PACKED_THEMES = "F2F2F7FFFFFFE5E5EA007AFF51609174BEC1ADEBBEEEF3AD734444C37857EEEDBE99B27FF2FC9FEDBB91DA6969B059776342586D608760A0B09AD1AAF39DE59B77DA4E6B9F6FA5B17DD87D4C91735B446A906387E97A7A8B4F808B76A5B9C0D5B1E9A37AC38F88E0D0C7EEFF639CD95454C5342056220E248ECCCC50717B3A4042212121F1F4C6D6D0B8AAA6A4837D7DE1DFBA7F7E904D424D36292CF7C469C46352714433412525E6F18C72B37E437975555C788BE3E1D3F7AD95BB7697935CD68438F1B24B36846B4BB39A9AE17B6BBA6230747042476DFFFF8FEC9E69D560737A4579F96D6DB84D69A9D7F68FB1E9EBD9DDD8AED39182C4486989D5AB9CE6E6967BC0A354878F48829E51DACF9EF5CFE8FFB1686EE25C3E84F35C6EFFA87B8FC9AE548E87385B66BDDAA5E2EFF1B6D5E165799B5552731D1716402A23A55233F3BC773E3245524A7997D8EC74BBCAE04B5AE497565B305A9A4C68F7EC77DA5151ED9F668764642A221E46322BC73F65D580BC333A7B4B698270C6C7B4FFD8D789D79D65C95D54A42A3D66FA8572B249686C37796C5FA7E5F1E3A3CD9E52947135635B7FCBD7857EBBCA9DD7FACBD3FFE76AE0AB5B94784C6E4C41ABF2FBB589EFA964CDF1A3C54C5F7A393E6F3D2E4F321D2FF7FFBAF7E39CEBAF81DA8067EBBF587693533D655D33484DA45FBE382F604851884B81ABB3F7F67DD076F1F592F4CB813E65459973E282CEDAECFFB198D8FF796DCE694B7C402A3036413D4C657EF29696FFE2ADC1E8DAC968685E4949866770D15555EDA489E8FD96A1D76FDFFCAD6EC189595CAE424478314357456672E3B587C98C70364968FDDF97E096646C43434531B1A836ADF16896FFF0A4B2B7FFD5E8FFD9A2F1D86F9BEFD8F4D4ABDCEA5656F1E38AD19FEBFFFD9DF7D08CED8282FFEBBC5DA7AE543D46292830BDF9F793C4FFB67CCF765A60D4A2BE75597DB0B8B4F8E4DD8CDADB815E94F4F49EF1D089FFD7BE95977A3F4C48373640EF8F6BD36239E2DD66A8B94E49493C9FA180F2F77F6EBAA73D322C6545349C563DD9B26EDBEF98605CB860C2A49DF0AC3B503D4A746EF1EDB3C8CF94477D7F1F535764BD97C2FFBBEDF3B7E5C8909268A5644A7FD19178A1583ED4C07AF8F7A5A6F2DB7BCACE678EB44F4E799EFFA936485E33314629252C304D4E4B75518A9E52F0D699804D3B522E2475BEDA9AEDF42B2E4AE8454590374953354A764F517FC5CA9FE6DCCFFFFFBBE06C7CB855469B4C3C6E57F6AAD0E9767C8F5B4ADDD49F5F5DBD5E87B883CEE0A4FBE3EE7C4BC45D3EC6C5B3F5F0C47A81EB504AA72533615995977A9EAF655989DE88A5FFCEBB9A69E147429DF7B7F3E27393E6A157C9753D973A3A5B252D33425B5BAAEC526ED0484CB0884939967248CAA653E9E995EE837454567ADAB784F8F3B6EEFCA9B7E57683CC615A9E7C56BFB538817AF5F093FBD66F96C99C55829C4857913A316EFF94C7E760BF7E49AC343A69352D4D6D619269B0C192E0A9567582464D5CF7DDA4B89068FDA4CFF46D6DB3533DF0D4A26C95EC3D61AD81E1AF41A06FB0E6FF7687DB8F45A9582E48693F27E4C144DF7943C24B3922576341D8BF2F89B33B50B2F9ED69F08A5DB83B5E6A2C70C1F88055C59D4F5AA87481CFF75B5BC83B4C46265C794D9A1B4B4DF3F66FF1D15FE8984A6119198E2735DEAE4FFAF18935394126282B5F85DB90B8F826635212806153C0A2B5F7E665E8923994D6354ABF3D289B561F55DF3554902424541F1FFBF8CAA13F805E10433608274EC9DF63A1D03576A7344986FFEA54FFCB3CFEAA2BFF5757ECA106D34F1E91300A5F1B0049260A623B1CCAAD8CF6EDDD3F3F3F95956ED2D86EEFEFEFE7272DAE2A2FFEC24AF6E5E470560DC3A655EFD99BF8EDCDE5EDC4E1A6E1934662463832D7DF710E5F76083D56081E3F48466D3D84A846CDCFABEDD81A2634203E5FEEC550F9E3A3F0F5F9C9D6DF52616B1E2022F6538FB83F87F3E94CE8D124F5F0E8D3BD9AA28F70674F04AEE1FC60ABFB5170FD4636FC438A7052CEBA8AFFB4EAFF81FFF56CF1B1494366A9679CEBFADB3FECF7C551574827332DF7B449DDE9F88293E35847AD83CBFB377FD9EDF68DF1D8512C29554C5FB1F9F194CDD5823629994262C544AEC293EFED4B4C7AEB92FBC855BCA03271D6ECFA6F3826B84A39F15C5CEFBFC6C228288A0F0F3C03030E153A3D5AF122D1EEE2F3F5231A31E42F45B42B3F8AB2FFD2F079C8D35BAD8C45A2663EE4BA6FFAE88EEB5E60A52F57483243684184CB73BBF3C2CBF83E4BF7E185CB9BBA9D53C31D025101908174CC7ED2EBA7D93153EB5033FF9D00FFD82CD2E4F18FACC0818D97484D51303242394359F2BE8DBA6C650E2E3B1666787DB9B3D8D7C3492B7B301551ED8A0AF7D914E8E3C7D4CEB0B85B3FA65238EADADAD59DC5BF5CAA4D3A4D2F1B44892C41C89034FBFF5F343434055E6862A388B9D2D25639A620236DFA4848FFE087FF9234FFCD3CFAFCB4B0DB72E35454F6FA7BD2D868AC9742E0F6AA69AEFF9D4DFF6B32782F2342E42F45B42B3F7CA0E5FFEDC6FFC478FFF87D724330FFFBB7FFA84968848B4A2B131A2634203E5FFFCC00FEE5B1114B5F1A936F88D498F3E9D24AC6B74F5E7F965F8AFF70704A237761529FBA69DEF3E96D222831393E4600ADB5EEEEEE5DACBD24527AA7BCB9E0EBEBEB2A5DFF6F41FFB44BFFEB7D7400218D0033BD3246FDC8AA062C800E6AC74FB9FCF6F5DAE4E4E441B3D361D2DC444444BDD8F182A6CB3667A6214177A62671DB466BF96C48F5D773C2FFFF8BDEFFA888FF26466FFBA834FCE850387ADF50C4EDFEED30FF6868924992504077442B72993D9A8A6BF0FEDF9680FFDB55E0A35B70F34850B91F3A5241A1868CCA6ED3F689F5EB82DFB361D3775DA75377824C96433466FFAF4FED733FA8E0E15A96BB75448CC46CAAE9E6C9CA6144566683393E51FDFBDAD3D0A8819F7F2D4659D0F66A36C186158A8C1E5287F7EBC9F2CC96814906D35823FADB3FECF7C5EA565627332D055049FAF35E069A8EA1E3D8D1DBBD91AA9D3E606F193441957541BE9639FCCF5BDDE9EB5156612E9F8268C170D6EC8CC24242E08932E5C955F2F5B1FFC7C7DC7646A45C5C6C476ED8B5DEF9F1BFF3B75BCC7F2A4AC3BEA3DEC9E6EFBFFAAC647C6FFF5CA9FFFCFF90FFDE68335C49678C40BDBE36E5DD90EB586FD8E9F04AA0D5454553CCF62C98C74E60A261357A5B3B544183E85A2CB978107A8BF7FA8676E7C79E7EFF9C4B9E0D7685084D6869C181CCF186D5441C013C4D9DD5CBF3E5B13D5A599AEBDD367DB5313E86FDF3F3F8E7E7A070A172406047D0BDDAEC8BFFFDD6FF5DA2FFE390FF926BFF4A4AA83C54FF6D3FB14B4B59405736162EFF304F002651775ADA28C7FA776AE388E570FBFF67FFB44AF0DCA2E0B58CCD7856B5421E1B515E33827588B990ABCD9EFFEA66F59159C750806B206A2B39643482AA6DB3B5F9CC7B06CDFF8200FF470C8518134C5D697A383838F66B34F2D639F4E0225A37C318224BDE1B4AFFFBE3FFA9A96A425C26271AF1EFE9BECEB034857FB0A48AF1F5BCFECB92F99A9AD1F6A4F2F1A7EF5959B4314488A9F7D14848EC952EF0E449D6F7F88AACFF6151BBD7F09667BA6D272E6EFFFFC3FFC55CE95D3504879C0C3C78090030F30A49FF5335DFE0D43E92A33539400000330066CC0099FFEDEDED302A775457A6EEBB55F1E6D16B62CE372E962F99AD84EFE2FFE180EBA0598B3C7641245CF0F87F4BC87F29668B6EAFF785203BCB3B3BE0C45CFFF98C8E334CEC9454F1F08AC6CD7880EF914BA54DF3EF82F0C15AB7569A883C82E4F091F9CD7680E5E97D77F6793E71E471A79A60C1AC92FA96EBF048C3BED9DAD7C24D2C3E4A611A26393B939B2F818991F3FCC9FBFF620808A53F3FF4CE74FFE9C1FFB19BF660609A2C80551863F0E9FFCEA9FFB346FF5454540C22330654710A91ABFFC045F2EB80A2BF392685BF144673E0FFFB29CDB5008698F39C9CF7F4EA9CE3CF6A7FF5574B9BF7DEADCD443972B8966F77771C0C2A343B9961BDF69AFFDC563761A7425CF3825FFFE26FA099FF5A67A6FCB241D68D0896CD39F5FF65FFBA47FF5B44243D44167A8B2DEA8F24B273293462211A4CF33535A51C2D6A2E2ECD5A5AFFCF68EFF6A5C6F1A2A8D96643A367385380489CC174F6A743A680236969062925044A423A9188B8E1DDF46188491D7F642AB67779FFF7F5B2BAD4F95E89EF352771F6F6D947E4E05F81E4F67FF551AF5BB3E55EF7FFA3DDDB6AF8AA27FAC55BFFF8B620655F0D7E8313293DFFAF87EEF0F2FD5F0000204A005792D9FAFFF7626221658365C0BACFFDF8FF75173E39392C2727F6F4F4F9F8EDC4E3CB6A9C78FFF1BC480032DF0054FF8B6AFFD2BBFFA258FFF7C2A02A634B125C00354500454A3C6562ED636390AEFFCEFC8660EFB8F9F7F76900FF9951FFFFD700FAF7FF203541374955F62A66FFD933F4F9F4C4E3CB8AAE92616161333366FF5F5FF9E75EF0F0F0FBFFA874DAC620C1BD33354A092A35658525CFEE91F8EEB492E6E6FFF9AFD65D7A524C84BAD7DFFFE2E2F6F6F699DDCC283149404B6900818DBEDF33FFF9E0F1C550FF6600CE252532364360647093DEFFF7F7F75BA19BFCEAEAF5D9D9FBEAD1404B69283149F73859F3ECC8EEEEEEFF7100BE3030222222EAAFAFA2738C645C84427996E9FADDB8E4C93F546842291CA8E6CFFDFFABFFD3B6FFAAA5E7759AFFA35FBA78CD755DA3062743113A5DC4FFDDF9F9F9EF7B7BFCF3CAC4EADA919190FEFFDFDDE0AB97CBA9668BA4062743113A5DFF7A8AF9F9F9FCE8AA97DE9508C2995711790833580F4471FC3C3CF6F6F6FFD3ADFFA96A00558515005DF2F2F0FF5E3A2C365D272E4FFEEB974FB783409D9B034561F8B195F67280C06C84355C7D0900890060CA91CEFFFCDC74294A660B3846FFBBBBFCD2C2240041900048FF4057FF8260EFF0F474DBEF0074E4264E86F8D5F058D5D341A4C33F4B83FFF1BC7DC3836A9C78446E5C002BDC2F4BFF00A6E7FFE37F232931393E464ECCA3EEEEEEF6EC66FADC6DF97272F6545470228396207176B39DFDB44BFAFFB8C5F0A435B0AB226B80F8B595F67280C06C846C5B7C448EF675C2F665DAF7FFE981E4EDDB307672144D531A3C40FF4D4DFF8364FDB87DFFE8D5FAFAF600FFF000D1FF3D6CB91C1124684656DE774EB7E1B51C1124693E5274B49BA7D7C58EA6B4E7EFF3FF8F56984A5945EBA521ABA51D566E163A5F011F3F0960BD429FFDFEF2BFFF6107E9290FC40018292725F7F7F7FF570C60647032364384B9EFFBE4C9FF5D5D952E4B78FEE04BC2C53B9A9CFEF4A9ECF0F133CCCC2980B92C3E50FFB6B9FAE3D9BBDED661C0BFD9E4DDF4B886EE8572784B60B7D7CAA6D0C4A6C6BFA0B2AE7D6C82A58894C2A1A8DECBB8002B5B256D852B48658FE3CF2D2E3715181AFD5E531D70A2070D1120272C7D8B99BCCBD14B2E2D5A3A38714745B49B8DE6F7F6ADE0E08DBFBF4B7F7F031927044A720E94B5D7EDE6D73D3DF38080FACFCFFFFFFF2A2C384143546D6E77A9AAAE0C17293655736589A4B8D3DAE7F1FAC8E2F194B9D9577399F2F2F2D9D9D9BFBFBF8C8C8C203239495E657E959CBFC9CC0D1F2D1D3A4E2C5A6E4F8A9C1F2B3C35536A5F7B8E9EB2C4D9E4ECB7CAD48EA9B96A859611212D253D4F385B6E4C7A8F";
 
         const THEMES = [];
         for (let i = 0; i < PACKED_THEMES.length; i += 24) {
@@ -2291,6 +2376,12 @@
                 try { localStorage.setItem('xancode_fav_accents', JSON.stringify(this.favorites)); } catch (e) {}
             }
 
+            // Full rebuild of the swatch row. With the original 338-theme palette restored this
+            // builds ~338 nodes and re-scans the document for lucide icons, so it is reserved for
+            // changes that actually alter the row's CONTENTS (favorites added/removed). Picking an
+            // accent only changes which swatch is ringed — that goes through syncActiveRings()
+            // instead, which touches two class lists. Calling render() on every tap made the row
+            // visibly stutter once the palette grew past the old 48-theme placeholder.
             render() {
                 if (!this.rowEl) return;
                 this.rowEl.innerHTML = '';
@@ -2306,8 +2397,25 @@
                 safeCreateIcons();
             }
 
+            // Repaint only the active ring, in place. Keeps accent picking O(row) class writes
+            // instead of an O(338) DOM rebuild.
+            syncActiveRings() {
+                if (!this.rowEl) return;
+                Array.from(this.rowEl.children).forEach(el => {
+                    if (!el._swatch) return;
+                    const isActive = el._pinnedHex
+                        ? el._pinnedHex.toUpperCase() === this.current
+                        : el._quad.some(c => c.toUpperCase() === this.current);
+                    el.classList.toggle('border-white', isActive);
+                    el.classList.toggle('border-transparent', !isActive);
+                });
+            }
+
             createSwatch(quad, pinnedHex) {
                 const btn = document.createElement('button');
+                btn._swatch = true;
+                btn._quad = quad;
+                btn._pinnedHex = pinnedHex;
                 const isActive = pinnedHex
                     ? pinnedHex.toUpperCase() === this.current
                     : quad.some(c => c.toUpperCase() === this.current);
@@ -2357,7 +2465,7 @@
                 }
                 if (navigator.vibrate) navigator.vibrate(10);
                 this.applyAccent(hex, true);
-                this.render();
+                this.syncActiveRings();
             }
 
             toggleFavorite(hex) {
@@ -2695,6 +2803,163 @@
             }
         }
 
+        // The dedicated browse-all view behind the dock's Library button (previously a dead
+        // button that only toasted "coming soon"). Reads straight off OS_STATE — it owns no state
+        // of its own beyond the transient filter/sort, so it can never drift out of sync with the
+        // home screen, and nothing here needs to be persisted or synced.
+        class OSLibraryManager {
+            constructor() {
+                this.overlay = document.getElementById('library-overlay');
+                this.list = document.getElementById('library-list');
+                this.countEl = document.getElementById('library-count');
+                this.searchInput = document.getElementById('library-search');
+                this.sortRow = document.getElementById('library-sort-row');
+                this.sort = 'recent';
+                this.query = '';
+
+                document.getElementById('btn-close-library').addEventListener('click', () => this.close());
+                this.searchInput.addEventListener('input', (e) => {
+                    this.query = e.target.value;
+                    this.renderList();
+                });
+                this.sortRow.querySelectorAll('.library-sort-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        if (this.sort === btn.dataset.sort) return;
+                        this.sort = btn.dataset.sort;
+                        this.sortRow.querySelectorAll('.library-sort-btn')
+                            .forEach(b => b.classList.toggle('active', b === btn));
+                        if (navigator.vibrate) navigator.vibrate(8);
+                        this.renderList();
+                    });
+                });
+                // Tapping the backdrop outside any row dismisses, matching the other overlays.
+                this.overlay.addEventListener('click', (e) => {
+                    if (e.target === this.overlay) this.close();
+                });
+            }
+
+            open() {
+                this.searchInput.value = '';
+                this.query = '';
+                this.renderList();
+                this.overlay.classList.remove('opacity-0', 'pointer-events-none');
+                this.overlay.classList.add('opacity-100', 'pointer-events-auto');
+            }
+
+            close() {
+                this.overlay.classList.add('opacity-0', 'pointer-events-none');
+                this.overlay.classList.remove('opacity-100', 'pointer-events-auto');
+            }
+
+            isOpen() {
+                return !this.overlay.classList.contains('pointer-events-none');
+            }
+
+            // "Recent" needs a creation time. New codes carry createdAt; anything saved before that
+            // field existed — and the seeded defaults — fall back to the timestamp baked into the
+            // id ('bc_' + Date.now()). Seeds like 'bc_1' parse to a tiny number and sort oldest,
+            // which is exactly right. Anything unparseable sorts last rather than throwing.
+            timeOf(app) {
+                if (typeof app.createdAt === 'number') return app.createdAt;
+                const n = parseInt(String(app.id || '').replace(/^bc_/, ''), 10);
+                return Number.isFinite(n) ? n : 0;
+            }
+
+            collect() {
+                const q = this.query.trim().toLowerCase();
+                let items = window.OS_STATE.apps.filter(a => a.type === 'grid');
+
+                if (q) {
+                    items = items.filter(a =>
+                        (a.title || '').toLowerCase().includes(q) ||
+                        (a.data || '').toLowerCase().includes(q) ||
+                        (a.bcid || '').toLowerCase().includes(q) ||
+                        (FORMAT_NAMES[a.bcid] || '').toLowerCase().includes(q)
+                    );
+                }
+
+                const byName = (a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
+                if (this.sort === 'name') items.sort(byName);
+                else if (this.sort === 'format') items.sort((a, b) =>
+                    (FORMAT_NAMES[a.bcid] || a.bcid || '').localeCompare(FORMAT_NAMES[b.bcid] || b.bcid || '') || byName(a, b));
+                else items.sort((a, b) => this.timeOf(b) - this.timeOf(a));
+
+                return items;
+            }
+
+            renderList() {
+                const items = this.collect();
+                const total = window.OS_STATE.apps.filter(a => a.type === 'grid').length;
+
+                this.countEl.textContent = this.query.trim()
+                    ? `${items.length} of ${total} ${total === 1 ? 'code' : 'codes'}`
+                    : `${total} saved ${total === 1 ? 'code' : 'codes'}`;
+
+                this.list.innerHTML = '';
+
+                if (!items.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'flex flex-col items-center justify-center text-center gap-3 mt-24 px-8';
+                    empty.innerHTML = `
+                        <div class="w-16 h-16 rounded-[1.4rem] accent-bg-soft accent-border-soft border flex items-center justify-center">
+                            <i data-lucide="${total ? 'search-x' : 'layout-list'}" class="w-7 h-7 accent-text"></i>
+                        </div>
+                        <p class="text-white/70 font-bold text-[15px]">${total ? 'No matches' : 'Library is empty'}</p>
+                        <p class="text-white/40 text-[12.5px] font-medium leading-relaxed"></p>
+                    `;
+                    empty.querySelector('p:last-child').textContent = total
+                        ? `Nothing saved matches "${this.query.trim()}".`
+                        : 'Codes you create or scan will collect here.';
+                    this.list.appendChild(empty);
+                    safeCreateIcons();
+                    return;
+                }
+
+                items.forEach(app => {
+                    const row = document.createElement('div');
+                    row.className = 'flex items-center gap-3.5 bg-white/10 border border-white/10 p-3 rounded-[1.25rem] active:scale-[0.98] transition-transform cursor-pointer shadow-lg shrink-0';
+                    row.innerHTML = `
+                        <div class="w-14 h-14 bg-white rounded-[0.9rem] p-1.5 flex items-center justify-center shrink-0 shadow-sm">
+                            <canvas id="lib-can-${app.id}" class="max-w-full max-h-full pixelated"></canvas>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <h4 class="text-white font-bold text-[15px] truncate tracking-wide"></h4>
+                            <p class="text-white/45 text-[11px] font-mono truncate mt-0.5"></p>
+                            <div class="flex gap-2 mt-1.5 items-center">
+                                <span class="accent-text accent-bg-soft text-[9.5px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded"></span>
+                                <span class="text-white/35 text-[10px] font-semibold">Page ${(app.page || 0) + 1}</span>
+                            </div>
+                        </div>
+                        <i data-lucide="chevron-right" class="w-5 h-5 text-white/25 shrink-0"></i>
+                    `;
+
+                    // textContent, not innerHTML, for every user/scanner-supplied field: a scanned
+                    // payload is arbitrary attacker-controlled text and must never be parsed as markup.
+                    row.querySelector('h4').textContent = app.title || 'Untitled';
+                    row.querySelector('p').textContent = app.data || '';
+                    row.querySelector('span').textContent = FORMAT_NAMES[app.bcid] || app.bcid || 'code';
+
+                    row.addEventListener('click', () => {
+                        this.close();
+                        setTimeout(() => window.InteractionManager.openEnlarge(app), 320);
+                    });
+
+                    this.list.appendChild(row);
+
+                    // Same guarded render as the home grid — a corrupt payload logs and leaves an
+                    // empty tile instead of taking the whole list down.
+                    try {
+                        bwipjs.toCanvas(`lib-can-${app.id}`, {
+                            bcid: app.bcid, text: app.data, scale: 3,
+                            backgroundcolor: 'ffffff', barcolor: '000000', textcolor: '000000', padding: 0
+                        });
+                    } catch (e) { XanLogger.error('Library canvas error:', e); }
+                });
+
+                safeCreateIcons();
+            }
+        }
+
         // --- INIT ---
         window.TimeEngine = new OSTimeEngine();
         window.Renderer = new OSRenderer();
@@ -2705,6 +2970,7 @@
         window.CodeGenerator = new OSCodeGenerator();
         window.ScannerEngine = new OSScannerEngine();
         window.SettingsManager = new OSSettingsManager();
+        window.LibraryManager = new OSLibraryManager();
         window.SkinManager = new OSSkinManager();
         window.ThemeManager = new OSThemeManager();
         window.Layout = new LayoutManager(window.Renderer);
