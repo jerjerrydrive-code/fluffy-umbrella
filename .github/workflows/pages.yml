@@ -1,0 +1,39 @@
+# Publishes the app to GitHub Pages so it can be opened on a phone and installed as a PWA.
+#
+# One-time setup by a repo admin: Settings -> Pages -> Build and deployment -> Source:
+# "GitHub Actions". Without that, this workflow runs but has nowhere to publish to.
+#
+# The whole repo root is uploaded as-is. That works because the app is self-contained: index.html
+# plus ./vendor, ./icons, manifest.json and sw.js, with every path relative — so it runs correctly
+# from the /<repo-name>/ subpath Pages serves from, with no build step and no base-href rewriting.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [claude/recover-github-code-aimrux]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; always finish the most recent one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - id: deployment
+        uses: actions/deploy-pages@v4
