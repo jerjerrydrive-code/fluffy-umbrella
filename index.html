@@ -5,8 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="XanCode">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#0a0a12">
     <title>XanCode OS - Master V2.12</title>
-    
+
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/bwip-js/4.1.1/bwip-js-min.js"></script>
@@ -1810,6 +1817,27 @@
                 setTimeout(() => { window.Renderer.render(); }, 400);
             }
         });
+
+        // Lock to portrait so the home-screen layout never has to reflow mid-use.
+        // Browsers require a user gesture before granting the lock, so we retry on first touch/click too.
+        const lockOrientation = () => {
+            try {
+                if (screen.orientation && screen.orientation.lock) {
+                    screen.orientation.lock('portrait').catch(() => {});
+                }
+            } catch (e) {}
+        };
+        lockOrientation();
+        document.body.addEventListener('touchstart', lockOrientation, { once: true, passive: true });
+        document.body.addEventListener('click', lockOrientation, { once: true });
+
+        // Register the offline-capable service worker so the app shell (and this session's
+        // scan/generate/settings state) still opens without a network connection.
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js').catch((e) => XanLogger.error('Service worker registration failed', e));
+            });
+        }
     </script>
 </body>
 </html>
