@@ -1,0 +1,1815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>XanCode OS - Master V2.12</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bwip-js/4.1.1/bwip-js-min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+    
+    <style>
+        :root {
+            --spring-snappy: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            --spring-smooth: cubic-bezier(0.25, 1, 0.5, 1);
+            --squircle-radius: 22.5%;
+            --grid-cols: 4;
+            --app-size: 60px; 
+            --grid-gap-y: 28px;
+        }
+
+        html, body {
+            width: 100%; height: 100%; margin: 0; padding: 0;
+            overscroll-behavior: none; background-color: #000;
+        }
+
+        body {
+            background-image: url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?ixlib=rb-1.2.1&auto=format&fit=crop&w=1200&q=80');
+            background-size: cover; background-position: center; background-repeat: no-repeat;
+            overflow: hidden; -webkit-user-select: none; user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            transition: background-image 0.5s ease-in-out;
+        }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .pixelated { image-rendering: pixelated; }
+
+        .ios-glass {
+            background: rgba(20, 20, 20, 0.65);
+            backdrop-filter: blur(25px);
+            -webkit-backdrop-filter: blur(25px);
+            border: 0.5px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+        }
+
+        .app-icon {
+            width: var(--app-size); height: var(--app-size);
+            border-radius: var(--squircle-radius);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+            transition: transform 0.2s var(--spring-snappy), width 0.3s ease, height 0.3s ease;
+            will-change: transform, width, height;
+        }
+        
+        body:not(.edit-mode) .app-icon:active { transform: scale(0.92); }
+
+        .app-label {
+            color: #ffffff;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8), 0 2px 6px rgba(0, 0, 0, 0.6);
+            font-weight: 500; font-size: 11.5px; letter-spacing: 0.2px; margin-top: 6px;
+            text-align: center; width: calc(var(--app-size) + 16px);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            transition: width 0.3s ease, opacity 0.3s ease;
+        }
+
+        .os-grid {
+            display: grid;
+            grid-template-columns: repeat(var(--grid-cols), minmax(0, 1fr));
+            row-gap: var(--grid-gap-y);
+            padding: max(2vh, 20px) max(4vw, 16px);
+            justify-items: center; align-content: start;
+            width: 100%; height: 100%; max-width: 900px; 
+            transition: row-gap 0.3s ease;
+        }
+
+        .pagination-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: rgba(255, 255, 255, 0.4);
+            transition: all 0.3s ease; cursor: pointer;
+        }
+        .pagination-dot.active {
+            background: #ffffff; box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .page-wrapper {
+            flex: 0 0 100vw; width: 100vw; height: 100%;
+            scroll-snap-align: start; scroll-snap-stop: always;
+            display: flex; justify-content: center; align-items: flex-start;
+        }
+
+        @media (min-width: 1024px) { .os-grid { max-width: 1200px; padding: 40px 32px; } }
+
+        #main-dock { transition: transform 0.6s var(--spring-snappy), opacity 0.5s ease; }
+        body.edit-mode #main-dock { transform: translateY(150%); opacity: 0; pointer-events: none; }
+        
+        .custom-drag-ghost { opacity: 0 !important; }
+        .empty-slot { width: 100%; height: var(--app-size); border-radius: var(--squircle-radius); opacity: 0; pointer-events: none; transition: all 0.2s; }
+        
+        body.edit-mode .empty-slot { pointer-events: auto; }
+        body.edit-mode .app-icon-wrapper { touch-action: none; }
+        
+        .app-icon-wrapper.drag-ready .app-icon {
+            transform: scale(1.08); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.25); opacity: 0.9;
+        }
+
+        .edit-only {
+            opacity: 0; transform: scale(0.2); pointer-events: none;
+            transition: transform 0.4s var(--spring-snappy), opacity 0.3s ease;
+            transform-origin: center;
+        }
+        body.edit-mode .edit-only { opacity: 1; transform: scale(1); pointer-events: auto; }
+
+        @keyframes jiggle { 
+            0% { transform: translate3d(0,0,0) rotate(-1.5deg); } 
+            50% { transform: translate3d(0,0,0) rotate(1.5deg); } 
+            100% { transform: translate3d(0,0,0) rotate(-1.5deg); } 
+        }
+
+        .jiggle-target {
+            will-change: transform; transform: translateZ(0);
+            backface-visibility: hidden; outline: 1px solid transparent;
+            transition: transform 0.3s var(--spring-smooth); 
+        }
+        body.edit-mode .pixelated { image-rendering: auto !important; }
+        body.edit-mode .app-icon-wrapper .jiggle-target { animation: jiggle 0.3s infinite; } 
+        body.edit-mode .app-icon-wrapper:nth-child(even) .jiggle-target { animation-duration: 0.32s; animation-direction: reverse; } 
+        body.edit-mode .app-icon-wrapper:nth-child(3n) .jiggle-target { animation-duration: 0.28s; animation-delay: 0.05s; }
+
+        .modal-spring { transition: transform 0.5s var(--spring-snappy), opacity 0.4s ease, backdrop-filter 0.4s ease; }
+        .slide-up-spring { transition: transform 0.6s var(--spring-snappy), opacity 0.4s ease; }
+        
+        .apple-toggle-knob { transition: transform 0.4s var(--spring-snappy), background-color 0.3s ease, width 0.2s ease; }
+        input:active + .apple-toggle-bg .apple-toggle-knob { width: 26px; }
+
+        .grid-select-btn { transition: all 0.2s ease; }
+        .grid-select-btn.active { background: #3b82f6; color: white; border-color: #3b82f6; }
+
+        #workspace-container {
+            transition: transform 0.4s var(--spring-snappy), filter 0.4s ease, opacity 0.4s ease;
+            transform-origin: top center;
+        }
+        .search-active-workspace {
+            transform: scale(0.93) translateY(15px);
+            filter: blur(12px) brightness(0.7);
+        }
+
+        @keyframes scan-laser {
+            0% { transform: translateY(16px); opacity: 0; }
+            15% { opacity: 1; }
+            85% { opacity: 1; }
+            100% { transform: translateY(272px); opacity: 0; }
+        }
+        .animate-scan-laser { 
+            animation: scan-laser 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate; 
+            will-change: transform, opacity;
+        }
+        
+        #scanner-cutout.scanner-frame-active {
+            transform: scale(1.04);
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55), inset 0 0 30px rgba(34, 197, 94, 0.4) !important;
+        }
+        
+        #scanner-reader { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; -webkit-touch-callout: none; }
+        #scanner-reader video {
+            object-fit: cover !important; width: 100% !important; height: 100% !important;
+            position: absolute !important; top: 0 !important; left: 0 !important;
+            -webkit-touch-callout: none; pointer-events: none;
+        }
+        #scanner-reader__scan_region, #scanner-reader__dashboard_section_csr, #scanner-reader__dashboard_section_swaplink,
+        #scanner-reader__dashboard { display: none !important; }
+        #scanner-reader canvas { display: none !important; }
+    </style>
+</head>
+<body class="w-full h-full text-white relative transition-colors duration-300">
+
+    <div id="workspace-container" class="w-full h-full flex flex-col relative z-10">
+        
+        <header id="os-header" class="w-full h-12 flex justify-between items-center px-6 z-40 shrink-0 pt-2 pointer-events-none">
+            <div id="os-clock" class="text-white font-bold text-[15px] tracking-wide drop-shadow-md w-14">
+                --:--
+            </div>
+            
+            <div class="flex justify-end pointer-events-auto">
+                <button id="btn-open-settings" class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md">
+                    <i data-lucide="settings" class="w-[18px] h-[18px] text-white drop-shadow-md"></i>
+                </button>
+            </div>
+        </header>
+
+        <main class="flex-1 w-full relative overflow-hidden flex flex-col -mt-2">
+            <div id="workspace-pager" class="w-full h-full flex overflow-x-auto snap-x snap-mandatory hide-scrollbar transition-opacity duration-500">
+            </div>
+            <div class="absolute bottom-[90px] left-0 right-0 flex justify-center items-center gap-2.5 z-20 pointer-events-none drop-shadow-md" id="pagination-container"></div>
+        </main>
+
+        <div class="absolute bottom-4 left-0 right-0 z-30 flex justify-center pointer-events-none px-4">
+            <nav class="ios-glass rounded-[2.25rem] p-3 pointer-events-auto w-full max-w-[380px]" id="main-dock">
+                <div id="dock-container" class="flex justify-around items-center w-full gap-1 px-1">
+                </div>
+            </nav>
+        </div>
+    </div>
+
+    <div id="search-overlay" class="modal-spring fixed inset-0 z-[120] opacity-0 pointer-events-none flex flex-col pt-12 px-4">
+        <div class="absolute inset-0 bg-black/10 -z-10"></div>
+        <div class="flex gap-3 items-center transform -translate-y-16 transition-transform duration-500 var(--spring-snappy)" id="search-bar-container">
+            <div class="flex-1 bg-[#1c1c1e]/80 backdrop-blur-3xl border border-white/10 rounded-[1.25rem] flex items-center px-4 py-3.5 shadow-2xl relative">
+                <i data-lucide="search" class="w-5 h-5 text-gray-400 mr-2.5"></i>
+                <input type="text" id="search-input" class="bg-transparent text-white w-full outline-none placeholder:text-gray-400 font-medium text-[17px]" placeholder="Search Codes & Apps">
+            </div>
+            <button id="btn-cancel-search" class="text-blue-500 font-medium text-[17px] active:opacity-60 transition-opacity whitespace-nowrap pr-2">Cancel</button>
+        </div>
+        <div id="search-results" class="mt-8 flex-1 overflow-y-auto hide-scrollbar pb-10 px-2 flex flex-col gap-3"></div>
+    </div>
+
+    <div id="settings-modal" class="modal-spring fixed inset-0 z-[150] bg-black/60 backdrop-blur-xl opacity-0 pointer-events-none flex items-center justify-center p-4">
+        <div class="bg-[#1c1c1e] border border-white/10 rounded-[2.5rem] p-6 w-full max-w-sm transform scale-90 shadow-2xl modal-spring flex flex-col gap-6" id="settings-panel">
+            <div class="flex justify-between items-center px-2">
+                <h3 class="text-xl font-bold text-white tracking-tight">OS Preferences</h3>
+                <button id="btn-close-settings" class="p-2 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all duration-300">
+                    <i data-lucide="x" class="w-5 h-5 text-white"></i>
+                </button>
+            </div>
+            <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
+                <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Screen Grid</div>
+                <div class="flex justify-between gap-2 bg-black/40 p-1.5 rounded-2xl">
+                    <button class="grid-select-btn flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="auto">Auto</button>
+                    <button class="grid-select-btn flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x5">4×5</button>
+                    <button class="grid-select-btn flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x6">4×6</button>
+                    <button class="grid-select-btn flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x7">4×7</button>
+                </div>
+                <div class="flex items-center justify-between mt-2 pl-1 cursor-pointer" onclick="document.getElementById('auto-arrange-toggle').click()">
+                    <span class="text-white font-medium text-sm">Auto-Arrange Layout</span>
+                    <label class="relative inline-flex items-center cursor-pointer pointer-events-none">
+                      <input type="checkbox" id="auto-arrange-toggle" class="sr-only peer">
+                      <div class="apple-toggle-bg w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:bg-green-500 transition-colors duration-300">
+                          <div class="apple-toggle-knob absolute top-[2px] left-[2px] bg-white rounded-full h-5 w-5 shadow-sm peer-checked:translate-x-[20px]"></div>
+                      </div>
+                    </label>
+                </div>
+            </div>
+            <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
+                <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Personalization</div>
+                <input type="file" id="wallpaper-upload" accept="image/*" class="hidden">
+                <button onclick="document.getElementById('wallpaper-upload').click()" class="w-full py-3 bg-white/10 hover:bg-white/20 active:scale-[0.98] rounded-xl flex items-center justify-center gap-2 text-white font-medium transition-all">
+                    <i data-lucide="image" class="w-5 h-5"></i> Set Custom Wallpaper
+                </button>
+                <button id="btn-reset-wallpaper" class="w-full py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 active:scale-[0.98] rounded-xl flex items-center justify-center gap-2 font-medium transition-all hidden">
+                    <i data-lucide="trash-2" class="w-5 h-5"></i> Reset Wallpaper
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="item-fullscreen-layer" class="modal-spring fixed inset-0 z-[100] flex flex-col bg-white/85 backdrop-blur-3xl transform origin-center opacity-0 pointer-events-none rounded-[3rem] scale-[0.97]">
+        <div class="flex items-center justify-between p-6 pt-12 md:pt-16">
+            <button id="close-item-btn" class="p-3 bg-black/5 rounded-full hover:bg-black/10 active:scale-90 transition-all duration-300">
+                <i data-lucide="chevron-down" class="text-gray-900 w-6 h-6"></i>
+            </button>
+            <h2 id="fullscreen-item-title" class="font-bold text-xl text-gray-900 tracking-tight transition-all duration-300">Title</h2>
+            <div class="w-12"></div>
+        </div>
+        <div class="flex-1 flex flex-col items-center justify-center p-8 pb-32 w-full max-w-lg mx-auto">
+            <div class="bg-white p-6 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.12)] w-full aspect-square flex items-center justify-center relative group transition-transform duration-500 hover:scale-[1.02] hover:shadow-[0_30px_60px_rgba(0,0,0,0.15)]">
+                <canvas id="fullscreen-canvas" class="max-w-full max-h-full pixelated transition-transform duration-300"></canvas>
+            </div>
+            <p id="fullscreen-item-data" class="mt-8 text-gray-500 font-mono text-sm text-center break-all w-full transition-opacity duration-300"></p>
+            <div class="flex gap-8 mt-12">
+                <button id="btn-action-copy" class="flex flex-col items-center gap-2 text-gray-600 hover:text-black hover:-translate-y-1 active:scale-90 transition-all duration-300">
+                    <div class="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center shadow-sm"><i data-lucide="copy" class="w-6 h-6"></i></div>
+                    <span class="text-[11px] font-bold tracking-wide">COPY</span>
+                </button>
+                <button id="btn-action-save" class="flex flex-col items-center gap-2 text-gray-600 hover:text-black hover:-translate-y-1 active:scale-90 transition-all duration-300">
+                    <div class="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center shadow-sm"><i data-lucide="download" class="w-6 h-6"></i></div>
+                    <span class="text-[11px] font-bold tracking-wide">SAVE</span>
+                </button>
+                <button id="btn-action-rename" class="flex flex-col items-center gap-2 text-gray-600 hover:text-black hover:-translate-y-1 active:scale-90 transition-all duration-300">
+                    <div class="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center shadow-sm"><i data-lucide="edit-2" class="w-6 h-6"></i></div>
+                    <span class="text-[11px] font-bold tracking-wide">RENAME</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="rename-modal" class="modal-spring fixed inset-0 z-[200] bg-black/50 backdrop-blur-md opacity-0 pointer-events-none flex items-center justify-center p-4">
+        <div class="bg-white rounded-[2rem] p-6 w-full max-w-sm shadow-2xl transform scale-90 modal-spring" id="rename-panel">
+            <h3 class="text-xl font-bold text-gray-900 mb-4 tracking-tight">Rename Item</h3>
+            <input type="text" id="rename-input" class="w-full bg-gray-100 border-2 border-transparent focus:border-black rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none transition-colors duration-300 mb-6" placeholder="Enter new title...">
+            <div class="flex gap-3">
+                <button id="btn-cancel-rename" class="flex-1 py-3.5 bg-gray-100 text-gray-700 rounded-2xl font-bold hover:bg-gray-200 active:scale-95 transition-all duration-200">Cancel</button>
+                <button id="btn-save-rename" class="flex-1 py-3.5 bg-black text-white rounded-2xl font-bold hover:bg-gray-800 active:scale-95 transition-all duration-200 shadow-md">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="create-modal" class="modal-spring fixed inset-0 z-[250] bg-black/50 backdrop-blur-md opacity-0 pointer-events-none flex flex-col justify-end sm:justify-center items-center sm:p-4">
+        <div class="bg-white rounded-t-[2.5rem] sm:rounded-[2rem] p-6 pb-12 sm:pb-6 w-full max-w-md shadow-2xl transform translate-y-full sm:translate-y-0 sm:scale-90 slide-up-spring" id="create-panel">
+            <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6 sm:hidden"></div>
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-2xl font-bold text-gray-900 tracking-tight">Create Code</h3>
+                <button id="btn-close-create" class="p-2 bg-gray-100 rounded-full hover:bg-gray-200 active:scale-90 transition-all duration-300">
+                    <i data-lucide="x" class="w-5 h-5 text-gray-700"></i>
+                </button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Title</label>
+                    <input type="text" id="create-input-title" class="w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none transition-all duration-300 shadow-sm" placeholder="">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Code Format</label>
+                    <select id="create-input-type" class="w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none transition-all duration-300 appearance-none shadow-sm cursor-pointer">
+                        <option value="azteccode">Aztec Code (Compact)</option>
+                        <option value="qrcode">QR Code (Standard)</option>
+                        <option value="pdf417">PDF417 (Boarding Pass)</option>
+                        <option value="datamatrix">Data Matrix (Industrial)</option>
+                        <option value="code128">Code 128 (1D Barcode)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Data</label>
+                    <textarea id="create-input-data" rows="3" class="w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-mono text-sm outline-none transition-all duration-300 shadow-sm resize-none" placeholder=""></textarea>
+                </div>
+            </div>
+            <button id="btn-save-create" class="w-full mt-8 py-4 bg-black text-white rounded-2xl font-bold hover:bg-gray-800 active:scale-[0.98] transition-all duration-200 shadow-[0_10px_20px_rgba(0,0,0,0.2)] flex justify-center items-center gap-2">
+                <i data-lucide="save" class="w-5 h-5"></i> Save
+            </button>
+        </div>
+    </div>
+
+    <div id="scanner-modal" class="modal-spring fixed inset-0 z-[300] bg-black opacity-0 pointer-events-none flex flex-col items-center justify-center">
+        <div id="scanner-reader"></div>
+        <div class="absolute inset-0 z-10 flex flex-col items-center justify-center overflow-hidden pointer-events-none">
+            <div id="scanner-cutout" class="w-72 h-72 rounded-[2.5rem] relative transition-all duration-400 ease-out" style="box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55); will-change: transform;">
+                <div id="scanner-laser" class="absolute left-6 right-6 top-0 h-0.5 bg-white shadow-[0_0_15px_3px_rgba(255,255,255,0.8)] rounded-full animate-scan-laser"></div>
+                <div class="absolute -top-[2px] -left-[2px] w-14 h-14 border-t-[4px] border-l-[4px] border-white/90 rounded-tl-[2.5rem] transition-colors duration-300" id="corner-1"></div>
+                <div class="absolute -top-[2px] -right-[2px] w-14 h-14 border-t-[4px] border-r-[4px] border-white/90 rounded-tr-[2.5rem] transition-colors duration-300" id="corner-2"></div>
+                <div class="absolute -bottom-[2px] -left-[2px] w-14 h-14 border-b-[4px] border-l-[4px] border-white/90 rounded-bl-[2.5rem] transition-colors duration-300" id="corner-3"></div>
+                <div class="absolute -bottom-[2px] -right-[2px] w-14 h-14 border-b-[4px] border-r-[4px] border-white/90 rounded-br-[2.5rem] transition-colors duration-300" id="corner-4"></div>
+            </div>
+        </div>
+        <p id="scanner-status" class="absolute bottom-[104px] left-1/2 -translate-x-1/2 z-20 text-center text-xs text-white font-bold drop-shadow-md bg-black/60 backdrop-blur-md rounded-full py-1.5 px-4 shadow-sm pointer-events-none transition-opacity duration-300">Starting camera...</p>
+        <div class="absolute top-0 left-0 right-0 z-20 flex justify-between items-start pt-14 px-6 pb-6 bg-gradient-to-b from-black/60 to-transparent pointer-events-none">
+            <button id="btn-close-scanner" class="p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white pointer-events-auto">
+                <i data-lucide="x" class="w-6 h-6"></i>
+            </button>
+            <div class="flex items-center gap-3">
+                <button id="btn-switch-cam" class="p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white opacity-50" style="pointer-events: none;">
+                    <i data-lucide="switch-camera" class="w-5 h-5"></i>
+                </button>
+                <button id="btn-toggle-flash" class="p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white pointer-events-auto">
+                    <i data-lucide="zap" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+        <div id="scanner-result-sheet" class="absolute bottom-0 left-0 right-0 z-30 bg-white rounded-t-[2rem] p-6 pb-10 transform translate-y-full transition-transform duration-500 shadow-[0_-20px_50px_rgba(0,0,0,0.3)] flex flex-col gap-4">
+            <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-2"></div>
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-center text-blue-600 shadow-sm"><i data-lucide="qr-code" class="w-6 h-6"></i></div>
+                    <div>
+                        <h3 class="text-gray-900 font-bold text-lg leading-tight tracking-tight flex items-center" id="scan-result-format">QR Code</h3>
+                        <p class="text-gray-500 text-[11px] font-bold uppercase tracking-widest mt-0.5">Scanned Result</p>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-gray-50 rounded-[1.5rem] p-4 border border-gray-100 shadow-inner mt-2">
+                <p id="scan-result-data" class="text-gray-800 font-mono text-sm break-all max-h-32 overflow-y-auto hide-scrollbar"></p>
+            </div>
+            <div class="flex gap-3 mt-4">
+                <button id="btn-scan-discard" class="p-4 bg-gray-100 text-gray-500 rounded-2xl hover:bg-gray-200 active:scale-95 transition-all"><i data-lucide="rotate-ccw" class="w-5 h-5"></i></button>
+                <button id="btn-scan-copy" class="flex-1 py-3.5 bg-gray-100 text-gray-700 rounded-2xl font-bold hover:bg-gray-200 active:scale-95 transition-all text-[15px]">Copy</button>
+                <button id="btn-scan-save" class="flex-[1.5] py-3.5 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-500/30 text-[15px] flex items-center justify-center gap-1.5"><i data-lucide="save" class="w-4 h-4"></i> Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        const DEFAULT_STATE = {
+            currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: false,
+            gridSize: 'auto', wallpaper: null,
+            apps: [
+                { id: 'bc_1', title: 'My WiFi', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'WIFI:S:MyNetwork;T:WPA;P:Password;;' },
+                { id: 'bc_2', title: 'Website', type: 'grid', page: 0, order: 1, bcid: 'azteccode', data: 'https://neodrag.dev' },
+                { id: 'bc_3', title: 'Boarding Pass', type: 'grid', page: 1, order: 0, bcid: 'pdf417', data: 'BOARDING12345' },
+                
+                { id: 'nav_home', title: 'Home', icon: 'grid', type: 'dock', order: 0 },
+                { id: 'nav_gen', title: 'Create', icon: 'plus-circle', type: 'dock', order: 1 },
+                { id: 'nav_wifi', title: 'WiFi', icon: 'wifi', type: 'dock', order: 2, badge: '2' },
+                { id: 'nav_lib', title: 'Library', icon: 'layout-list', type: 'dock', order: 3 },
+                { id: 'nav_scan', title: 'Scan', icon: 'scan-line', type: 'dock', order: 4, badge: '!' }
+            ]
+        };
+
+        try {
+            const saved = localStorage.getItem('xancode_v2_state');
+            window.OS_STATE = saved ? JSON.parse(saved) : DEFAULT_STATE;
+            if(!window.OS_STATE || !Array.isArray(window.OS_STATE.apps)) window.OS_STATE = DEFAULT_STATE;
+            
+            window.OS_STATE.isEditMode = false; 
+            if(window.OS_STATE.autoArrange === undefined) window.OS_STATE.autoArrange = false;
+            if(!window.OS_STATE.gridSize) window.OS_STATE.gridSize = 'auto';
+            
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== 'sys_settings');
+            
+            if(window.OS_STATE.wallpaper) {
+                document.body.style.backgroundImage = `url('${window.OS_STATE.wallpaper}')`;
+                document.getElementById('btn-reset-wallpaper').classList.remove('hidden');
+            }
+        } catch(e) { window.OS_STATE = DEFAULT_STATE; }
+
+        function saveState() {
+            try { localStorage.setItem('xancode_v2_state', JSON.stringify(window.OS_STATE)); } 
+            catch(e) { console.warn("Local storage write failed."); window.showToast("Storage Limit Reached!"); }
+        }
+
+        const XanLogger = { log: (msg) => console.log(`[XanOS] ${msg}`), error: (msg, e) => console.error(`[XanOS ERROR] ${msg}`, e) };
+        
+        window.showToast = function(message) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed top-16 left-1/2 -translate-x-1/2 bg-[#1c1c1e]/95 text-white px-6 py-3 rounded-full shadow-2xl backdrop-blur-md z-[400] transition-all duration-300 transform -translate-y-4 opacity-0 font-semibold text-sm flex items-center gap-2 border border-white/10';
+            toast.innerHTML = `<i data-lucide="check-circle-2" class="w-4 h-4 text-green-400"></i> ${message}`;
+            document.body.appendChild(toast);
+            safeCreateIcons();
+            
+            requestAnimationFrame(() => {
+                toast.style.transitionTimingFunction = "var(--spring-snappy)";
+                toast.classList.remove('-translate-y-4', 'opacity-0');
+            });
+            setTimeout(() => {
+                toast.style.transitionTimingFunction = "ease";
+                toast.classList.add('-translate-y-4', 'opacity-0');
+                setTimeout(() => toast.remove(), 400);
+            }, 2500);
+        }
+
+        function safeCreateIcons() {
+            try { if (typeof lucide !== 'undefined') lucide.createIcons(); } 
+            catch (e) { XanLogger.error("Icon render skipped", e); }
+        }
+
+        class OSTimeEngine {
+            constructor() {
+                this.clockEl = document.getElementById('os-clock');
+                if(this.clockEl) {
+                    this.update();
+                    setInterval(() => this.update(), 10000);
+                }
+            }
+            update() {
+                const now = new Date();
+                let h = now.getHours();
+                const m = now.getMinutes().toString().padStart(2, '0');
+                h = h % 12 || 12;
+                this.clockEl.innerText = `${h}:${m}`;
+            }
+        }
+
+        class OSSearchEngine {
+            constructor() {
+                this.input = document.getElementById('search-input');
+                this.resultsContainer = document.getElementById('search-results');
+                
+                this.input.addEventListener('input', (e) => {
+                    this.performSearch(e.target.value);
+                });
+            }
+
+            performSearch(query) {
+                this.resultsContainer.innerHTML = '';
+                if (!query.trim()) return;
+
+                const lowerQuery = query.toLowerCase();
+                const results = window.OS_STATE.apps.filter(app => 
+                    app.title.toLowerCase().includes(lowerQuery) || 
+                    (app.data && app.data.toLowerCase().includes(lowerQuery)) ||
+                    (app.bcid && app.bcid.toLowerCase().includes(lowerQuery))
+                );
+
+                if (results.length === 0) {
+                    this.resultsContainer.innerHTML = `<div class="text-center text-white/50 mt-10 font-medium">No results found for "${query}"</div>`;
+                    return;
+                }
+
+                results.forEach(app => {
+                    const el = document.createElement('div');
+                    el.className = 'flex items-center gap-4 bg-white/10 backdrop-blur-xl p-3.5 rounded-[1.25rem] active:scale-[0.98] transition-all cursor-pointer border border-white/10 shadow-lg';
+                    
+                    let iconHtml = '';
+                    if (app.type === 'grid' && app.bcid) {
+                        iconHtml = `<div class="w-12 h-12 bg-white rounded-[0.85rem] p-1.5 flex flex-shrink-0 items-center justify-center shadow-sm"><canvas id="search-can-${app.id}" class="max-w-full max-h-full pixelated"></canvas></div>`;
+                    } else {
+                        iconHtml = `<div class="w-12 h-12 bg-blue-500/20 border border-blue-500/30 rounded-[0.85rem] flex items-center justify-center flex-shrink-0 shadow-sm"><i data-lucide="${app.icon}" class="w-6 h-6 text-blue-400"></i></div>`;
+                    }
+
+                    el.innerHTML = `
+                        ${iconHtml}
+                        <div class="flex-1 overflow-hidden">
+                            <h4 class="text-white font-bold text-[15px] truncate tracking-wide">${app.title}</h4>
+                            <p class="text-white/50 text-[11px] truncate font-mono mt-0.5">${app.data || (app.type === 'dock' ? 'System Application' : '')}</p>
+                        </div>
+                        <i data-lucide="chevron-right" class="w-5 h-5 text-white/30 mr-1"></i>
+                    `;
+
+                    el.addEventListener('click', () => {
+                        window.GestureManager.closeSearch();
+                        if (app.type === 'grid') {
+                            setTimeout(() => window.InteractionManager.openEnlarge(app), 350);
+                        } else if (app.id === 'nav_gen') {
+                            setTimeout(() => window.CodeGenerator.open(), 350);
+                        } else if (app.id === 'nav_scan') {
+                            setTimeout(() => window.ScannerEngine.start(), 350);
+                        }
+                    });
+
+                    this.resultsContainer.appendChild(el);
+
+                    if (app.type === 'grid' && app.bcid) {
+                        setTimeout(() => {
+                            try { bwipjs.toCanvas(`search-can-${app.id}`, { bcid: app.bcid, text: app.data, scale: 2, backgroundcolor: 'ffffff', barcolor: '000000', textcolor: '000000', padding: 0 }); } 
+                            catch(e) {}
+                        }, 10);
+                    }
+                });
+                safeCreateIcons();
+            }
+        }
+
+        class LayoutManager {
+            constructor(renderer) {
+                this.renderer = renderer;
+                this.calculateGrid();
+                
+                let timeout = false;
+                window.addEventListener('resize', () => {
+                    clearTimeout(timeout);
+                    timeout = setTimeout(() => this.calculateGrid(), 100);
+                });
+            }
+
+            calculateGrid() {
+                const width = window.innerWidth; const height = window.innerHeight;
+                const isLandscape = width > height;
+                
+                if (window.OS_STATE.gridSize !== 'auto') {
+                    const [cols, rows] = window.OS_STATE.gridSize.split('x').map(Number);
+                    window.OS_STATE.gridCols = cols;
+                    window.OS_STATE.gridRows = rows;
+                    document.documentElement.style.setProperty('--grid-cols', cols);
+                    
+                    if(rows >= 7) {
+                        document.documentElement.style.setProperty('--app-size', '56px');
+                        document.documentElement.style.setProperty('--grid-gap-y', '16px');
+                    } else if (rows === 6) {
+                        document.documentElement.style.setProperty('--app-size', '60px');
+                        document.documentElement.style.setProperty('--grid-gap-y', '28px');
+                    } else {
+                        document.documentElement.style.setProperty('--app-size', '66px');
+                        document.documentElement.style.setProperty('--grid-gap-y', '36px');
+                    }
+                } else {
+                    if (width >= 1024) window.OS_STATE.gridCols = 6; 
+                    else if (width >= 768) window.OS_STATE.gridCols = isLandscape ? 6 : 5; 
+                    else window.OS_STATE.gridCols = isLandscape ? 6 : 4; 
+                    
+                    document.documentElement.style.setProperty('--grid-cols', window.OS_STATE.gridCols);
+
+                    let uiOverhead = (isLandscape && height < 500) ? 140 : 180; 
+                    const availableHeight = height - uiOverhead;
+                    
+                    let rowHeight = 88; 
+                    if (isLandscape && height < 500) {
+                        document.documentElement.style.setProperty('--app-size', '52px');
+                        document.documentElement.style.setProperty('--grid-gap-y', '12px');
+                        rowHeight = 64; 
+                    } else if (width >= 768) {
+                        document.documentElement.style.setProperty('--app-size', '72px');
+                        document.documentElement.style.setProperty('--grid-gap-y', '40px');
+                        rowHeight = 112; 
+                    } else {
+                        document.documentElement.style.setProperty('--app-size', '60px');
+                        document.documentElement.style.setProperty('--grid-gap-y', '28px');
+                        rowHeight = 88;
+                    }
+
+                    window.OS_STATE.gridRows = Math.max(2, Math.min(7, Math.floor(availableHeight / rowHeight)));
+                }
+                this.renderer.render();
+            }
+        }
+
+        class OSRenderer {
+            constructor() {
+                this.pager = document.getElementById('workspace-pager');
+                this.dock = document.getElementById('dock-container');
+                this.pagination = document.getElementById('pagination-container');
+            }
+
+            createItemElement(itemData, isDock = false) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'app-icon-wrapper flex flex-col items-center justify-start group cursor-pointer w-full relative';
+                wrapper.dataset.id = itemData.id;
+
+                let iconInnerHtml = '';
+                if (itemData.type === 'grid' && itemData.bcid) {
+                    iconInnerHtml = `
+                        <div class="w-full h-full bg-white flex items-center justify-center p-2.5 shadow-[0_2px_10px_rgba(0,0,0,0.15)] pointer-events-none">
+                            <canvas id="can-${itemData.id}" class="w-full h-full object-contain pixelated"></canvas>
+                        </div>`;
+                } else {
+                    iconInnerHtml = `
+                        <div class="w-full h-full flex items-center justify-center bg-transparent pointer-events-none">
+                            <i data-lucide="${itemData.icon}" class="w-[28px] h-[28px] text-white opacity-90 drop-shadow-md group-hover:opacity-100 transition-opacity"></i>
+                        </div>`;
+                }
+
+                let editBadge = (isDock) ? '' : `
+                    <button class="edit-only absolute -top-1.5 -left-1.5 bg-white/90 backdrop-blur-md border border-black/5 rounded-full w-[26px] h-[26px] flex items-center justify-center shadow-lg z-20 hover:scale-110 active:scale-90 transition-transform">
+                        <i data-lucide="minus" class="w-4 h-4 text-gray-800"></i>
+                    </button>
+                `;
+
+                let notifBadge = itemData.badge ? `
+                    <div class="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-bold min-w-[20px] h-5 px-1 flex items-center justify-center rounded-full border-2 border-transparent shadow-md z-10 jiggle-target pointer-events-none transition-opacity" style="box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
+                        ${itemData.badge}
+                    </div>
+                ` : '';
+
+                const iconHtml = `
+                    <div class="jiggle-target relative pointer-events-none">
+                        <div class="app-icon overflow-hidden relative ${isDock ? 'bg-transparent shadow-none' : ''}">
+                            ${iconInnerHtml}
+                            <div class="absolute inset-0 bg-white opacity-0 group-active:opacity-20 transition-opacity pointer-events-none rounded-[inherit]"></div>
+                        </div>
+                        ${notifBadge}
+                        <div class="pointer-events-auto">${editBadge}</div>
+                    </div>
+                `;
+
+                const labelHtml = isDock ? '' : `<span class="app-label jiggle-target">${itemData.title}</span>`;
+                wrapper.innerHTML = iconHtml + labelHtml;
+
+                wrapper.addEventListener('click', (e) => {
+                    if (window.DragEngine && window.DragEngine.wasDragging) return; 
+                    
+                    if (window.OS_STATE.isEditMode || e.target.closest('.edit-only')) {
+                        if(window.OS_STATE.isEditMode && !e.target.closest('.edit-only') && itemData.type === 'grid') {
+                            window.InteractionManager.openRename(itemData);
+                        }
+                        return;
+                    }
+
+                    if (itemData.type === 'grid') {
+                        if (window.InteractionManager) window.InteractionManager.openEnlarge(itemData);
+                    } else if (itemData.id === 'nav_gen') {
+                        if (window.CodeGenerator) window.CodeGenerator.open();
+                    } else if (itemData.id === 'nav_home') {
+                        document.getElementById('workspace-pager').scrollTo({ left: 0, behavior: 'smooth' });
+                    } else if (itemData.id === 'nav_scan') {
+                        if (window.ScannerEngine) window.ScannerEngine.start();
+                    } else {
+                        window.showToast(`${itemData.title} coming soon.`);
+                    }
+                });
+
+                if (itemData.type === 'grid' && itemData.bcid) {
+                    setTimeout(() => {
+                        try { bwipjs.toCanvas(`can-${itemData.id}`, { bcid: itemData.bcid, text: itemData.data, scale: 3, backgroundcolor: 'ffffff', barcolor: '000000', textcolor: '000000', padding: 0 }); } 
+                        catch (e) { XanLogger.error("Canvas Error:", e) }
+                    }, 10);
+                }
+                
+                const removeBtn = wrapper.querySelector('.edit-only');
+                if (removeBtn) {
+                    removeBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== itemData.id);
+                        saveState();
+                        wrapper.style.transition = 'transform 0.3s var(--spring-snappy), opacity 0.2s ease';
+                        wrapper.style.transform = 'scale(0.5)';
+                        wrapper.style.opacity = '0';
+                        setTimeout(() => this.render(), 300); 
+                    });
+                }
+                return wrapper;
+            }
+
+            render() {
+                const state = window.OS_STATE;
+                const gridItems = state.apps.filter(a => a.type === 'grid');
+                const itemsPerPage = state.gridCols * state.gridRows;
+                let maxPage = 0;
+                
+                gridItems.forEach(a => {
+                    if (a.order >= itemsPerPage) {
+                        a.page += 1;
+                        a.order = a.order % itemsPerPage;
+                    }
+                    if (a.page > maxPage) maxPage = a.page; 
+                });
+                
+                const totalPages = Math.max(2, maxPage + 1);
+                
+                this.pager.innerHTML = '';
+
+                for (let i = 0; i < totalPages; i++) {
+                    const pageWrapper = document.createElement('div');
+                    pageWrapper.className = 'page-wrapper';
+                    const gridEl = document.createElement('div');
+                    gridEl.className = 'os-grid sortable-page';
+                    
+                    const itemsOnPage = gridItems.filter(a => a.page === i).sort((a, b) => a.order - b.order);
+                    const slots = new Array(itemsPerPage).fill(null);
+                    
+                    if (state.autoArrange) {
+                        itemsOnPage.forEach((item, index) => { if (index < itemsPerPage) slots[index] = item; });
+                    } else {
+                        itemsOnPage.forEach(item => { if (item.order < itemsPerPage) slots[item.order] = item; });
+                    }
+
+                    slots.forEach((item) => {
+                        if (item) gridEl.appendChild(this.createItemElement(item));
+                        else {
+                            const empty = document.createElement('div');
+                            empty.className = 'empty-slot';
+                            gridEl.appendChild(empty);
+                        }
+                    });
+                    pageWrapper.appendChild(gridEl);
+                    this.pager.appendChild(pageWrapper);
+                }
+
+                this.dock.innerHTML = '';
+                state.apps.filter(a => a.type === 'dock').sort((a,b)=>a.order-b.order).forEach(app => {
+                    this.dock.appendChild(this.createItemElement(app, true));
+                });
+
+                this.pagination.innerHTML = '';
+                for (let i = 0; i < totalPages; i++) {
+                    const dot = document.createElement('div');
+                    dot.className = `pagination-dot pointer-events-auto ${i === state.currentPage ? 'active' : ''}`;
+                    dot.onclick = () => this.pager.scrollTo({ left: i * this.pager.clientWidth, behavior: 'smooth' });
+                    this.pagination.appendChild(dot);
+                }
+                
+                safeCreateIcons();
+                if (window.DragEngine) window.DragEngine.init(document.querySelectorAll('.sortable-page'));
+            }
+
+            updatePagination(activeIndex) {
+                const dots = this.pagination.children;
+                for (let i = 0; i < dots.length; i++) {
+                    if (i === activeIndex) dots[i].classList.add('active');
+                    else dots[i].classList.remove('active');
+                }
+            }
+        }
+
+        class OSGestureManager {
+            constructor() {
+                this.startX = 0; this.startY = 0;
+                this.isSwipingDown = false;
+                
+                this.workspace = document.getElementById('workspace-container'); 
+                this.searchOverlay = document.getElementById('search-overlay');
+                this.searchBar = document.getElementById('search-bar-container');
+                this.searchInput = document.getElementById('search-input');
+                this.isSearchActive = false;
+
+                document.addEventListener('touchstart', (e) => this.onTouchStart(e), { passive: true });
+                document.addEventListener('touchmove', (e) => this.onTouchMove(e), { passive: false });
+                document.addEventListener('touchend', (e) => this.onTouchEnd(e));
+                
+                const cancelBtn = document.getElementById('btn-cancel-search');
+                cancelBtn.addEventListener('pointerdown', (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    this.closeSearch();
+                });
+                cancelBtn.addEventListener('click', () => this.closeSearch());
+            }
+            
+            onTouchStart(e) {
+                // If a modal is open, we disable gesture engine entirely
+                if (window.OS_STATE.isEditMode || window.ScannerEngine?.isScanning || this.isSearchActive || document.querySelector('.modal-spring.opacity-100')) {
+                    this.startY = null; 
+                    return;
+                }
+                
+                this.startX = e.touches[0].clientX;
+                this.startY = e.touches[0].clientY;
+                this.isSwipingDown = false;
+                this.workspace.style.transition = 'none';
+            }
+            
+            onTouchMove(e) {
+                if (this.startY === null || window.OS_STATE.isEditMode || window.ScannerEngine?.isScanning || this.isSearchActive) return;
+                
+                const currentY = e.touches[0].clientY;
+                const currentX = e.touches[0].clientX;
+                const dy = currentY - this.startY;
+                const dx = Math.abs(currentX - this.startX);
+                
+                if (dy > 15 && dy > dx * 3) {
+                    this.isSwipingDown = true;
+                    let progress = Math.min(dy / 250, 1);
+                    this.workspace.style.transform = `scale(${1 - (progress * 0.05)}) translateY(${progress * 15}px)`;
+                    this.workspace.style.filter = `blur(${progress * 12}px) brightness(${1 - (progress * 0.3)})`;
+                    
+                    if(e.cancelable) e.preventDefault();
+                }
+            }
+            
+            onTouchEnd(e) {
+                if (this.startY === null) return;
+                
+                this.workspace.style.transition = 'transform 0.4s var(--spring-snappy), filter 0.4s ease, opacity 0.4s ease';
+                
+                const dy = e.changedTouches[0].clientY - this.startY;
+                if (this.isSwipingDown && dy > 80) this.openSearch();
+                else this.resetWorkspace();
+                
+                this.isSwipingDown = false;
+                this.startY = null;
+            }
+            
+            openSearch() {
+                this.isSearchActive = true;
+                if(navigator.vibrate) navigator.vibrate(15);
+                this.workspace.classList.add('search-active-workspace');
+                this.workspace.style.transform = '';
+                this.workspace.style.filter = '';
+                
+                this.searchOverlay.classList.remove('opacity-0', 'pointer-events-none');
+                this.searchOverlay.classList.add('opacity-100', 'pointer-events-auto');
+                
+                this.searchBar.classList.remove('-translate-y-16');
+                this.searchBar.classList.add('translate-y-0');
+                
+                this.searchInput.value = '';
+                if(window.SearchEngine) window.SearchEngine.performSearch('');
+                
+                setTimeout(() => this.searchInput.focus(), 100);
+            }
+            
+            closeSearch() {
+                this.isSearchActive = false;
+                this.searchInput.blur();
+                
+                this.workspace.classList.remove('search-active-workspace');
+                this.resetWorkspace();
+                
+                this.searchOverlay.classList.remove('opacity-100', 'pointer-events-auto');
+                this.searchOverlay.classList.add('opacity-0', 'pointer-events-none');
+                
+                this.searchBar.classList.remove('translate-y-0');
+                this.searchBar.classList.add('-translate-y-16');
+            }
+            
+            resetWorkspace() {
+                 this.workspace.style.transform = '';
+                 this.workspace.style.filter = '';
+            }
+        }
+
+        class PhysicsDragEngine {
+            constructor() {
+                this.draggedEl = null; this.ghostEl = null;
+                this.containers = [];
+                this.wasDragging = false; this.isEngaged = false; this.isPageFlipping = false;
+                
+                this.onPointerDown = this.onPointerDown.bind(this);
+                this.onPointerMove = this.onPointerMove.bind(this);
+                this.onPointerUp = this.onPointerUp.bind(this);
+                
+                window.addEventListener('touchmove', (e) => {
+                    if (this.isEngaged) e.preventDefault();
+                }, { passive: false });
+            }
+
+            init(containers) {
+                this.cleanupListeners();
+                this.containers = Array.from(containers);
+                if (window.OS_STATE.isEditMode) {
+                    this.containers.forEach(container => {
+                        Array.from(container.children).forEach(item => item.addEventListener('pointerdown', this.onPointerDown));
+                    });
+                }
+            }
+
+            cleanupListeners() {
+                document.removeEventListener('pointermove', this.onPointerMove);
+                document.removeEventListener('pointerup', this.onPointerUp);
+                document.removeEventListener('pointercancel', this.onPointerUp);
+                if (this.containers) {
+                    this.containers.forEach(c => Array.from(c.children).forEach(item => item.removeEventListener('pointerdown', this.onPointerDown)));
+                }
+            }
+
+            destroy() {
+                this.cleanupListeners();
+            }
+
+            onPointerDown(e) {
+                if (!window.OS_STATE.isEditMode || e.target.closest('button')) return;
+                const target = e.currentTarget;
+                if (target.classList.contains('empty-slot')) return;
+                
+                this.startX = e.clientX; this.startY = e.clientY;
+                this.currentX = e.clientX; this.currentY = e.clientY;
+                
+                this.wasDragging = false; this.isEngaged = false; this.isPageFlipping = false;
+                
+                this.targetEl = target;
+                this.startContainer = target.parentNode;
+                this.currentContainer = this.startContainer;
+                
+                this.targetEl.classList.add('drag-ready');
+
+                document.addEventListener('pointermove', this.onPointerMove, { passive: false });
+                document.addEventListener('pointerup', this.onPointerUp);
+                document.addEventListener('pointercancel', this.onPointerUp);
+            }
+
+            engageDrag() {
+                this.isEngaged = true;
+                this.targetEl.classList.remove('drag-ready');
+                
+                const rect = this.targetEl.getBoundingClientRect();
+                this.offsetX = this.startX - rect.left;
+                this.offsetY = this.startY - rect.top;
+                this.draggedEl = this.targetEl;
+
+                const jiggles = this.draggedEl.querySelectorAll('.jiggle-target');
+                jiggles.forEach(j => j.style.animation = 'none');
+
+                this.ghostEl = document.createElement('div');
+                this.ghostEl.className = this.targetEl.className + ' custom-drag-ghost';
+                this.currentContainer.insertBefore(this.ghostEl, this.targetEl);
+
+                this.draggedEl.style.position = 'fixed';
+                this.draggedEl.style.zIndex = '9999';
+                this.draggedEl.style.width = `${rect.width}px`;
+                this.draggedEl.style.height = `${rect.height}px`;
+                this.draggedEl.style.left = `0px`;
+                this.draggedEl.style.top = `0px`;
+                this.draggedEl.style.margin = `0px`;
+                this.draggedEl.style.transform = `translate3d(${this.currentX - this.offsetX}px, ${this.currentY - this.offsetY}px, 0) scale(1.15)`;
+                this.draggedEl.style.pointerEvents = 'none';
+                
+                if (navigator.vibrate) navigator.vibrate(15);
+            }
+
+            onPointerMove(e) {
+                this.currentX = e.clientX; this.currentY = e.clientY;
+                
+                if (!this.isEngaged) {
+                    const distance = Math.hypot(e.clientX - this.startX, e.clientY - this.startY);
+                    if (distance > 5) this.engageDrag();
+                    else return;
+                }
+
+                this.wasDragging = true;
+                this.draggedEl.style.transform = `translate3d(${e.clientX - this.offsetX}px, ${e.clientY - this.offsetY}px, 0) scale(1.15)`;
+
+                const pager = document.getElementById('workspace-pager');
+                const clientWidth = pager.clientWidth;
+                const maxPages = Math.max(1, Math.ceil(pager.scrollWidth / clientWidth));
+                const edgeThreshold = 45;
+
+                if (!this.isPageFlipping) {
+                    if (e.clientX < edgeThreshold && window.OS_STATE.currentPage > 0) {
+                        this.isPageFlipping = true;
+                        pager.scrollTo({ left: (window.OS_STATE.currentPage - 1) * clientWidth, behavior: 'smooth' });
+                        setTimeout(() => { this.isPageFlipping = false; }, 600);
+                    } else if (e.clientX > window.innerWidth - edgeThreshold && window.OS_STATE.currentPage < maxPages - 1) {
+                        this.isPageFlipping = true;
+                        pager.scrollTo({ left: (window.OS_STATE.currentPage + 1) * clientWidth, behavior: 'smooth' });
+                        setTimeout(() => { this.isPageFlipping = false; }, 600);
+                    }
+                }
+
+                const under = document.elementFromPoint(e.clientX, e.clientY);
+                const closestSlot = under ? under.closest('.app-icon-wrapper, .empty-slot') : null;
+                const targetContainer = closestSlot ? closestSlot.parentNode : null;
+
+                if (closestSlot && closestSlot !== this.draggedEl && closestSlot !== this.ghostEl && this.containers.includes(targetContainer)) {
+                    const itemPositions = new Map();
+                    this.containers.forEach(c => { 
+                        Array.from(c.children).forEach(item => { 
+                            if (item !== this.draggedEl && item !== this.ghostEl) { itemPositions.set(item, item.getBoundingClientRect()); } 
+                        }); 
+                    });
+
+                    if (window.OS_STATE.autoArrange) {
+                        if (targetContainer !== this.currentContainer) {
+                            targetContainer.insertBefore(this.ghostEl, closestSlot);
+                            this.currentContainer = targetContainer;
+                        } else {
+                            const targetItems = Array.from(targetContainer.children);
+                            const ghostIndex = targetItems.indexOf(this.ghostEl);
+                            const hoverIndex = targetItems.indexOf(closestSlot);
+                            if (hoverIndex > ghostIndex) targetContainer.insertBefore(this.ghostEl, closestSlot.nextSibling);
+                            else targetContainer.insertBefore(this.ghostEl, closestSlot);
+                        }
+                    } else {
+                        const p1 = this.ghostEl.parentNode;
+                        const s1 = this.ghostEl.nextSibling;
+                        const p2 = closestSlot.parentNode;
+                        const s2 = closestSlot.nextSibling === this.ghostEl ? closestSlot : closestSlot.nextSibling;
+
+                        p2.insertBefore(this.ghostEl, s2);
+                        p1.insertBefore(closestSlot, s1);
+                        this.currentContainer = p2;
+                    }
+
+                    this.containers.forEach(c => {
+                        Array.from(c.children).forEach(item => {
+                            if (item !== this.draggedEl && item !== this.ghostEl) {
+                                const oldPos = itemPositions.get(item);
+                                const newPos = item.getBoundingClientRect();
+                                if (oldPos && (oldPos.left !== newPos.left || oldPos.top !== newPos.top)) {
+                                    item.style.transform = `translate3d(${oldPos.left - newPos.left}px, ${oldPos.top - newPos.top}px, 0)`;
+                                    item.style.transition = 'none';
+                                    requestAnimationFrame(() => {
+                                        item.style.transition = 'transform 0.3s var(--spring-snappy)';
+                                        item.style.transform = 'translate3d(0, 0, 0)';
+                                        setTimeout(() => { item.style.transition = ''; item.style.transform = ''; }, 300);
+                                    });
+                                }
+                            }
+                        });
+                    });
+                }
+            }
+
+            syncState() {
+                const allPages = document.querySelectorAll('.sortable-page');
+                allPages.forEach((pageEl, pageIndex) => {
+                    const items = Array.from(pageEl.children);
+                    items.forEach((item, itemIndex) => {
+                        if (item.classList.contains('app-icon-wrapper')) {
+                            const itemId = item.dataset.id;
+                            const itemObj = window.OS_STATE.apps.find(a => a.id === itemId);
+                            if (itemObj) {
+                                itemObj.page = pageIndex;
+                                itemObj.order = itemIndex;
+                            }
+                        }
+                    });
+                });
+                saveState();
+            }
+
+            onPointerUp(e) {
+                document.removeEventListener('pointermove', this.onPointerMove);
+                document.removeEventListener('pointerup', this.onPointerUp);
+                document.removeEventListener('pointercancel', this.onPointerUp);
+                
+                if (this.targetEl) this.targetEl.classList.remove('drag-ready');
+                if (!this.isEngaged) return;
+
+                const ghostRect = this.ghostEl.getBoundingClientRect();
+                this.draggedEl.style.transition = 'transform 0.4s var(--spring-snappy)';
+                this.draggedEl.style.transform = `translate3d(${ghostRect.left}px, ${ghostRect.top}px, 0) scale(1)`;
+
+                setTimeout(() => {
+                    if (!this.draggedEl) return;
+                    this.draggedEl.style = '';
+                    const jiggles = this.draggedEl.querySelectorAll('.jiggle-target');
+                    jiggles.forEach(j => j.style.animation = '');
+                    
+                    this.currentContainer.insertBefore(this.draggedEl, this.ghostEl);
+                    this.ghostEl.remove();
+                    
+                    this.syncState();
+                    this.draggedEl = null; this.ghostEl = null;
+                    
+                    setTimeout(() => { this.wasDragging = false; }, 50);
+                }, 400);
+            }
+        }
+
+        class OSInteractionManager {
+            constructor() {
+                this.enlargeLayer = document.getElementById('item-fullscreen-layer');
+                this.enlargeTitle = document.getElementById('fullscreen-item-title');
+                this.enlargeData = document.getElementById('fullscreen-item-data');
+                
+                this.renameLayer = document.getElementById('rename-modal');
+                this.renamePanel = document.getElementById('rename-panel');
+                this.renameInput = document.getElementById('rename-input');
+                
+                this.activeItem = null;
+                
+                document.getElementById('close-item-btn').addEventListener('click', () => this.closeEnlarge());
+                document.getElementById('btn-action-copy').addEventListener('click', () => this.copyData());
+                document.getElementById('btn-action-save').addEventListener('click', () => this.downloadPNG());
+                document.getElementById('btn-action-rename').addEventListener('click', () => this.openRename(this.activeItem));
+                
+                document.getElementById('btn-cancel-rename').addEventListener('click', () => this.closeRename());
+                document.getElementById('btn-save-rename').addEventListener('click', () => this.saveRename());
+
+                this.renameLayer.addEventListener('click', (e) => { if(e.target === this.renameLayer) this.closeRename(); });
+                this.enlargeLayer.addEventListener('click', (e) => { if(e.target === this.enlargeLayer) this.closeEnlarge(); });
+            }
+
+            openEnlarge(itemData) {
+                if (!window.OS_STATE.apps.find(a => a.id === itemData.id)) return;
+                this.activeItem = itemData;
+                this.enlargeTitle.innerText = itemData.title;
+                this.enlargeData.innerText = itemData.data;
+                
+                try {
+                    bwipjs.toCanvas('fullscreen-canvas', {
+                        bcid: itemData.bcid, text: itemData.data, scale: 5, padding: 3, 
+                        backgroundcolor: 'ffffff', barcolor: '000000', textcolor: '000000'
+                    });
+                } catch(e) { XanLogger.error(e) }
+
+                this.enlargeLayer.classList.remove('opacity-0', 'pointer-events-none', 'scale-[0.97]', 'rounded-[3rem]');
+                this.enlargeLayer.classList.add('opacity-100', 'pointer-events-auto', 'scale-100', 'rounded-none');
+            }
+
+            closeEnlarge() {
+                this.enlargeLayer.classList.add('opacity-0', 'pointer-events-none', 'scale-[0.97]', 'rounded-[3rem]');
+                this.enlargeLayer.classList.remove('opacity-100', 'pointer-events-auto', 'scale-100', 'rounded-none');
+                setTimeout(() => { this.activeItem = null; }, 500);
+            }
+
+            copyData() {
+                if(!this.activeItem) return;
+                try {
+                    const textToCopy = this.activeItem.data;
+                    if (navigator.clipboard && window.isSecureContext) {
+                        navigator.clipboard.writeText(textToCopy).then(() => window.showToast('Data Copied!'));
+                    } else {
+                        let textArea = document.createElement("textarea");
+                        textArea.value = textToCopy;
+                        textArea.style.position = "fixed";
+                        textArea.style.left = "-999999px";
+                        textArea.style.top = "-999999px";
+                        document.body.appendChild(textArea);
+                        textArea.focus();
+                        textArea.select();
+                        document.execCommand('copy');
+                        textArea.remove();
+                        window.showToast('Data Copied!');
+                    }
+                } catch(err) {
+                    XanLogger.error('Copy failed', err);
+                    window.showToast('Copy Failed.');
+                }
+            }
+
+            downloadPNG() {
+                if(!this.activeItem) return;
+                try {
+                    const canvas = document.getElementById('fullscreen-canvas');
+                    const dataUrl = canvas.toDataURL('image/png');
+                    const a = document.createElement('a');
+                    a.href = dataUrl;
+                    a.download = `${this.activeItem.title}_Code.png`;
+                    document.body.appendChild(a); 
+                    a.click(); 
+                    document.body.removeChild(a);
+                    window.showToast('Image Saved!');
+                } catch(err) {
+                    XanLogger.error('Download failed', err);
+                    window.showToast('Save Failed.');
+                }
+            }
+
+            openRename(itemData) {
+                if (!itemData) return;
+                this.activeItem = itemData;
+                this.renameInput.value = itemData.title;
+                
+                this.renameLayer.classList.remove('opacity-0', 'pointer-events-none');
+                this.renameLayer.classList.add('opacity-100', 'pointer-events-auto');
+                this.renamePanel.classList.remove('scale-90');
+                this.renamePanel.classList.add('scale-100');
+                
+                setTimeout(() => this.renameInput.focus(), 150);
+            }
+
+            closeRename() {
+                this.renameLayer.classList.add('opacity-0', 'pointer-events-none');
+                this.renameLayer.classList.remove('opacity-100', 'pointer-events-auto');
+                this.renamePanel.classList.add('scale-90');
+                this.renamePanel.classList.remove('scale-100');
+            }
+
+            saveRename() {
+                if (!this.activeItem) return;
+                const newTitle = this.renameInput.value.trim();
+                if (newTitle && newTitle !== this.activeItem.title) {
+                    const itemRef = window.OS_STATE.apps.find(a => a.id === this.activeItem.id);
+                    if (itemRef) {
+                        itemRef.title = newTitle;
+                        saveState();
+                        window.Renderer.render(); 
+                        if(this.enlargeLayer.classList.contains('opacity-100')) this.enlargeTitle.innerText = newTitle;
+                    }
+                }
+                this.closeRename();
+            }
+        }
+
+        class OSCodeGenerator {
+            constructor() {
+                this.modal = document.getElementById('create-modal');
+                this.panel = document.getElementById('create-panel');
+                
+                this.inputTitle = document.getElementById('create-input-title');
+                this.inputType = document.getElementById('create-input-type');
+                this.inputData = document.getElementById('create-input-data');
+                
+                document.getElementById('btn-close-create').addEventListener('click', () => this.close());
+                document.getElementById('btn-save-create').addEventListener('click', () => this.generateCode());
+                
+                this.modal.addEventListener('click', (e) => { if(e.target === this.modal) this.close(); });
+            }
+
+            open(prefillData = null, prefillFormat = null) {
+                this.inputTitle.value = '';
+                this.inputData.value = prefillData || '';
+                this.inputType.value = prefillFormat || 'azteccode';
+                
+                this.modal.classList.remove('opacity-0', 'pointer-events-none');
+                this.modal.classList.add('opacity-100', 'pointer-events-auto');
+                
+                this.panel.classList.remove('translate-y-full', 'scale-90');
+                this.panel.classList.add('translate-y-0', 'scale-100');
+                
+                setTimeout(() => this.inputTitle.focus(), 150);
+            }
+
+            close() {
+                this.modal.classList.add('opacity-0', 'pointer-events-none');
+                this.modal.classList.remove('opacity-100', 'pointer-events-auto');
+                
+                this.panel.classList.add('translate-y-full', 'scale-90');
+                this.panel.classList.remove('translate-y-0', 'scale-100');
+            }
+
+            generateCode() {
+                const title = this.inputTitle.value.trim();
+                const data = this.inputData.value.trim();
+                const bcid = this.inputType.value;
+
+                if (!title || !data) {
+                    window.showToast('Please fill all fields');
+                    return;
+                }
+
+                const state = window.OS_STATE;
+                const gridItems = state.apps.filter(a => a.type === 'grid');
+                const itemsPerPage = state.gridCols * state.gridRows;
+                
+                let targetPage = 0;
+                let targetOrder = 0;
+
+                for (let page = 0; page < 10; page++) { 
+                    const itemsOnPage = gridItems.filter(a => a.page === page);
+                    if (itemsOnPage.length < itemsPerPage) {
+                        targetPage = page;
+                        const takenOrders = itemsOnPage.map(a => a.order);
+                        for (let i = 0; i < itemsPerPage; i++) {
+                            if (!takenOrders.includes(i)) {
+                                targetOrder = i;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                const newItem = {
+                    id: 'bc_' + Date.now().toString(),
+                    title: title,
+                    type: 'grid',
+                    page: targetPage,
+                    order: targetOrder,
+                    bcid: bcid,
+                    data: data
+                };
+
+                window.OS_STATE.apps.push(newItem);
+                saveState();
+                
+                this.close();
+                window.showToast('Added to Grid!');
+                
+                document.getElementById('workspace-pager').scrollTo({ 
+                    left: targetPage * document.getElementById('workspace-pager').clientWidth, 
+                    behavior: 'smooth' 
+                });
+                
+                setTimeout(() => window.Renderer.render(), 300);
+            }
+        }
+
+        class OSScannerEngine {
+            constructor() {
+                this.modal = document.getElementById('scanner-modal');
+                this.sheet = document.getElementById('scanner-result-sheet');
+                this.statusEl = document.getElementById('scanner-status');
+
+                this.formatLabel = document.getElementById('scan-result-format');
+                this.dataView = document.getElementById('scan-result-data');
+
+                this.html5Qrcode = null;
+                this.isScanning = false;
+                this.isProcessing = false;
+                this.currentResult = null;
+                this.currentFormat = null;
+                this.flashOn = false;
+
+                this.allCameras = [];
+                this.currentCamIndex = -1;
+                this.isSwitchingLens = false;
+                this.stopPromise = null;
+                this._wasInterrupted = false;
+
+                document.getElementById('btn-close-scanner').addEventListener('click', () => this.stop());
+                document.getElementById('btn-toggle-flash').addEventListener('click', () => this.toggleFlash());
+                document.getElementById('btn-switch-cam').addEventListener('click', () => this.switchCamera());
+
+                document.getElementById('btn-scan-discard').addEventListener('click', () => this.resetScan());
+                document.getElementById('btn-scan-copy').addEventListener('click', () => {
+                    if (this.currentResult) {
+                        let textArea = document.createElement("textarea");
+                        textArea.value = this.currentResult;
+                        textArea.style.position = "fixed"; textArea.style.left = "-999999px";
+                        document.body.appendChild(textArea);
+                        textArea.focus(); textArea.select();
+                        try { document.execCommand('copy'); window.showToast('Copied to clipboard'); } catch(e){}
+                        textArea.remove();
+                    }
+                });
+
+                this.actionBtn = document.getElementById('btn-scan-save');
+
+                document.addEventListener('visibilitychange', () => {
+                    const isOpen = this.modal.classList.contains('opacity-100');
+                    if (document.visibilityState === 'hidden') {
+                        if (isOpen && this.isScanning) {
+                            this.stopCamera();
+                            this._wasInterrupted = true;
+                        }
+                    } else if (document.visibilityState === 'visible') {
+                        if (isOpen && this._wasInterrupted) {
+                            this._wasInterrupted = false;
+                            this.setStatus('Waking camera...', true);
+                            setTimeout(() => this.startCameraFlow(), 200);
+                        }
+                    }
+                });
+            }
+
+            setStatus(text, visible) {
+                if (!this.statusEl) return;
+                this.statusEl.textContent = text;
+                this.statusEl.style.opacity = visible ? '1' : '0';
+            }
+
+            updateFlashUI() {
+                const btn = document.getElementById('btn-toggle-flash');
+                if (!btn) return;
+                if (this.flashOn) btn.classList.add('bg-blue-500'); else btn.classList.remove('bg-blue-500');
+            }
+
+            async toggleFlash() {
+                if (!this.html5Qrcode || !this.isScanning || this.isSwitchingLens) return;
+                try {
+                    const caps = this.html5Qrcode.getRunningTrackCapabilities();
+                    if (!caps || !caps.torch) {
+                        window.showToast("Flashlight not supported on this lens.");
+                        return;
+                    }
+                    if (navigator.vibrate) navigator.vibrate(10);
+                    this.flashOn = !this.flashOn;
+                    await this.html5Qrcode.applyVideoConstraints({ advanced: [{ torch: this.flashOn }] });
+                    this.updateFlashUI();
+                } catch (e) {
+                    this.flashOn = false;
+                    this.updateFlashUI();
+                    XanLogger.error("Flash error", e);
+                    window.showToast("Could not toggle flash.");
+                }
+            }
+
+            async switchCamera() {
+                if (!this.html5Qrcode || !this.isScanning || this.allCameras.length <= 1 || this.isSwitchingLens) return;
+                this.isSwitchingLens = true;
+                const switchBtn = document.getElementById('btn-switch-cam');
+                switchBtn.style.opacity = '0.5'; switchBtn.style.pointerEvents = 'none';
+                this.currentCamIndex = (this.currentCamIndex + 1) % this.allCameras.length;
+                this.setStatus(`Switching lens (${this.currentCamIndex + 1}/${this.allCameras.length})...`, true);
+                await this.stopCamera();
+                setTimeout(() => this.startCameraFlow(), 150);
+            }
+
+            async start() {
+                this.modal.classList.remove('opacity-0', 'pointer-events-none');
+                this.modal.classList.add('opacity-100', 'pointer-events-auto');
+                this.resetScanUI();
+                this.isProcessing = false;
+                this.flashOn = false;
+                this.updateFlashUI();
+                await this.startCameraFlow();
+            }
+
+            async startCameraFlow() {
+                if (this.stopPromise) await this.stopPromise;
+                if (this.html5Qrcode && this.isScanning) return;
+
+                this.setStatus('Starting camera...', true);
+
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    this.setStatus('Camera not supported on this browser.', true);
+                    return;
+                }
+                if (typeof Html5Qrcode === 'undefined') {
+                    window.showToast('Scanner library failed to load.');
+                    this.stop();
+                    return;
+                }
+
+                if (!this.html5Qrcode) {
+                    try { this.html5Qrcode = new Html5Qrcode('scanner-reader', { verbose: false }); }
+                    catch (e) { this.setStatus('Scanner library error.', true); return; }
+                }
+
+                if (this.allCameras.length > 0 && this.currentCamIndex >= 0) {
+                    this.startCamera(this.allCameras[this.currentCamIndex].id);
+                    return;
+                }
+
+                try {
+                    const devices = await Html5Qrcode.getCameras();
+                    if (devices && devices.length) {
+                        this.allCameras = devices;
+                        const switchBtn = document.getElementById('btn-switch-cam');
+                        if (this.allCameras.length > 1) { switchBtn.style.opacity = '1'; switchBtn.style.pointerEvents = 'auto'; }
+                        else { switchBtn.style.opacity = '0.5'; switchBtn.style.pointerEvents = 'none'; }
+
+                        const backCam = this.allCameras.find(d => /back|rear|environment/i.test(d.label || ''));
+                        if (backCam) { this.currentCamIndex = this.allCameras.indexOf(backCam); this.startCamera(backCam.id); }
+                        else { this.currentCamIndex = 0; this.startCamera(this.allCameras[0].id); }
+                    } else {
+                        this.setStatus('No cameras found.', true);
+                    }
+                } catch (err) {
+                    XanLogger.error('Camera enumeration failed', err);
+                    this.setStatus('Camera permission denied.', true);
+                }
+            }
+
+            startCamera(cameraId) {
+                const formats = [
+                    Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.AZTEC,
+                    Html5QrcodeSupportedFormats.DATA_MATRIX, Html5QrcodeSupportedFormats.PDF_417,
+                    Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
+                    Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.UPC_A
+                ];
+
+                const onDecode = (decodedText, decodedResult) => {
+                    if (this.isProcessing) return;
+                    this.isProcessing = true;
+                    let formatName = 'QR_CODE';
+                    try { formatName = decodedResult?.result?.format?.formatName || formatName; } catch(e) {}
+                    this.handleSuccess(decodedText, formatName);
+                };
+                const onError = () => {};
+
+                const tryStart = (videoConstraints) => this.html5Qrcode.start(
+                    cameraId,
+                    { fps: 15, disableFlip: false, formatsToSupport: formats, videoConstraints },
+                    onDecode, onError
+                );
+
+                tryStart({ deviceId: { exact: cameraId }, width: { ideal: 3840 }, height: { ideal: 2160 }, focusMode: "continuous" })
+                    .then(() => this.onCameraStarted())
+                    .catch(() => {
+                        tryStart({ deviceId: { exact: cameraId }, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, focusMode: "continuous" })
+                            .then(() => this.onCameraStarted())
+                            .catch((err) => {
+                                XanLogger.error('Camera start failed', err);
+                                this.setStatus('Camera initialization failed.', true);
+                                this.isSwitchingLens = false;
+                            });
+                    });
+            }
+
+            onCameraStarted() {
+                this.isScanning = true;
+                this.isSwitchingLens = false;
+                this.setStatus('', false);
+                if (this.allCameras.length > 1) {
+                    const switchBtn = document.getElementById('btn-switch-cam');
+                    switchBtn.style.opacity = '1'; switchBtn.style.pointerEvents = 'auto';
+                }
+                setTimeout(async () => {
+                    if (!this.isScanning || !this.html5Qrcode) return;
+                    try {
+                        const caps = this.html5Qrcode.getRunningTrackCapabilities();
+                        const advanced = [];
+                        if (caps && caps.zoom) advanced.push({ zoom: 1.0 });
+                        if (caps && caps.focusDistance) advanced.push({ focusDistance: 1 });
+                        if (advanced.length) await this.html5Qrcode.applyVideoConstraints({ advanced });
+                    } catch (e) {}
+                }, 500);
+            }
+
+            async stopCamera() {
+                if (!this.html5Qrcode) return;
+                this.isScanning = false;
+                this.flashOn = false;
+                this.updateFlashUI();
+                const inst = this.html5Qrcode;
+                this.html5Qrcode = null;
+                this.stopPromise = inst.stop()
+                    .then(() => { try { inst.clear(); } catch(e) {} this.stopPromise = null; })
+                    .catch(() => { this.stopPromise = null; });
+                await this.stopPromise;
+            }
+
+            resetScanUI() {
+                document.getElementById('scanner-cutout').classList.remove('scanner-frame-active');
+                document.getElementById('scanner-laser').classList.remove('hidden');
+
+                for(let i=1; i<=4; i++) {
+                    document.getElementById(`corner-${i}`).classList.replace('border-green-400', 'border-white/90');
+                }
+
+                this.sheet.classList.add('translate-y-full');
+            }
+
+            resetScan() {
+                this.isProcessing = false;
+                this.currentResult = null;
+                this.currentFormat = null;
+                this.resetScanUI();
+                this.startCameraFlow();
+            }
+
+            handleSuccess(data, format) {
+                if(navigator.vibrate) navigator.vibrate([40, 60, 40]);
+
+                this.stopCamera();
+                this.currentResult = data;
+
+                document.getElementById('scanner-cutout').classList.add('scanner-frame-active');
+                document.getElementById('scanner-laser').classList.add('hidden');
+
+                for(let i=1; i<=4; i++) {
+                    document.getElementById(`corner-${i}`).classList.replace('border-white/90', 'border-green-400');
+                }
+
+                let bcid = 'qrcode';
+                let formatDisplay = 'QR Code';
+                const f = (format || '').toUpperCase();
+                if (f === 'CODE_128') { bcid = 'code128'; formatDisplay = 'Code 128'; }
+                if (f === 'CODE_39') { bcid = 'code128'; formatDisplay = 'Code 39'; }
+                if (f === 'DATA_MATRIX') { bcid = 'datamatrix'; formatDisplay = 'Data Matrix'; }
+                if (f === 'PDF_417') { bcid = 'pdf417'; formatDisplay = 'PDF417'; }
+                if (f === 'AZTEC') { bcid = 'azteccode'; formatDisplay = 'Aztec Code'; }
+                if (f === 'EAN_13' || f === 'UPC_A') { bcid = 'code128'; formatDisplay = 'Product Barcode'; }
+
+                this.currentFormat = bcid;
+                
+                // Smart Data Parsing Engine
+                let parsedType = 'TEXT';
+                let actionText = 'Save';
+                let actionIcon = 'save';
+                let actionCallback = () => {
+                    this.stop();
+                    window.CodeGenerator.open(this.currentResult, this.currentFormat);
+                };
+
+                const urlRegex = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
+                if (urlRegex.test(data)) {
+                    parsedType = 'WEBSITE';
+                    actionText = 'Open Link';
+                    actionIcon = 'external-link';
+                    actionCallback = () => {
+                        let link = data;
+                        if (!link.startsWith('http://') && !link.startsWith('https://')) link = 'https://' + link;
+                        window.open(link, '_blank');
+                        this.stop();
+                    };
+                }
+                
+                if (data.startsWith('WIFI:')) {
+                    parsedType = 'WI-FI NETWORK';
+                    actionText = 'Copy Password';
+                    actionIcon = 'wifi';
+                    actionCallback = () => {
+                        const passMatch = data.match(/P:(.*?);/);
+                        if (passMatch && passMatch[1]) {
+                            let textArea = document.createElement("textarea");
+                            textArea.value = passMatch[1];
+                            textArea.style.position = "fixed"; textArea.style.left = "-999999px";
+                            document.body.appendChild(textArea);
+                            textArea.focus(); textArea.select();
+                            try { document.execCommand('copy'); window.showToast('Password Copied!'); } catch(e){}
+                            textArea.remove();
+                        } else {
+                            window.showToast('No password found in code.');
+                        }
+                    };
+                }
+
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (emailRegex.test(data) || data.toLowerCase().startsWith('mailto:')) {
+                    parsedType = 'EMAIL ADDRESS';
+                    actionText = 'Send Email';
+                    actionIcon = 'mail';
+                    actionCallback = () => {
+                        let mailto = data.toLowerCase().startsWith('mailto:') ? data : `mailto:${data}`;
+                        window.location.href = mailto;
+                        this.stop();
+                    };
+                }
+
+                if (data.toLowerCase().startsWith('tel:')) {
+                    parsedType = 'PHONE NUMBER';
+                    actionText = 'Call Number';
+                    actionIcon = 'phone';
+                    actionCallback = () => {
+                        window.location.href = data;
+                        this.stop();
+                    };
+                }
+
+                this.formatLabel.innerHTML = `${formatDisplay} <span class="text-blue-500 font-black text-xs ml-2 uppercase tracking-widest bg-blue-100 px-2 py-0.5 rounded-md">${parsedType}</span>`;
+                this.dataView.innerText = data;
+                
+                this.actionBtn.innerHTML = `<i data-lucide="${actionIcon}" class="w-4 h-4 inline-block mr-1"></i> ${actionText}`;
+                
+                const newBtn = this.actionBtn.cloneNode(true);
+                this.actionBtn.parentNode.replaceChild(newBtn, this.actionBtn);
+                this.actionBtn = newBtn; 
+                this.actionBtn.addEventListener('click', actionCallback);
+                safeCreateIcons();
+
+                setTimeout(() => {
+                    this.sheet.classList.remove('translate-y-full');
+                }, 300);
+            }
+
+            async stop() {
+                this.isProcessing = false;
+                this._wasInterrupted = false;
+                await this.stopCamera();
+                this.modal.classList.add('opacity-0', 'pointer-events-none');
+                this.modal.classList.remove('opacity-100', 'pointer-events-auto');
+                this.sheet.classList.add('translate-y-full');
+            }
+        }
+
+        class OSSettingsManager {
+            constructor() {
+                this.modal = document.getElementById('settings-modal');
+                this.panel = document.getElementById('settings-panel');
+                this.gridButtons = document.querySelectorAll('.grid-select-btn');
+                this.autoArrangeToggle = document.getElementById('auto-arrange-toggle');
+                this.wallpaperInput = document.getElementById('wallpaper-upload');
+                this.resetWallpaperBtn = document.getElementById('btn-reset-wallpaper');
+
+                document.getElementById('btn-open-settings').addEventListener('click', () => this.open());
+                document.getElementById('btn-close-settings').addEventListener('click', () => this.close());
+                this.modal.addEventListener('click', (e) => { if (e.target === this.modal) this.close(); });
+
+                this.gridButtons.forEach(btn => {
+                    btn.addEventListener('click', () => this.setGridSize(btn.dataset.grid));
+                });
+
+                this.autoArrangeToggle.checked = !!window.OS_STATE.autoArrange;
+                this.autoArrangeToggle.addEventListener('change', (e) => {
+                    window.OS_STATE.autoArrange = e.target.checked;
+                    saveState();
+                    if (navigator.vibrate) navigator.vibrate(10);
+                    window.Renderer.render();
+                });
+
+                this.wallpaperInput.addEventListener('change', (e) => this.handleWallpaperUpload(e));
+                this.resetWallpaperBtn.addEventListener('click', () => this.resetWallpaper());
+
+                this.syncGridButtonsUI();
+            }
+
+            open() {
+                this.syncGridButtonsUI();
+                this.modal.classList.remove('opacity-0', 'pointer-events-none');
+                this.modal.classList.add('opacity-100', 'pointer-events-auto');
+                this.panel.classList.remove('scale-90');
+                this.panel.classList.add('scale-100');
+            }
+
+            close() {
+                this.modal.classList.add('opacity-0', 'pointer-events-none');
+                this.modal.classList.remove('opacity-100', 'pointer-events-auto');
+                this.panel.classList.add('scale-90');
+                this.panel.classList.remove('scale-100');
+            }
+
+            syncGridButtonsUI() {
+                this.gridButtons.forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.grid === window.OS_STATE.gridSize);
+                });
+            }
+
+            setGridSize(size) {
+                if (window.OS_STATE.gridSize === size) return;
+                window.OS_STATE.gridSize = size;
+                saveState();
+                this.syncGridButtonsUI();
+                if (navigator.vibrate) navigator.vibrate(10);
+                window.Layout.calculateGrid();
+            }
+
+            handleWallpaperUpload(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const dataUrl = evt.target.result;
+                    window.OS_STATE.wallpaper = dataUrl;
+                    try {
+                        saveState();
+                    } catch (err) {
+                        window.OS_STATE.wallpaper = null;
+                        window.showToast('Image too large to save.');
+                        return;
+                    }
+                    document.body.style.backgroundImage = `url('${dataUrl}')`;
+                    this.resetWallpaperBtn.classList.remove('hidden');
+                    window.showToast('Wallpaper updated!');
+                };
+                reader.onerror = () => window.showToast('Failed to read image.');
+                reader.readAsDataURL(file);
+                e.target.value = '';
+            }
+
+            resetWallpaper() {
+                window.OS_STATE.wallpaper = null;
+                saveState();
+                document.body.style.backgroundImage = '';
+                this.resetWallpaperBtn.classList.add('hidden');
+                window.showToast('Wallpaper reset.');
+            }
+        }
+
+        // --- INIT ---
+        window.TimeEngine = new OSTimeEngine();
+        window.Renderer = new OSRenderer();
+        window.DragEngine = new PhysicsDragEngine();
+        window.SearchEngine = new OSSearchEngine();
+        window.GestureManager = new OSGestureManager();
+        window.InteractionManager = new OSInteractionManager();
+        window.CodeGenerator = new OSCodeGenerator();
+        window.ScannerEngine = new OSScannerEngine();
+        window.SettingsManager = new OSSettingsManager();
+        window.Layout = new LayoutManager(window.Renderer);
+
+        const pager = document.getElementById('workspace-pager');
+        pager.addEventListener('scroll', () => {
+            const clientWidth = pager.clientWidth;
+            if (clientWidth === 0) return;
+            const pageIndex = Math.round(pager.scrollLeft / clientWidth);
+            if (pageIndex !== window.OS_STATE.currentPage) {
+                window.OS_STATE.currentPage = pageIndex;
+                window.Renderer.updatePagination(pageIndex);
+            }
+        }, { passive: true });
+
+        let pressTimer;
+        const startPress = (e) => {
+            if (window.OS_STATE.isEditMode || e.target.closest('button') || !e.target.closest('.app-icon-wrapper')) return;
+            pressTimer = setTimeout(() => {
+                window.OS_STATE.isEditMode = true;
+                document.body.classList.add('edit-mode');
+                if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
+                window.Renderer.render(); 
+            }, 600);
+        };
+        const cancelPress = () => clearTimeout(pressTimer);
+        
+        pager.addEventListener('touchstart', startPress, { passive: true });
+        pager.addEventListener('mousedown', startPress);
+        pager.addEventListener('touchend', cancelPress);
+        pager.addEventListener('touchmove', cancelPress, { passive: true });
+        pager.addEventListener('mouseup', cancelPress);
+        pager.addEventListener('mouseleave', cancelPress);
+
+        pager.addEventListener('click', (e) => {
+            if (window.OS_STATE.isEditMode && !e.target.closest('.app-icon-wrapper')) {
+                window.OS_STATE.isEditMode = false;
+                document.body.classList.remove('edit-mode');
+                const jiggles = document.querySelectorAll('.jiggle-target');
+                jiggles.forEach(j => j.style.animation = 'none');
+                
+                window.DragEngine.destroy();
+                setTimeout(() => { window.Renderer.render(); }, 400);
+            }
+        });
+    </script>
+</body>
+</html>
