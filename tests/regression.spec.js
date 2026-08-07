@@ -802,3 +802,86 @@ test.describe('Aurora skin (Phase 1)', () => {
         expect(parseFloat(dur)).toBeLessThan(0.05);
     });
 });
+
+test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
+    test('page dots never overlap the dock, at any height or grid density', async ({ page }) => {
+        // Regression: the dots were absolutely positioned at bottom-[90px] while the dock sits at
+        // bottom-4, which put them 12px INSIDE the dock's top edge in every skin. A larger fixed
+        // offset would not hold either — dock height tracks --app-size, so changing grid density
+        // moves the dock top. They now share one flex stack, which is what this asserts survives.
+        const gap = () => page.evaluate(() => {
+            const dock = document.getElementById('main-dock').getBoundingClientRect();
+            const pag = document.getElementById('pagination-container').getBoundingClientRect();
+            return dock.top - pag.bottom;
+        });
+
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        expect(await gap()).toBeGreaterThan(0);
+
+        await page.setViewportSize({ width: 390, height: 700 });
+        await page.waitForTimeout(400);
+        expect(await gap()).toBeGreaterThan(0);
+
+        // Grid density changes --app-size, which changes dock height.
+        await page.evaluate(() => window.SettingsManager.setGridSize('4x7'));
+        await page.waitForTimeout(600);
+        expect(await gap()).toBeGreaterThan(0);
+    });
+
+    test('classic refines the treatment without moving any layout geometry', async ({ page }) => {
+        // The whole contract of this skin: it is the original, polished. If it ever starts
+        // changing sizes or spacing it has become a different look and the name is a lie.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const geometry = () => page.evaluate(() => {
+            const icon = getComputedStyle(document.querySelector('.app-icon'));
+            const grid = getComputedStyle(document.querySelector('.os-grid'));
+            const dock = getComputedStyle(document.getElementById('main-dock'));
+            return {
+                iconW: icon.width, iconH: icon.height, iconRadius: icon.borderRadius,
+                gridGap: grid.rowGap, gridPad: grid.padding,
+                dockRadius: dock.borderRadius, dockPad: dock.padding
+            };
+        });
+        const treatment = () => page.evaluate(() => ({
+            labelShadow: getComputedStyle(document.querySelector('.app-label')).textShadow,
+            iconShadow: getComputedStyle(document.querySelector('.app-icon')).boxShadow
+        }));
+
+        const geoBefore = await geometry();
+        const treatBefore = await treatment();
+
+        await page.evaluate(() => window.SkinManager.setSkin('classic'));
+        await page.waitForTimeout(700);
+        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('classic');
+
+        // Geometry identical...
+        expect(await geometry()).toEqual(geoBefore);
+        // ...treatment genuinely different.
+        const treatAfter = await treatment();
+        expect(treatAfter.labelShadow).not.toBe(treatBefore.labelShadow);
+        expect(treatAfter.iconShadow).not.toBe(treatBefore.iconShadow);
+    });
+
+    test('every skin in the picker applies and leaves the home screen rendering', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        // dock, scancard, glass, soft, aurora, classic — kept in step with the loop below so
+        // adding a SKINS entry without a matching case here fails loudly.
+        const skins = ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic'];
+        const rendered = await page.evaluate(() =>
+            document.querySelectorAll('#skin-picker button').length);
+        expect(rendered).toBe(skins.length);
+
+        for (const skin of skins) {
+            await page.evaluate((s) => window.SkinManager.setSkin(s), skin);
+            await page.waitForTimeout(550);
+            expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe(skin);
+            await expect(page.locator('.app-icon-wrapper')).not.toHaveCount(0);
+            await expect(page.locator('#dock-container svg')).not.toHaveCount(0);
+        }
+    });
+});

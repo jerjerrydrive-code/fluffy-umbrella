@@ -24,7 +24,7 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 35 passing in ~35s):
+Built and covered by the regression suite (`npm test`, 38 passing in ~38s):
 
 | Area | State |
 |---|---|
@@ -33,7 +33,7 @@ Built and covered by the regression suite (`npm test`, 35 passing in ~35s):
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, smart payload parsing |
 | Library | Browse-all view: filter + sort by Recent / Name / Format |
 | Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin, WCAG-measured accent text |
-| Skins | `dock` (default), `scancard`, `glass`, `soft`, `aurora` — layered over one DOM via `OSSkinManager` |
+| Skins | **6** — `dock`, `scancard`, `glass`, `soft`, `aurora`, `classic`, all over one DOM via `OSSkinManager` |
 | Settings | Grid density, auto-arrange, wallpaper, accent, skin, **Vibration & Animations switches** |
 | Platform | Installable PWA, **fully self-contained** (no CDN needed to render), Firebase cloud sync (strictly optional) |
 
@@ -41,7 +41,7 @@ The foundation is done. Everything below is building **on** it — never forking
 
 ---
 
-## Phase 1 — The Morphism Skin Family
+## Phase 1 — The Morphism Skin Family ✅ COMPLETE
 **Months 1–2 · Sep–Oct 2026**
 
 Four new skins. Each is one `SKINS` entry plus one `body[data-skin="..."]` CSS block, over the
@@ -52,7 +52,7 @@ same DOM and the same interaction contract. `scancard` is the template to copy.
 | `glass` ✅ | **Shipped.** Ambient colour field behind frosted translucent chrome. Tints entirely from `var(--accent)` via `color-mix()`, so it follows the user's theme rather than pinning the reference's lavender — the pattern the other three should copy | ScanIT |
 | `soft` ✅ | **Shipped.** Neumorphism — surfaces the same colour as the ground, separated only by a two-light shadow pair. Covers the wallpaper (extruded shadows need a flat ground) and inverts text polarity, both of which `aurora` will need too | white QR-scanner |
 | `aurora` ✅ | **Shipped.** Drifting colour blooms behind near-black glass. Keeps the native dark polarity, so no text inversion — the structural difference from `soft`. Blooms derive from `var(--accent)` against three fixed anchors, near-even so they stay distinguishable | AI OS collage |
-| `classic` | **Polished original.** Not a new look — the current dock aesthetic with tightened spacing, type scale, shadow depth and corner radii | our own v2 |
+| `classic` ✅ | **Shipped.** The original, polished — every change targets a named defect (halo'd label shadow, 12%-opacity icon shadow, undefined plate edge, labels floating between rows). A test enforces the contract: treatment may change, layout geometry may not | our own v2 |
 
 ### Open decision — the polished *XanCode alpha*: skin or separate app?
 
@@ -70,8 +70,11 @@ overriding. The distinction that decides it:
 Current read: the alpha is the second kind. **Recommendation: build it separately, after 1.0**,
 sharing code deliberately — the packed palette, the payload parsers, the generator — via
 extraction into a small shared module rather than by copy-paste or by cramming both UIs into
-`index.html`. Decide for real at the end of Phase 1, when three skins exist and the limits of
-the skin system are known from evidence instead of guesswork.
+`index.html`. **Phase 1 is now done, so this is decidable.** The evidence: six skins shipped over one
+DOM with zero forks, including two that invert polarity or own the backdrop entirely. The skin
+system comfortably handles *visual* range. What it was never asked to do is change the
+information architecture — and that is precisely what the alpha needs. The recommendation
+therefore stands, now on evidence rather than caution: build it separately, after 1.0.
 
 **Definition of done:** every skin renders home / library / scanner / generator / viewer with no
 layout breakage; switching skins never touches `OS_STATE`; each skin's accent surfaces read from

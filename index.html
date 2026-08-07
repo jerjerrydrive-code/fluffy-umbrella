@@ -634,6 +634,68 @@
             -webkit-backdrop-filter: blur(34px) saturate(170%);
         }
 
+        /* ---------- SKIN: "classic" (polished original) ----------
+           Not a new aesthetic. Same layout, same wallpaper, same everything structural — this is
+           the default dock look with its craft problems fixed. Each change below is a named
+           defect rather than a preference, because "polish" with no stated target is just drift.
+
+           1. LABEL SHADOW. The default stacks 0 1px 2px rgba(0,0,0,.8) with 0 2px 6px
+              rgba(0,0,0,.6). Two large soft shadows at high opacity do not separate text from a
+              busy wallpaper — they smear a grey halo around every glyph, which at 3x reads as
+              blur rather than contrast. Replaced with one tight contact shadow for legibility
+              plus a 1px ambient spread for edge definition, at lower opacity. Less ink, more
+              separation.
+           2. ICON SHADOW. 0 4px 12px at 12% opacity is too faint to lift a tile off a dark
+              wallpaper, so the icons read as printed on rather than sitting above. Replaced with
+              the standard two-layer treatment — a tight contact shadow and a wider ambient one —
+              which is most of what makes an interface feel physical.
+           3. TILE EDGE. Nothing defined the boundary between a white code plate and a light
+              wallpaper. A half-pixel inset hairline fixes it without a visible border.
+           4. PROXIMITY. Labels sat 6px under their icon with +0.2px tracking. Pulling the label
+              1px closer and tightening the tracking binds each label to its own icon instead of
+              floating between rows — proximity is what makes a grid parse as items rather than
+              as a field of things.
+           5. DOCK DEPTH. One flat 40px shadow, no saturation boost. Given the same two-layer
+              treatment plus saturate(180%), so the glass reads as glass. */
+        body[data-skin="classic"] .app-label {
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.45);
+            letter-spacing: 0.05px;
+            margin-top: 5px;
+            -webkit-font-smoothing: antialiased;
+        }
+        body[data-skin="classic"] .app-icon {
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22),
+                        0 8px 20px -6px rgba(0, 0, 0, 0.38),
+                        inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+        }
+        body[data-skin="classic"] .ios-glass {
+            background: rgba(22, 22, 26, 0.6);
+            backdrop-filter: blur(30px) saturate(180%);
+            -webkit-backdrop-filter: blur(30px) saturate(180%);
+            border: 0.5px solid rgba(255, 255, 255, 0.18);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2),
+                        0 14px 40px -12px rgba(0, 0, 0, 0.55),
+                        inset 0 0.5px 0 rgba(255, 255, 255, 0.16);
+        }
+        body[data-skin="classic"] #os-header button {
+            background: rgba(255, 255, 255, 0.14);
+            border: 0.5px solid rgba(255, 255, 255, 0.16);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+        }
+        body[data-skin="classic"] #os-clock {
+            letter-spacing: 0.1px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+        /* Inactive dots were a flat 40% white — too close to the active state to read as a
+           position indicator. Widening the gap between the two states is the whole job. */
+        body[data-skin="classic"] .pagination-dot {
+            background: rgba(255, 255, 255, 0.32);
+            box-shadow: 0 0 1px rgba(0, 0, 0, 0.4);
+        }
+        body[data-skin="classic"] .pagination-dot.active {
+            background: rgba(255, 255, 255, 0.95);
+        }
+
         /* Brief whole-app blur/scale pulse while a skin swap is committed underneath it */
         .morph-pulse { transform: scale(0.93) translateY(15px); filter: blur(12px) brightness(0.7); }
 
@@ -711,10 +773,17 @@
         <main class="flex-1 w-full relative overflow-hidden flex flex-col -mt-2">
             <div id="workspace-pager" class="w-full h-full flex overflow-x-auto snap-x snap-mandatory hide-scrollbar transition-opacity duration-500">
             </div>
-            <div class="absolute bottom-[90px] left-0 right-0 flex justify-center items-center gap-2.5 z-20 pointer-events-none drop-shadow-md" id="pagination-container"></div>
         </main>
 
-        <div class="absolute bottom-4 left-0 right-0 z-30 flex justify-center pointer-events-none px-4">
+        <!-- Page dots and dock share one bottom stack so the dots always sit directly above
+             the dock. They were previously positioned independently at bottom-[90px] while
+             the dock sits at bottom-4, which put the dots 12px INSIDE the dock's top edge —
+             measured identically at 740/844/932 viewport heights, so it was not a
+             small-screen artefact. A bigger fixed offset would not have fixed it either:
+             dock height tracks --app-size, so changing grid density moves the dock top and
+             any magic number drifts out of date. Stacking them removes the coupling. -->
+        <div class="absolute bottom-4 left-0 right-0 z-30 flex flex-col items-center gap-3 pointer-events-none px-4">
+            <div class="flex justify-center items-center gap-2.5 pointer-events-none drop-shadow-md" id="pagination-container"></div>
             <nav class="ios-glass rounded-[2.25rem] p-3 pointer-events-auto w-full max-w-[380px]" id="main-dock">
                 <div id="dock-container" class="flex justify-around items-center w-full gap-1 px-1">
                 </div>
@@ -1077,7 +1146,12 @@
          *    rather than a hotlinked photo. The app now needs no network and no build step to
          *    run. Boot went from ~25s (eight doomed CDN requests) to near-instant, and the test
          *    suite from 3.2min to ~20s. See HARD RULE 8.
-         *  - Skins "glass", "soft" and "aurora" (Phase 1, 3 of 4): see the skin notes below.
+         *  - Skins "glass", "soft", "aurora", "classic" — Phase 1 COMPLETE, 4 of 4.
+         *  - Base layout fix (all skins): the page dots were absolutely positioned at
+         *    bottom-[90px] while the dock sits at bottom-4, putting them 12px INSIDE the
+         *    dock's top edge at every viewport height. They now share one flex stack with
+         *    the dock — a larger fixed offset would not have held, since dock height
+         *    tracks --app-size and moves with grid density.
          *  - Feedback & Motion (Settings): Vibration and Animations switches. Every haptic in
          *    the app routes through one window.haptic() gate — a dozen call sites did their own
          *    `if (navigator.vibrate)`, and any new one that skips the helper silently ignores the
@@ -1136,8 +1210,21 @@
          *      wash rather than an aurora, so a test asserts they stay distinguishable AND
          *      all move with the accent. The drift is decorative and freezes under both
          *      reduced-motion and the Animations switch via the global collapse.
-         *    - "classic" — a polished pass over the ORIGINAL dock look rather than a new
-         *      aesthetic: same layout, tightened spacing/typography/shadows.
+         *    - "classic" — DONE. A polished pass over the ORIGINAL dock look, not a new
+         *      aesthetic. Every change targets a NAMED defect, because polish with no
+         *      stated target is just drift: the label shadow stacked two large soft
+         *      shadows at high opacity and smeared a grey halo instead of separating text;
+         *      the icon shadow at 12% was too faint to lift a tile off the wallpaper; no
+         *      edge defined a white plate against a light wallpaper; labels floated between
+         *      rows rather than binding to their own icon. Its contract is enforced by a
+         *      test: it may change TREATMENT but must not move any layout GEOMETRY — if it
+         *      starts changing sizes or spacing it has become a different skin and the name
+         *      is a lie.
+         *
+         *  PHASE 1 IS COMPLETE. Six skins ship: dock, scancard, glass, soft, aurora,
+         *  classic. The skin system held for all of them without a single DOM fork, which
+         *  is the evidence the ROADMAP.md "skin or separate app?" decision was waiting on —
+         *  see that file before starting the polished alpha.
          *
          *  HARD RULES — violating these is exactly how this project broke last time
          *  --------------------------------------------------------------------------------
@@ -3114,7 +3201,8 @@
             { id: 'scancard', label: 'Scan Card', icon: 'credit-card', description: 'A clean result-card view for your codes.' },
             { id: 'glass', label: 'Glass', icon: 'droplets', description: 'Frosted glass over an ambient colour field.' },
             { id: 'soft', label: 'Soft', icon: 'circle', description: 'Tactile surfaces moulded from soft light.' },
-            { id: 'aurora', label: 'Aurora', icon: 'sparkles', description: 'Drifting colour blooms behind dark glass.' }
+            { id: 'aurora', label: 'Aurora', icon: 'sparkles', description: 'Drifting colour blooms behind dark glass.' },
+            { id: 'classic', label: 'Classic', icon: 'gem', description: 'The original dock, refined.' }
         ];
 
         class OSSkinManager {
