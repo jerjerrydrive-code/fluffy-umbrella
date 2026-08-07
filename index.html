@@ -146,6 +146,12 @@
         .grid-select-btn { transition: all 0.2s ease; }
         .grid-select-btn.active { background: #3b82f6; color: white; border-color: #3b82f6; }
 
+        .create-tab-btn { color: #6b7280; }
+        .create-tab-btn.active { background: #ffffff; color: #111827; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
+
+        .template-btn { transition: transform 0.15s var(--spring-snappy), box-shadow 0.15s ease; }
+        .template-btn:active { transform: scale(0.93); }
+
         #workspace-container {
             transition: transform 0.4s var(--spring-snappy), filter 0.4s ease, opacity 0.4s ease;
             transform-origin: top center;
@@ -393,13 +399,24 @@
     <div id="create-modal" class="modal-spring fixed inset-0 z-[250] bg-black/50 backdrop-blur-md opacity-0 pointer-events-none flex flex-col justify-end sm:justify-center items-center sm:p-4">
         <div class="bg-white rounded-t-[2.5rem] sm:rounded-[2rem] p-6 pb-12 sm:pb-6 w-full max-w-md shadow-2xl transform translate-y-full sm:translate-y-0 sm:scale-90 slide-up-spring" id="create-panel">
             <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6 sm:hidden"></div>
-            <div class="flex justify-between items-center mb-6">
+            <div class="flex justify-between items-center mb-5">
                 <h3 class="text-2xl font-bold text-gray-900 tracking-tight">Create Code</h3>
                 <button id="btn-close-create" class="p-2 bg-gray-100 rounded-full hover:bg-gray-200 active:scale-90 transition-all duration-300">
                     <i data-lucide="x" class="w-5 h-5 text-gray-700"></i>
                 </button>
             </div>
-            <div class="space-y-4">
+
+            <div class="flex gap-1.5 bg-gray-100 p-1.5 rounded-2xl mb-5">
+                <button class="create-tab-btn flex-1 py-2.5 rounded-xl text-sm font-bold transition-all duration-200" data-mode="templates">Quick Add</button>
+                <button class="create-tab-btn flex-1 py-2.5 rounded-xl text-sm font-bold transition-all duration-200" data-mode="custom">Custom</button>
+            </div>
+
+            <div id="create-templates-view" class="flex flex-col gap-4">
+                <div id="template-grid" class="grid grid-cols-4 gap-3"></div>
+                <div id="template-form-container" class="hidden flex-col gap-4"></div>
+            </div>
+
+            <div id="create-custom-view" class="hidden flex-col gap-4">
                 <div>
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Title</label>
                     <input type="text" id="create-input-title" class="w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none transition-all duration-300 shadow-sm" placeholder="">
@@ -418,10 +435,10 @@
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Data</label>
                     <textarea id="create-input-data" rows="3" class="w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-mono text-sm outline-none transition-all duration-300 shadow-sm resize-none" placeholder=""></textarea>
                 </div>
+                <button id="btn-save-create" class="w-full mt-2 py-4 bg-black text-white rounded-2xl font-bold hover:bg-gray-800 active:scale-[0.98] transition-all duration-200 shadow-[0_10px_20px_rgba(0,0,0,0.2)] flex justify-center items-center gap-2">
+                    <i data-lucide="save" class="w-5 h-5"></i> Save
+                </button>
             </div>
-            <button id="btn-save-create" class="w-full mt-8 py-4 bg-black text-white rounded-2xl font-bold hover:bg-gray-800 active:scale-[0.98] transition-all duration-200 shadow-[0_10px_20px_rgba(0,0,0,0.2)] flex justify-center items-center gap-2">
-                <i data-lucide="save" class="w-5 h-5"></i> Save
-            </button>
         </div>
     </div>
 
@@ -504,14 +521,18 @@
          *    language from nutrition-scanner-app references) without touching OS_STATE, the DOM
          *    structure, or any interaction logic. Switching skins is a CSS/attribute change with
          *    a brief blur/scale morph pulse, not a rebuild.
+         *  - Quick Add templates (OSCodeGenerator "Quick Add" tab, QUICK_TEMPLATES): WiFi,
+         *    Website, Email, Phone, Message, Contact (vCard) and Plain Text each get a small
+         *    plain-language form instead of hand-typing the raw payload string. WiFi/Contact are
+         *    forced to QR (native camera "Join Network" / "Add Contact" prompts require it),
+         *    everything else defaults to Aztec per HARD RULE 6. The old manual form still lives
+         *    under the "Custom" tab (also what a scanned code re-saves through).
          *
          *  IN PROGRESS / NEXT UP
          *  --------------------------------------------------------------------------------
          *  - More skins: port the remaining reference screenshots (e.g. the wireframe
          *    "History / Create / Scan" tab-style generator) into additional SKINS entries +
          *    body[data-skin="..."] CSS blocks. The scan-card skin is the template to follow.
-         *  - WiFi quick-add flow (currently: generic Create Code form only, user hand-types the
-         *    WIFI:S:...;T:...;P:...;; string).
          *  - Library / browse-all-codes view (search overlay covers ad-hoc lookup today, not
          *    a dedicated browsable list).
          *
@@ -1427,61 +1448,265 @@
             }
         }
 
+        // Quick-add templates — the "Quick Add" tab of the Create modal. Each template builds
+        // a properly formatted payload string from a couple of plain-language fields instead of
+        // making the user hand-type e.g. a WIFI:S:...;T:...;P:...;; string themselves.
+        const QUICK_TEMPLATES = [
+            { id: 'wifi', label: 'WiFi', icon: 'wifi' },
+            { id: 'url', label: 'Website', icon: 'link' },
+            { id: 'email', label: 'Email', icon: 'mail' },
+            { id: 'phone', label: 'Phone', icon: 'phone' },
+            { id: 'sms', label: 'Message', icon: 'message-square' },
+            { id: 'contact', label: 'Contact', icon: 'user-round' },
+            { id: 'text', label: 'Plain Text', icon: 'type' }
+        ];
+
         class OSCodeGenerator {
             constructor() {
                 this.modal = document.getElementById('create-modal');
                 this.panel = document.getElementById('create-panel');
-                
+
                 this.inputTitle = document.getElementById('create-input-title');
                 this.inputType = document.getElementById('create-input-type');
                 this.inputData = document.getElementById('create-input-data');
-                
+
+                this.templatesView = document.getElementById('create-templates-view');
+                this.customView = document.getElementById('create-custom-view');
+                this.templateGrid = document.getElementById('template-grid');
+                this.templateFormContainer = document.getElementById('template-form-container');
+                this.tabButtons = document.querySelectorAll('.create-tab-btn');
+                this.activeTemplate = null;
+
                 document.getElementById('btn-close-create').addEventListener('click', () => this.close());
-                document.getElementById('btn-save-create').addEventListener('click', () => this.generateCode());
-                
+                document.getElementById('btn-save-create').addEventListener('click', () => this.saveFromCustomForm());
                 this.modal.addEventListener('click', (e) => { if(e.target === this.modal) this.close(); });
+
+                this.tabButtons.forEach(btn => btn.addEventListener('click', () => this.setMode(btn.dataset.mode)));
+
+                this.renderTemplateGrid();
+            }
+
+            renderTemplateGrid() {
+                this.templateGrid.innerHTML = '';
+                QUICK_TEMPLATES.forEach(t => {
+                    const btn = document.createElement('button');
+                    btn.className = 'template-btn flex flex-col items-center gap-2 p-3 rounded-2xl bg-gray-50 border border-gray-100 hover:bg-gray-100';
+                    btn.innerHTML = `
+                        <div class="w-11 h-11 rounded-2xl bg-black text-white flex items-center justify-center">
+                            <i data-lucide="${t.icon}" class="w-5 h-5"></i>
+                        </div>
+                        <span class="text-[11px] font-bold text-gray-700 text-center leading-tight">${t.label}</span>
+                    `;
+                    btn.addEventListener('click', () => this.openTemplateForm(t.id));
+                    this.templateGrid.appendChild(btn);
+                });
+                safeCreateIcons();
+            }
+
+            setMode(mode) {
+                this.tabButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mode));
+                this.templatesView.classList.toggle('hidden', mode !== 'templates');
+                this.customView.classList.toggle('hidden', mode !== 'custom');
+                this.customView.classList.toggle('flex', mode === 'custom');
+                if (mode === 'templates') this.closeTemplateForm();
+            }
+
+            field(label, inputHtml) {
+                return `<div><label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">${label}</label>${inputHtml}</div>`;
+            }
+
+            textInput(id, placeholder, type = 'text') {
+                return `<input type="${type}" id="${id}" placeholder="${placeholder}" class="w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none transition-all duration-300 shadow-sm">`;
+            }
+
+            openTemplateForm(templateId) {
+                this.activeTemplate = templateId;
+                const c = this.templateFormContainer;
+
+                let formHtml = '';
+                let note = '';
+                switch (templateId) {
+                    case 'wifi':
+                        formHtml = `
+                            ${this.field('Network Name (SSID)', this.textInput('tpl-wifi-ssid', 'MyNetwork'))}
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Security</label>
+                                <select id="tpl-wifi-sec" class="w-full bg-gray-50 border border-gray-200 focus:border-black rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none appearance-none shadow-sm cursor-pointer">
+                                    <option value="WPA">WPA / WPA2</option>
+                                    <option value="WEP">WEP</option>
+                                    <option value="nopass">None (Open)</option>
+                                </select>
+                            </div>
+                            ${this.field('Password', this.textInput('tpl-wifi-pass', 'Password', 'password'))}
+                        `;
+                        note = 'Generated as a QR Code — that\'s what phones need to show the "Join Network" prompt automatically.';
+                        break;
+                    case 'url':
+                        formHtml = this.field('Website URL', this.textInput('tpl-url', 'https://example.com'));
+                        break;
+                    case 'email':
+                        formHtml = this.field('Email Address', this.textInput('tpl-email-to', 'name@example.com', 'email'))
+                            + this.field('Subject (optional)', this.textInput('tpl-email-subject', ''));
+                        break;
+                    case 'phone':
+                        formHtml = this.field('Phone Number', this.textInput('tpl-phone', '+1 555 123 4567', 'tel'));
+                        break;
+                    case 'sms':
+                        formHtml = this.field('Phone Number', this.textInput('tpl-sms-number', '+1 555 123 4567', 'tel'))
+                            + this.field('Message (optional)', this.textInput('tpl-sms-body', ''));
+                        break;
+                    case 'contact':
+                        formHtml = this.field('Full Name', this.textInput('tpl-contact-name', 'Jane Doe'))
+                            + this.field('Phone (optional)', this.textInput('tpl-contact-phone', '', 'tel'))
+                            + this.field('Email (optional)', this.textInput('tpl-contact-email', '', 'email'));
+                        note = 'Generated as a QR Code for the widest "Add Contact" support.';
+                        break;
+                    case 'text':
+                        formHtml = `<div><label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Text</label><textarea id="tpl-text-body" rows="3" class="w-full bg-gray-50 border border-gray-200 focus:border-black rounded-2xl px-5 py-4 text-gray-900 font-mono text-sm outline-none shadow-sm resize-none" placeholder="Anything you like"></textarea></div>`;
+                        break;
+                }
+
+                c.innerHTML = `
+                    <button id="tpl-back-btn" class="flex items-center gap-1.5 text-gray-500 font-bold text-sm -mb-1">
+                        <i data-lucide="chevron-left" class="w-4 h-4"></i> Back
+                    </button>
+                    ${formHtml}
+                    ${note ? `<p class="text-[11px] text-gray-400 leading-relaxed px-1">${note}</p>` : ''}
+                    <button id="tpl-save-btn" class="w-full mt-1 py-4 bg-black text-white rounded-2xl font-bold hover:bg-gray-800 active:scale-[0.98] transition-all duration-200 shadow-[0_10px_20px_rgba(0,0,0,0.2)] flex justify-center items-center gap-2">
+                        <i data-lucide="save" class="w-5 h-5"></i> Add to Home Screen
+                    </button>
+                `;
+                safeCreateIcons();
+
+                document.getElementById('tpl-back-btn').addEventListener('click', () => this.closeTemplateForm());
+                document.getElementById('tpl-save-btn').addEventListener('click', () => this.saveFromTemplate(templateId));
+
+                c.classList.remove('hidden');
+                c.classList.add('flex');
+                this.templateGrid.classList.add('hidden');
+            }
+
+            closeTemplateForm() {
+                this.activeTemplate = null;
+                this.templateFormContainer.classList.add('hidden');
+                this.templateFormContainer.classList.remove('flex');
+                this.templateGrid.classList.remove('hidden');
+            }
+
+            val(id) {
+                const el = document.getElementById(id);
+                return el ? el.value.trim() : '';
+            }
+
+            saveFromTemplate(templateId) {
+                let title = '', data = '', bcid = 'azteccode';
+                switch (templateId) {
+                    case 'wifi': {
+                        const ssid = this.val('tpl-wifi-ssid');
+                        if (!ssid) return window.showToast('Network name is required', 'error');
+                        const sec = this.val('tpl-wifi-sec') || 'WPA';
+                        const pass = this.val('tpl-wifi-pass');
+                        data = `WIFI:S:${ssid};T:${sec};${sec !== 'nopass' ? `P:${pass};` : ''};`;
+                        title = ssid;
+                        bcid = 'qrcode';
+                        break;
+                    }
+                    case 'url': {
+                        let url = this.val('tpl-url');
+                        if (!url) return window.showToast('A URL is required', 'error');
+                        if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+                        data = url;
+                        title = url.replace(/^https?:\/\//i, '').split('/')[0];
+                        break;
+                    }
+                    case 'email': {
+                        const to = this.val('tpl-email-to');
+                        if (!to) return window.showToast('An email address is required', 'error');
+                        const subject = this.val('tpl-email-subject');
+                        data = subject ? `mailto:${to}?subject=${encodeURIComponent(subject)}` : `mailto:${to}`;
+                        title = to;
+                        break;
+                    }
+                    case 'phone': {
+                        const number = this.val('tpl-phone');
+                        if (!number) return window.showToast('A phone number is required', 'error');
+                        data = `tel:${number}`;
+                        title = number;
+                        break;
+                    }
+                    case 'sms': {
+                        const number = this.val('tpl-sms-number');
+                        if (!number) return window.showToast('A phone number is required', 'error');
+                        const body = this.val('tpl-sms-body');
+                        data = body ? `sms:${number}?body=${encodeURIComponent(body)}` : `sms:${number}`;
+                        title = number;
+                        break;
+                    }
+                    case 'contact': {
+                        const name = this.val('tpl-contact-name');
+                        if (!name) return window.showToast('A name is required', 'error');
+                        const phone = this.val('tpl-contact-phone');
+                        const email = this.val('tpl-contact-email');
+                        data = ['BEGIN:VCARD', 'VERSION:3.0', `FN:${name}`, phone ? `TEL:${phone}` : '', email ? `EMAIL:${email}` : '', 'END:VCARD']
+                            .filter(Boolean).join('\n');
+                        title = name;
+                        bcid = 'qrcode';
+                        break;
+                    }
+                    case 'text': {
+                        const body = this.val('tpl-text-body');
+                        if (!body) return window.showToast('Enter some text first', 'error');
+                        data = body;
+                        title = body.length > 24 ? body.slice(0, 24) + '…' : body;
+                        break;
+                    }
+                }
+                this.saveCode(title, data, bcid);
+            }
+
+            saveFromCustomForm() {
+                this.saveCode(this.inputTitle.value.trim(), this.inputData.value.trim(), this.inputType.value);
             }
 
             open(prefillData = null, prefillFormat = null) {
                 this.inputTitle.value = '';
                 this.inputData.value = prefillData || '';
                 this.inputType.value = prefillFormat || 'azteccode';
-                
+
+                this.closeTemplateForm();
+                this.setMode(prefillData ? 'custom' : 'templates');
+
                 this.modal.classList.remove('opacity-0', 'pointer-events-none');
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
-                
+
                 this.panel.classList.remove('translate-y-full', 'scale-90');
                 this.panel.classList.add('translate-y-0', 'scale-100');
-                
-                setTimeout(() => this.inputTitle.focus(), 150);
+
+                if (prefillData) setTimeout(() => this.inputTitle.focus(), 150);
             }
 
             close() {
                 this.modal.classList.add('opacity-0', 'pointer-events-none');
                 this.modal.classList.remove('opacity-100', 'pointer-events-auto');
-                
+
                 this.panel.classList.add('translate-y-full', 'scale-90');
                 this.panel.classList.remove('translate-y-0', 'scale-100');
             }
 
-            generateCode() {
-                const title = this.inputTitle.value.trim();
-                const data = this.inputData.value.trim();
-                const bcid = this.inputType.value;
-
+            saveCode(title, data, bcid) {
                 if (!title || !data) {
-                    window.showToast('Please fill all fields');
+                    window.showToast('Please fill all fields', 'error');
                     return;
                 }
 
                 const state = window.OS_STATE;
                 const gridItems = state.apps.filter(a => a.type === 'grid');
                 const itemsPerPage = state.gridCols * state.gridRows;
-                
+
                 let targetPage = 0;
                 let targetOrder = 0;
 
-                for (let page = 0; page < 10; page++) { 
+                for (let page = 0; page < 10; page++) {
                     const itemsOnPage = gridItems.filter(a => a.page === page);
                     if (itemsOnPage.length < itemsPerPage) {
                         targetPage = page;
@@ -1508,15 +1733,15 @@
 
                 window.OS_STATE.apps.push(newItem);
                 saveState();
-                
+
                 this.close();
                 window.showToast('Added to Grid!');
-                
-                document.getElementById('workspace-pager').scrollTo({ 
-                    left: targetPage * document.getElementById('workspace-pager').clientWidth, 
-                    behavior: 'smooth' 
+
+                document.getElementById('workspace-pager').scrollTo({
+                    left: targetPage * document.getElementById('workspace-pager').clientWidth,
+                    behavior: 'smooth'
                 });
-                
+
                 setTimeout(() => window.Renderer.render(), 300);
             }
         }
