@@ -1,4 +1,11 @@
-const CACHE_NAME = 'xancode-os-v1';
+// Bumped to v2: the app shell moved from CDNs to ./vendor. A cache name change is what
+// evicts the old entries — without it, clients keep serving the stale CDN-era shell.
+const CACHE_NAME = 'xancode-os-v2';
+
+// Every entry is same-origin now. That matters beyond tidiness: cache.add() on a cross-origin
+// URL yields an opaque response, which cannot be inspected for success, so a failed CDN fetch
+// used to be cached as a "win" and silently served an empty script forever after. Same-origin
+// responses fail loudly and correctly instead.
 const APP_SHELL = [
     './',
     './index.html',
@@ -6,10 +13,10 @@ const APP_SHELL = [
     './icons/icon-192.png',
     './icons/icon-512.png',
     './icons/apple-touch-icon.png',
-    'https://cdn.tailwindcss.com',
-    'https://unpkg.com/lucide@latest',
-    'https://cdnjs.cloudflare.com/ajax/libs/bwip-js/4.1.1/bwip-js-min.js',
-    'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js'
+    './vendor/tailwind.css',
+    './vendor/lucide.min.js',
+    './vendor/bwip-js.min.js',
+    './vendor/html5-qrcode.min.js'
 ];
 
 self.addEventListener('install', (event) => {

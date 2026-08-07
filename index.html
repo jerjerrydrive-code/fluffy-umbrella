@@ -14,10 +14,24 @@
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/bwip-js/4.1.1/bwip-js-min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+    <!-- Everything the app needs to RENDER is vendored under ./vendor and served from the same
+         origin. No CDN, no network, no build step to run it. This is deliberate and load-bearing:
+         these four used to be CDN <script> tags, and when they were, a restricted network took
+         the whole app down — Tailwind carries essentially all the layout, so losing it rendered
+         the app as unstyled scattered text. That is the opposite of what an offline-first PWA is
+         supposed to do. The regression suite now blocks every external host and asserts the app
+         still fully renders; see "Self-contained rendering" in tests/regression.spec.js.
+
+         vendor/tailwind.css is a real static build (28KB) rather than the CDN's in-browser JIT
+         compiler (~400KB executed at every boot). Rebuild it after adding new utility classes:
+             npm run build:css
+         Cloud sync is the one intentional exception — it imports Firebase from a CDN at call
+         time, inside a try/catch, because syncing inherently needs the network anyway. It must
+         never become a render dependency (HARD RULE 1). -->
+    <link rel="stylesheet" href="vendor/tailwind.css">
+    <script src="vendor/lucide.min.js"></script>
+    <script src="vendor/bwip-js.min.js"></script>
+    <script src="vendor/html5-qrcode.min.js"></script>
     
     <style>
         :root {
@@ -63,8 +77,19 @@
         }
 
         body {
-            background-image: url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?ixlib=rb-1.2.1&auto=format&fit=crop&w=1200&q=80');
+            /* Default wallpaper: a painted dusk gradient rather than a hotlinked photo.
+               It costs zero bytes, carries no licence question, and — the reason it changed —
+               it cannot fail to load. The previous default was an Unsplash URL, so a cold or
+               restricted network left the app on a flat black ground. A user-uploaded wallpaper
+               still wins: OSSettingsManager writes an inline background-image, and clearing it
+               falls back here. */
+            background-image:
+                radial-gradient(125% 65% at 50% 118%, rgba(10, 60, 76, 0.92) 0%, rgba(8, 38, 54, 0) 70%),
+                linear-gradient(180deg,
+                    #0f1836 0%, #222f5e 18%, #4a4a7d 34%, #8a6588 48%,
+                    #c8836f 60%, #e7a874 68%, #a8b39c 76%, #4d8f92 88%, #1f5c6b 100%);
             background-size: cover; background-position: center; background-repeat: no-repeat;
+            background-attachment: fixed;
             overflow: hidden; -webkit-user-select: none; user-select: none;
             -webkit-tap-highlight-color: transparent;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -321,7 +346,12 @@
             background: rgba(255, 255, 255, 0.55);
             border: 1px solid rgba(255, 255, 255, 0.7);
         }
-        body[data-skin="glass"] #btn-close-library i { color: #241f3d; }
+        /* lucide replaces each <i data-lucide> with an <svg>, so an `i` selector stops matching
+           once icons render — target svg. Lucide draws with stroke:currentColor, so setting
+           color here is enough. The empty-state icon keeps its accent via .accent-text's
+           !important, which deliberately outranks this. */
+        body[data-skin="glass"] #library-overlay svg { color: rgba(36, 31, 61, 0.5); }
+        body[data-skin="glass"] #library-list .lib-meta { color: rgba(36, 31, 61, 0.5); }
         body[data-skin="glass"] .library-sort-btn {
             background: rgba(255, 255, 255, 0.45);
             color: rgba(36, 31, 61, 0.65);
@@ -423,7 +453,7 @@
     </div>
 
     <div id="settings-modal" class="modal-spring fixed inset-0 z-[150] bg-black/60 backdrop-blur-xl opacity-0 pointer-events-none flex items-center justify-center p-4">
-        <div class="bg-[#1c1c1e] border border-white/10 rounded-[2.5rem] p-6 w-full max-w-sm transform scale-90 shadow-2xl modal-spring flex flex-col gap-6" id="settings-panel">
+        <div class="bg-[#1c1c1e] border border-white/10 rounded-[2.5rem] p-6 w-full max-w-sm max-h-[88vh] overflow-y-auto hide-scrollbar transform scale-90 shadow-2xl modal-spring flex flex-col gap-6" id="settings-panel">
             <div class="flex justify-between items-center px-2">
                 <h3 class="text-xl font-bold text-white tracking-tight">OS Preferences</h3>
                 <button id="btn-close-settings" class="p-2 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all duration-300">
@@ -474,7 +504,7 @@
     </div>
 
     <div id="account-modal" class="modal-spring fixed inset-0 z-[160] bg-black/60 backdrop-blur-xl opacity-0 pointer-events-none flex items-center justify-center p-4">
-        <div class="bg-[#1c1c1e] border border-white/10 rounded-[2.5rem] p-6 w-full max-w-sm transform scale-90 shadow-2xl modal-spring flex flex-col gap-5" id="account-panel">
+        <div class="bg-[#1c1c1e] border border-white/10 rounded-[2.5rem] p-6 w-full max-w-sm max-h-[88vh] overflow-y-auto hide-scrollbar transform scale-90 shadow-2xl modal-spring flex flex-col gap-5" id="account-panel">
             <div class="flex justify-between items-center px-2">
                 <h3 class="text-xl font-bold text-white tracking-tight">Account</h3>
                 <button id="btn-close-account" class="p-2 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all duration-300">
@@ -705,6 +735,13 @@
          *    Filter by name/data/format, sort by Recent / Name / Format, tap through to the item
          *    viewer. Holds no state of its own beyond the transient filter/sort — it reads
          *    straight off OS_STATE, so it cannot drift out of sync with the home screen.
+         *  - Self-contained rendering: Tailwind (a real 28KB static build, not the CDN's
+         *    ~400KB in-browser JIT), lucide, bwip-js and html5-qrcode are vendored under
+         *    ./vendor and served same-origin; the default wallpaper is a painted CSS gradient
+         *    rather than a hotlinked photo. The app now needs no network and no build step to
+         *    run. Boot went from ~25s (eight doomed CDN requests) to near-instant, and the test
+         *    suite from 3.2min to ~20s. See HARD RULE 8.
+         *  - Skin "glass" (Phase 1 of 4): see the skin notes below.
          *  - Regression test suite (tests/regression.spec.js, Playwright): Stage 3 work. Every
          *    fix above used to be verified once by hand with a throwaway script and then thrown
          *    away — this is that verification made permanent. Run with `npm test` (needs
@@ -771,12 +808,22 @@
          *     .accent-border (or the CSS var(--accent) directly) — never a hardcoded blue-500
          *     or #hex literal. Hardcoding a color is exactly how the theme system silently stops
          *     covering part of the app.
-         *  8. NEVER interpolate a code's title or payload into innerHTML. A scanned payload is
+         *  8. NOTHING required to RENDER may come from a CDN. Tailwind, lucide, bwip-js and
+         *     html5-qrcode are vendored under ./vendor and served same-origin. This is not a
+         *     preference: they used to be CDN <script> tags, and on a restricted network all
+         *     four failed — Tailwind carries essentially all the layout, so the app rendered as
+         *     unstyled scattered text while every behavioural test still passed. If you add a
+         *     library, vendor it and add it to sw.js's APP_SHELL. After adding new Tailwind
+         *     utility classes run `npm run build:css` and commit vendor/tailwind.css, or the
+         *     new classes simply won't exist at runtime. Cloud sync is the ONE exception: it
+         *     imports Firebase from a CDN at call time inside try/catch, because syncing needs
+         *     the network anyway — it must never become a render dependency (see rule 1).
+         *  9. NEVER interpolate a code's title or payload into innerHTML. A scanned payload is
          *     arbitrary text from an untrusted source — a malicious QR can carry markup, and
          *     innerHTML would execute it. Build the structure with innerHTML if you like, then
          *     set every user/scanner-supplied field with textContent (see OSLibraryManager
          *     .renderList()). There is a regression test pinning this.
-         *  9. When you fix a real bug or ship a real feature, add or update a test in
+         * 10. When you fix a real bug or ship a real feature, add or update a test in
          *     tests/regression.spec.js in the same change. That suite is the only thing standing
          *     between "I tested this once by hand" and it silently breaking again next session —
          *     don't let it go stale.
@@ -829,7 +876,14 @@
             if (window.CloudSync) window.CloudSync.queueSave();
         }
 
-        const XanLogger = { log: (msg) => console.log(`[XanOS] ${msg}`), error: (msg, e) => console.error(`[XanOS ERROR] ${msg}`, e) };
+        const XanLogger = {
+            log: (msg) => console.log(`[XanOS] ${msg}`),
+            // For conditions that are handled and expected — a camera that was never running,
+            // a skipped optional feature. Distinct from error(), so genuinely broken things stay
+            // easy to spot in the console instead of being buried in handled noise.
+            warn: (msg, e) => console.warn(`[XanOS WARN] ${msg}`, e),
+            error: (msg, e) => console.error(`[XanOS ERROR] ${msg}`, e)
+        };
         
         window.showToast = function(message, type = 'success') {
             const toast = document.createElement('div');
@@ -2194,10 +2248,21 @@
                 this.updateFlashUI();
                 const inst = this.html5Qrcode;
                 this.html5Qrcode = null;
-                this.stopPromise = inst.stop()
-                    .then(() => { try { inst.clear(); } catch(e) {} this.stopPromise = null; })
-                    .catch(() => { this.stopPromise = null; });
-                await this.stopPromise;
+                // html5-qrcode throws "Cannot stop, scanner is not running or paused" SYNCHRONOUSLY
+                // when the camera never actually started — a rejected-promise .catch() never sees
+                // it. That happens for real whenever start() failed (permission denied, no camera,
+                // camera held by another app) and the user then closes the scanner, so closing
+                // would throw instead of just closing. Needs try/catch, not only .catch().
+                try {
+                    this.stopPromise = inst.stop()
+                        .then(() => { try { inst.clear(); } catch(e) {} this.stopPromise = null; })
+                        .catch(() => { this.stopPromise = null; });
+                    await this.stopPromise;
+                } catch (e) {
+                    this.stopPromise = null;
+                    try { inst.clear(); } catch (e2) {}
+                    XanLogger.warn('Scanner stop skipped (camera was not running):', e && e.message);
+                }
             }
 
             resetScanUI() {
@@ -3029,7 +3094,7 @@
                             <p class="text-white/45 text-[11px] font-mono truncate mt-0.5"></p>
                             <div class="flex gap-2 mt-1.5 items-center">
                                 <span class="accent-text accent-bg-soft text-[9.5px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded"></span>
-                                <span class="text-white/35 text-[10px] font-semibold">Page ${(app.page || 0) + 1}</span>
+                                <span class="lib-meta text-white/35 text-[10px] font-semibold">Page ${(app.page || 0) + 1}</span>
                             </div>
                         </div>
                         <i data-lucide="chevron-right" class="w-5 h-5 text-white/25 shrink-0"></i>

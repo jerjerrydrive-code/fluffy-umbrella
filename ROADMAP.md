@@ -24,7 +24,7 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 17 passing):
+Built and covered by the regression suite (`npm test`, 21 passing in ~20s):
 
 | Area | State |
 |---|---|
@@ -33,8 +33,8 @@ Built and covered by the regression suite (`npm test`, 17 passing):
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, smart payload parsing |
 | Library | Browse-all view: filter + sort by Recent / Name / Format |
 | Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin |
-| Skins | `dock` (default), `scancard` — layered over one DOM via `OSSkinManager` |
-| Platform | Installable PWA, offline-capable, Firebase cloud sync (strictly optional) |
+| Skins | `dock` (default), `scancard`, `glass` — layered over one DOM via `OSSkinManager` |
+| Platform | Installable PWA, **fully self-contained** (no CDN needed to render), Firebase cloud sync (strictly optional) |
 
 The foundation is done. Everything below is building **on** it — never forking it (HARD RULE 5).
 
@@ -144,8 +144,9 @@ install with nothing lost. This is the phase that makes the app trustworthy enou
   traps in modals, `prefers-reduced-motion` honoured by the physics engine, WCAG AA contrast
   enforced by the accent contrast calculator
 - **Internationalisation**: extract every string to a table, ship English + 3 more, RTL layout
-- **Performance budget**: sub-1s first paint, self-host the CDN dependencies (Tailwind, bwip-js,
-  lucide, html5-qrcode) — this also kills the ~25s cold-boot the test suite currently absorbs
+- ~~**Self-host the CDN dependencies**~~ — **done early**, pulled forward out of necessity. See
+  risk 2. Remaining performance work: sub-1s first paint on real hardware, and trimming the
+  vendored bundles (bwip-js ships every symbology; we use five)
 - **Haptics & audio** (the old Phase 8 idea): Web Audio click on icon snap, muted thud on delete
 - **Error surface**: XanLogger gains an in-app diagnostics view
 - **Security pass**: audit every dynamic-content path against HARD RULE 8
@@ -201,16 +202,15 @@ being built.
 
 1. **Scope creep through skins.** Every new aesthetic tempts a DOM change. The moment a skin
    forks the structure we are back to the failure that destroyed the alpha. Skins are CSS.
-2. **CDN dependency — worse than it looks, and now measured.** In a network-restricted
-   environment every external request fails (`ERR_CONNECTION_RESET`): Tailwind, bwip-js, lucide,
-   html5-qrcode, the Unsplash wallpaper and Firebase. Tailwind failing is the severe one — it
-   carries essentially all the layout, so the app renders as unstyled scattered text. The
-   regression suite still passes, because it asserts behaviour and DOM rather than pixels, which
-   is exactly why this went unnoticed. Two consequences: the ~25s cold boot is the browser
-   waiting on eight doomed requests, and **"works offline" is currently only true for a warm
-   cache** — a genuinely cold offline load has nothing to render. This makes Phase 5's
-   self-hosting the highest-value item on the list; strongly consider pulling it forward ahead
-   of Phase 4.
+2. **CDN dependency — found, measured, and fixed.** Every external request failed in a
+   restricted environment, and Tailwind failing took essentially all the layout with it: the app
+   rendered as unstyled scattered text while the whole regression suite stayed green, because it
+   asserted behaviour and DOM rather than pixels. Tailwind, lucide, bwip-js and html5-qrcode are
+   now vendored same-origin and the default wallpaper is a painted gradient, so the app renders
+   with no network at all. Boot went from ~25s to near-instant; the suite from 3.2min to ~20s.
+   A test now blocks every external host and asserts a complete render. Firebase stays on a CDN
+   by design — cloud sync needs the network anyway and already fails gracefully.
+
 3. **The palette is irreplaceable.** The 338-theme string was lost once and recovered by luck.
    It is in git now and pinned by a test — never "tidy" it.
 4. **Store review friction.** Camera-permission apps get scrutinised. Budget a rejection round.

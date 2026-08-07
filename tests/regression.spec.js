@@ -408,3 +408,72 @@ test.describe('Glass skin (Phase 1)', () => {
         await expect(page.locator('.app-icon-wrapper')).toHaveCount(iconsBefore);
     });
 });
+
+test.describe('Self-contained rendering (regression: CDN outage blanked the layout)', () => {
+    // The app used to load Tailwind, lucide, bwip-js and html5-qrcode from CDNs. On a restricted
+    // or cold network all four failed, and because Tailwind carries essentially all the layout,
+    // the app rendered as unstyled scattered text — while the rest of this suite stayed green,
+    // since it asserts behaviour and DOM rather than pixels. That is exactly the blind spot this
+    // test closes: it blocks EVERY external host and demands the app still fully render.
+    const blockAllExternal = async (page) => {
+        await page.route('**/*', (route) => {
+            const url = route.request().url();
+            if (url.startsWith('http://localhost:4173')) return route.continue();
+            return route.abort();
+        });
+    };
+
+    test('renders completely with every external host blocked', async ({ page }) => {
+        await blockAllExternal(page);
+        await page.goto('/index.html');
+        await page.waitForTimeout(2500);
+
+        // Tailwind actually applied: this class only resolves if the stylesheet loaded.
+        const layout = await page.evaluate(() => {
+            const el = document.getElementById('workspace-container');
+            const cs = getComputedStyle(el);
+            return { zIndex: cs.zIndex, display: cs.display };
+        });
+        expect(layout.display).toBe('flex');
+        expect(layout.zIndex).toBe('10');
+
+        // The three vendored libraries are present.
+        const libs = await page.evaluate(() => ({
+            bwip: typeof window.bwipjs,
+            lucide: typeof window.lucide,
+            qr: typeof window.Html5Qrcode
+        }));
+        expect(libs.bwip).toBe('object');
+        expect(libs.lucide).toBe('object');
+        expect(libs.qr).toBe('function');
+
+        // Icons rendered, and barcodes actually drew pixels onto their canvases.
+        await expect(page.locator('.app-icon-wrapper')).not.toHaveCount(0);
+        await expect(page.locator('#dock-container svg')).not.toHaveCount(0);
+
+        const drew = await page.evaluate(() => {
+            const c = document.querySelector('.app-icon-wrapper canvas');
+            if (!c || !c.width) return false;
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            for (let i = 0; i < d.length; i += 4) if (d[i] !== d[0] || d[i + 1] !== d[1]) return true;
+            return false; // uniform canvas => nothing rendered
+        });
+        expect(drew, 'barcode canvas should contain rendered bars').toBe(true);
+
+        // And a wallpaper is present without any network fetch.
+        const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundImage);
+        expect(bg).toContain('gradient');
+        expect(bg).not.toContain('unsplash');
+    });
+
+    test('index.html references no external resources for rendering', async ({ page }) => {
+        // Belt and braces: catch a CDN tag reintroduced by hand, even if it happens to be
+        // reachable on the machine running the suite.
+        await page.goto('/index.html');
+        const external = await page.evaluate(() =>
+            [...document.querySelectorAll('script[src], link[rel="stylesheet"][href]')]
+                .map(el => el.getAttribute('src') || el.getAttribute('href'))
+                .filter(u => /^https?:\/\//i.test(u)));
+        expect(external, `external render deps: ${external.join(', ')}`).toEqual([]);
+    });
+});
