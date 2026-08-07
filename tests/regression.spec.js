@@ -477,3 +477,54 @@ test.describe('Self-contained rendering (regression: CDN outage blanked the layo
         expect(external, `external render deps: ${external.join(', ')}`).toEqual([]);
     });
 });
+
+test.describe('Accent swatch rendering', () => {
+    // Two things pinned here. (1) The swatches show a theme as four stacked horizontal bands,
+    // not four conic quadrants — the conic version put all four wedges converging on a centre
+    // point, which reads as a hazard symbol and is harsh to scan down a long row of. (2) The
+    // gradient must be sized to the border box: these buttons carry a 2px border, and a
+    // background is positioned to the padding box but painted across the border box, so with
+    // the default repeat the top 2px showed the tail colour of the tile above as a stray band.
+    // Note the sub-properties come from a CSS class, so the JS must set background LONGHANDS —
+    // assigning the `background` shorthand resets them and silently brings the artefact back.
+    test('themes render as stacked bands with no tiling artefact', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await page.click('#btn-open-settings');
+        await page.waitForTimeout(300);
+
+        const s = await page.evaluate(() => {
+            const el = document.querySelector('#theme-swatch-row button');
+            const cs = getComputedStyle(el);
+            return {
+                image: cs.backgroundImage,
+                origin: cs.backgroundOrigin,
+                repeat: cs.backgroundRepeat
+            };
+        });
+
+        expect(s.image).toContain('linear-gradient');
+        expect(s.image).not.toContain('conic-gradient');
+        expect(s.origin).toBe('border-box');
+        expect(s.repeat).toBe('no-repeat');
+    });
+
+    test('a pinned favourite renders as one flat colour', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await page.click('#btn-open-settings');
+        await page.evaluate(() => {
+            window.ThemeManager.favorites = ['#123456'];
+            window.ThemeManager.render();
+        });
+        await page.waitForTimeout(250);
+
+        const s = await page.evaluate(() => {
+            const cs = getComputedStyle(document.querySelector('#theme-swatch-row button'));
+            return { image: cs.backgroundImage, color: cs.backgroundColor };
+        });
+        // The gradient must be cleared, not left underneath the flat colour.
+        expect(s.image).toBe('none');
+        expect(s.color).toBe('rgb(18, 52, 86)');
+    });
+});

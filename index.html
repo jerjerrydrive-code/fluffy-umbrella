@@ -57,6 +57,17 @@
         .accent-border-soft { border-color: color-mix(in srgb, var(--accent) 35%, transparent) !important; }
         .accent-bg:active { filter: brightness(0.92); }
 
+        /* Accent swatches. The gradient must be sized to the BORDER box: these buttons carry a
+           2px (transparent when inactive) border, and by default a background is *positioned* to
+           the padding box but *painted* across the border box, so the gradient tiles and the 2px
+           strip at the top renders the tail colour of the tile above it — a stray band of the
+           theme's last colour along the top edge. Sizing to the border box makes one tile cover
+           the whole button exactly. */
+        .accent-swatch {
+            background-origin: border-box;
+            background-repeat: no-repeat;
+        }
+
         /* Library sort pills. Active state is accent-driven per HARD RULE 7 — no hardcoded hex. */
         .library-sort-btn {
             padding: 0.4rem 0.9rem; border-radius: 999px; font-size: 12.5px; font-weight: 700;
@@ -2586,10 +2597,25 @@
                     ? pinnedHex.toUpperCase() === this.current
                     : quad.some(c => c.toUpperCase() === this.current);
 
-                btn.className = `relative w-11 h-11 rounded-full shrink-0 border-2 transition-transform active:scale-90 overflow-hidden ${isActive ? 'border-white' : 'border-transparent'}`;
-                btn.style.background = pinnedHex
-                    ? pinnedHex
-                    : `conic-gradient(${quad[0]} 0deg 90deg, ${quad[1]} 90deg 180deg, ${quad[2]} 180deg 270deg, ${quad[3]} 270deg 360deg)`;
+                btn.className = `accent-swatch relative w-11 h-11 rounded-full shrink-0 border-2 transition-transform active:scale-90 overflow-hidden ${isActive ? 'border-white' : 'border-transparent'}`;
+                // Four horizontal bands, not four conic quadrants. The old conic version put all
+                // four wedges converging on a point at the centre, which is the exact geometry of
+                // a hazard/radiation symbol — it read as a warning and was harsh to scan down a
+                // long row of. Stacked bands remove the convergence entirely, and they match how
+                // palettes are conventionally shown (Color Hunt et al), so a theme reads as a
+                // palette instead of an alert. Edges stay crisp: the harshness was the centre
+                // point, not the contrast, and blending would muddy the actual colours.
+                // Longhands, deliberately. Assigning the `background` SHORTHAND resets every
+                // background sub-property to its initial value — including the background-origin
+                // and background-repeat that .accent-swatch sets — and an inline style outranks
+                // the class, so the shorthand silently reintroduced the tiling artefact.
+                if (pinnedHex) {
+                    btn.style.backgroundImage = 'none';
+                    btn.style.backgroundColor = pinnedHex;
+                } else {
+                    btn.style.backgroundImage =
+                        `linear-gradient(180deg, ${quad[0]} 0 25%, ${quad[1]} 25% 50%, ${quad[2]} 50% 75%, ${quad[3]} 75% 100%)`;
+                }
 
                 if (pinnedHex) {
                     const star = document.createElement('div');
