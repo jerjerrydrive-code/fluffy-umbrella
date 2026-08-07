@@ -25,9 +25,23 @@
             --spring-smooth: cubic-bezier(0.25, 1, 0.5, 1);
             --squircle-radius: 22.5%;
             --grid-cols: 4;
-            --app-size: 60px; 
+            --app-size: 60px;
             --grid-gap-y: 28px;
+            --accent: #3b82f6;
+            --accent-text: #ffffff;
         }
+
+        /* ================= THEME SYSTEM =================
+           Every accent-colored surface reads from --accent so OSThemeManager can retint the
+           whole app by changing one CSS variable. See OSThemeManager for the packed-theme +
+           reroll/favorite mechanic. */
+        .accent-bg { background-color: var(--accent) !important; }
+        .accent-text { color: var(--accent) !important; }
+        .accent-border { border-color: var(--accent) !important; }
+        .accent-on-accent { color: var(--accent-text) !important; }
+        .accent-bg-soft { background-color: color-mix(in srgb, var(--accent) 16%, transparent) !important; }
+        .accent-border-soft { border-color: color-mix(in srgb, var(--accent) 35%, transparent) !important; }
+        .accent-bg:active { filter: brightness(0.92); }
 
         html, body {
             width: 100%; height: 100%; margin: 0; padding: 0;
@@ -144,7 +158,7 @@
         input:active + .apple-toggle-bg .apple-toggle-knob { width: 26px; }
 
         .grid-select-btn { transition: all 0.2s ease; }
-        .grid-select-btn.active { background: #3b82f6; color: white; border-color: #3b82f6; }
+        .grid-select-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
 
         .create-tab-btn { color: #6b7280; }
         .create-tab-btn.active { background: #ffffff; color: #111827; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
@@ -200,7 +214,8 @@
         body[data-skin="scancard"] .fullscreen-badge {
             display: inline-flex; align-items: center; align-self: center;
             margin-top: 1.1rem; padding: 0.3rem 0.9rem; border-radius: 999px;
-            background: #dbeafe; color: #1d4ed8; font-size: 0.7rem; font-weight: 800;
+            background: color-mix(in srgb, var(--accent) 16%, white);
+            color: var(--accent); font-size: 0.7rem; font-weight: 800;
             letter-spacing: 0.05em; text-transform: uppercase;
         }
         body[data-skin="scancard"] .fullscreen-stats {
@@ -266,7 +281,7 @@
                 <i data-lucide="search" class="w-5 h-5 text-gray-400 mr-2.5"></i>
                 <input type="text" id="search-input" class="bg-transparent text-white w-full outline-none placeholder:text-gray-400 font-medium text-[17px]" placeholder="Search Codes & Apps">
             </div>
-            <button id="btn-cancel-search" class="text-blue-500 font-medium text-[17px] active:opacity-60 transition-opacity whitespace-nowrap pr-2">Cancel</button>
+            <button id="btn-cancel-search" class="accent-text font-medium text-[17px] active:opacity-60 transition-opacity whitespace-nowrap pr-2">Cancel</button>
         </div>
         <div id="search-results" class="mt-8 flex-1 overflow-y-auto hide-scrollbar pb-10 px-2 flex flex-col gap-3"></div>
     </div>
@@ -296,6 +311,13 @@
                       </div>
                     </label>
                 </div>
+            </div>
+            <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
+                <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 flex items-center justify-between">
+                    <span>Accent Color</span>
+                    <span class="text-gray-500 normal-case font-medium text-[9.5px]">Tap to shuffle · Hold to pin</span>
+                </div>
+                <div id="theme-swatch-row" class="flex gap-2.5 overflow-x-auto hide-scrollbar pb-1"></div>
             </div>
             <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
                 <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Personalization</div>
@@ -334,7 +356,7 @@
             </div>
 
             <div id="account-synced-view" class="hidden flex-col items-center gap-3">
-                <div class="w-16 h-16 rounded-full bg-blue-500 flex items-center justify-center text-white text-2xl font-bold overflow-hidden shrink-0">
+                <div class="w-16 h-16 rounded-full accent-bg flex items-center justify-center text-white text-2xl font-bold overflow-hidden shrink-0">
                     <img id="account-avatar" src="" class="w-full h-full object-cover hidden">
                     <span id="account-initial" class="hidden"></span>
                     <i data-lucide="user" id="account-icon-fallback" class="w-7 h-7"></i>
@@ -471,7 +493,7 @@
             <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-2"></div>
             <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3">
-                    <div class="w-12 h-12 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-center text-blue-600 shadow-sm"><i data-lucide="qr-code" class="w-6 h-6"></i></div>
+                    <div class="w-12 h-12 accent-bg-soft accent-border-soft border rounded-2xl flex items-center justify-center accent-text shadow-sm"><i data-lucide="qr-code" class="w-6 h-6"></i></div>
                     <div>
                         <h3 class="text-gray-900 font-bold text-lg leading-tight tracking-tight flex items-center" id="scan-result-format">QR Code</h3>
                         <p class="text-gray-500 text-[11px] font-bold uppercase tracking-widest mt-0.5">Scanned Result</p>
@@ -484,7 +506,7 @@
             <div class="flex gap-3 mt-4">
                 <button id="btn-scan-discard" class="p-4 bg-gray-100 text-gray-500 rounded-2xl hover:bg-gray-200 active:scale-95 transition-all"><i data-lucide="rotate-ccw" class="w-5 h-5"></i></button>
                 <button id="btn-scan-copy" class="flex-1 py-3.5 bg-gray-100 text-gray-700 rounded-2xl font-bold hover:bg-gray-200 active:scale-95 transition-all text-[15px]">Copy</button>
-                <button id="btn-scan-save" class="flex-[1.5] py-3.5 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-500/30 text-[15px] flex items-center justify-center gap-1.5"><i data-lucide="save" class="w-4 h-4"></i> Save</button>
+                <button id="btn-scan-save" class="flex-[1.5] py-3.5 accent-bg accent-on-accent rounded-2xl font-bold active:scale-95 transition-all shadow-lg text-[15px] flex items-center justify-center gap-1.5"><i data-lucide="save" class="w-4 h-4"></i> Save</button>
             </div>
         </div>
     </div>
@@ -527,6 +549,16 @@
          *    forced to QR (native camera "Join Network" / "Add Contact" prompts require it),
          *    everything else defaults to Aztec per HARD RULE 6. The old manual form still lives
          *    under the "Custom" tab (also what a scanned code re-saves through).
+         *  - Accent Theme System (OSThemeManager): the alpha's packed-24-hex-chars-per-theme +
+         *    reroll/pin trick, ported for real — every accent-colored surface in the app reads
+         *    from the --accent / --accent-text CSS variables (see the utility classes right
+         *    above this comment block: .accent-bg / .accent-text / .accent-border / soft
+         *    variants), so retheming is one variable write, not a find-and-replace. Settings ->
+         *    Accent Color: tap a swatch for a random one of its 4 candidates, tap again to
+         *    reroll, hold to pin the exact shade as a favorite. Seeded with a freshly curated
+         *    48-theme set (192 reachable accents) — NOT the alpha's original ~400, which never
+         *    fully survived; the original packedThemes string drops in verbatim if it turns up.
+         *    Syncs through cloud (accent field) same as everything else in OS_STATE.
          *
          *  IN PROGRESS / NEXT UP
          *  --------------------------------------------------------------------------------
@@ -535,6 +567,9 @@
          *    body[data-skin="..."] CSS blocks. The scan-card skin is the template to follow.
          *  - Library / browse-all-codes view (search overlay covers ad-hoc lookup today, not
          *    a dedicated browsable list).
+         *  - If the alpha's original ~400-entry packedThemes string ever turns up, swap it into
+         *    PACKED_THEMES verbatim (same 24-chars-per-theme format) to restore the exact
+         *    original palette instead of the curated placeholder set.
          *
          *  HARD RULES — violating these is exactly how this project broke last time
          *  --------------------------------------------------------------------------------
@@ -564,12 +599,16 @@
          *     mixed together and destroyed each other before.
          *  6. Aztec Code is the default barcode format everywhere a format picker defaults to
          *     something. Do not silently change this default.
+         *  7. Any new interactive/highlight color belongs on .accent-bg / .accent-text /
+         *     .accent-border (or the CSS var(--accent) directly) — never a hardcoded blue-500
+         *     or #hex literal. Hardcoding a color is exactly how the theme system silently stops
+         *     covering part of the app.
          * =====================================================================================
          */
 
         const DEFAULT_STATE = {
             currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: false,
-            gridSize: 'auto', wallpaper: null, skin: 'dock',
+            gridSize: 'auto', wallpaper: null, skin: 'dock', accent: '#3b82f6',
             apps: [
                 { id: 'bc_1', title: 'My WiFi', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'WIFI:S:MyNetwork;T:WPA;P:Password;;' },
                 { id: 'bc_2', title: 'Website', type: 'grid', page: 0, order: 1, bcid: 'azteccode', data: 'https://neodrag.dev' },
@@ -592,6 +631,7 @@
             if(window.OS_STATE.autoArrange === undefined) window.OS_STATE.autoArrange = false;
             if(!window.OS_STATE.gridSize) window.OS_STATE.gridSize = 'auto';
             if(!window.OS_STATE.skin) window.OS_STATE.skin = 'dock';
+            if(!window.OS_STATE.accent) window.OS_STATE.accent = '#3b82f6';
             
             window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== 'sys_settings');
             
@@ -700,7 +740,7 @@
                     if (app.type === 'grid' && app.bcid) {
                         iconHtml = `<div class="w-12 h-12 bg-white rounded-[0.85rem] p-1.5 flex flex-shrink-0 items-center justify-center shadow-sm"><canvas id="search-can-${app.id}" class="max-w-full max-h-full pixelated"></canvas></div>`;
                     } else {
-                        iconHtml = `<div class="w-12 h-12 bg-blue-500/20 border border-blue-500/30 rounded-[0.85rem] flex items-center justify-center flex-shrink-0 shadow-sm"><i data-lucide="${app.icon}" class="w-6 h-6 text-blue-400"></i></div>`;
+                        iconHtml = `<div class="w-12 h-12 accent-bg-soft accent-border-soft border rounded-[0.85rem] flex items-center justify-center flex-shrink-0 shadow-sm"><i data-lucide="${app.icon}" class="w-6 h-6 accent-text"></i></div>`;
                     }
 
                     el.innerHTML = `
@@ -1813,7 +1853,7 @@
             updateFlashUI() {
                 const btn = document.getElementById('btn-toggle-flash');
                 if (!btn) return;
-                if (this.flashOn) btn.classList.add('bg-blue-500'); else btn.classList.remove('bg-blue-500');
+                if (this.flashOn) btn.classList.add('accent-bg'); else btn.classList.remove('accent-bg');
             }
 
             async toggleFlash() {
@@ -2080,7 +2120,7 @@
                     };
                 }
 
-                this.formatLabel.innerHTML = `${formatDisplay} <span class="text-blue-500 font-black text-xs ml-2 uppercase tracking-widest bg-blue-100 px-2 py-0.5 rounded-md">${parsedType}</span>`;
+                this.formatLabel.innerHTML = `${formatDisplay} <span class="accent-text font-black text-xs ml-2 uppercase tracking-widest accent-bg-soft px-2 py-0.5 rounded-md">${parsedType}</span>`;
                 this.dataView.innerText = data;
                 
                 this.actionBtn.innerHTML = `<i data-lucide="${actionIcon}" class="w-4 h-4 inline-block mr-1"></i> ${actionText}`;
@@ -2199,6 +2239,146 @@
             }
         }
 
+        // Packed theme string: groups of 24 hex chars = 4 candidate accent colors per theme —
+        // the exact trick the alpha used to turn a modest curated list into far more reachable
+        // variants (tap a swatch for a random one of its 4 candidates, tap again to reroll, hold
+        // to pin the *exact* shade currently showing as a favorite: 48 curated themes x 4
+        // candidates = up to 192 reachable accents from one short string).
+        // NOTE: this is a freshly curated 48-theme set, not the alpha's original ~400 — that
+        // exact packed string wasn't fully captured in what survived Gemini's session. If you
+        // still have the original `packedThemes` value saved anywhere, paste it in below (same
+        // 24-chars-per-theme format) and it drops in with zero other changes needed.
+        const PACKED_THEMES = "DE3535DE6D54DA1B5459CFCFDE4A35DE7E54DA1B3C59C0CFDE5F35DE8F54DA1B2459B1CFDE7535DEA154DA291B59A3CFDE8A35DEB254DA411B5994CFDE9F35DEC354DA591B5985CFDEB435DED554DA711B5976CFDEC935D7DE54DA891B5968CFDEDE35C5DE54DAA11B5959CFC9DE35B4DE54DAB81B6859CFB4DE35A3DE54DAD01B7659CF9FDE3591DE54CCDA1B8559CF8ADE3580DE54B4DA1B9459CF75DE356FDE549CDA1BA359CF5FDE355DDE5484DA1BB159CF4ADE3554DE5B6CDA1BC059CF35DE3554DE6D54DA1BCF59CF35DE4A54DE7E3CDA1BCF59C035DE5F54DE8F24DA1BCF59B135DE7554DEA11BDA29CF59A335DE8A54DEB21BDA41CF599435DE9F54DEC31BDA59CF598535DEB454DED51BDA71CF597635DEC954D7DE1BDA89CF596835DEDE54C5DE1BDAA1CF595935C9DE54B4DE1BDAB8CF685935B4DE54A3DE1BDAD0CF7659359FDE5491DE1BCCDACF8559358ADE5480DE1BB4DACF94593575DE546FDE1B9CDACFA359355FDE545DDE1B84DACFB159354ADE5B54DE1B6CDACFC0593535DE6D54DE1B54DACFCF594A35DE7E54DE1B3CDAC0CF595F35DE8F54DE1B24DAB1CF597535DEA154DE291BDAA3CF598A35DEB254DE411BDA94CF599F35DEC354DE591BDA85CF59B435DED554DE711BDA76CF59C935DEDE54D7891BDA68CF59DE35DEDE54C5A11BDA59CF59DE35C9DE54B4B81BDA59CF68DE35B4DE54A3D01BDA59CF76DE359FDE5491DA1BCC59CF85DE358ADE5480DA1BB459CF94DE3575DE546FDA1B9C59CFA3DE355FDE545DDA1B8459CFB1DE354ADE5B54DA1B6C59CFC0";
+
+        const THEMES = [];
+        for (let i = 0; i < PACKED_THEMES.length; i += 24) {
+            const chunk = PACKED_THEMES.substring(i, i + 24);
+            if (chunk.length === 24) {
+                THEMES.push(['#' + chunk.slice(0, 6), '#' + chunk.slice(6, 12), '#' + chunk.slice(12, 18), '#' + chunk.slice(18, 24)]);
+            }
+        }
+
+        class OSThemeManager {
+            constructor() {
+                this.rowEl = document.getElementById('theme-swatch-row');
+                this.favorites = this.loadFavorites();
+                this.current = (window.OS_STATE.accent || '#3b82f6').toUpperCase();
+                this.applyAccent(this.current, false);
+                this.render();
+            }
+
+            loadFavorites() {
+                try {
+                    const saved = localStorage.getItem('xancode_fav_accents');
+                    return saved ? JSON.parse(saved) : [];
+                } catch (e) { return []; }
+            }
+
+            saveFavorites() {
+                try { localStorage.setItem('xancode_fav_accents', JSON.stringify(this.favorites)); } catch (e) {}
+            }
+
+            render() {
+                if (!this.rowEl) return;
+                this.rowEl.innerHTML = '';
+
+                this.favorites.forEach(hex => this.rowEl.appendChild(this.createSwatch(null, hex)));
+                if (this.favorites.length) {
+                    const divider = document.createElement('div');
+                    divider.className = 'w-px bg-white/10 shrink-0 my-1';
+                    this.rowEl.appendChild(divider);
+                }
+                THEMES.forEach(quad => this.rowEl.appendChild(this.createSwatch(quad, null)));
+
+                safeCreateIcons();
+            }
+
+            createSwatch(quad, pinnedHex) {
+                const btn = document.createElement('button');
+                const isActive = pinnedHex
+                    ? pinnedHex.toUpperCase() === this.current
+                    : quad.some(c => c.toUpperCase() === this.current);
+
+                btn.className = `relative w-11 h-11 rounded-full shrink-0 border-2 transition-transform active:scale-90 overflow-hidden ${isActive ? 'border-white' : 'border-transparent'}`;
+                btn.style.background = pinnedHex
+                    ? pinnedHex
+                    : `conic-gradient(${quad[0]} 0deg 90deg, ${quad[1]} 90deg 180deg, ${quad[2]} 180deg 270deg, ${quad[3]} 270deg 360deg)`;
+
+                if (pinnedHex) {
+                    const star = document.createElement('div');
+                    star.className = 'absolute -top-1 -right-1 w-4 h-4 bg-white rounded-full flex items-center justify-center shadow';
+                    star.innerHTML = '<i data-lucide="star" class="w-2.5 h-2.5 text-yellow-500"></i>';
+                    btn.appendChild(star);
+                }
+
+                let pressTimer = null;
+                let longPressed = false;
+                const startPress = () => {
+                    longPressed = false;
+                    pressTimer = setTimeout(() => {
+                        longPressed = true;
+                        this.toggleFavorite(pinnedHex || this.current);
+                        if (navigator.vibrate) navigator.vibrate(30);
+                    }, 550);
+                };
+                const cancelPress = () => { if (pressTimer) clearTimeout(pressTimer); };
+
+                btn.addEventListener('pointerdown', startPress);
+                btn.addEventListener('pointerup', () => {
+                    cancelPress();
+                    if (!longPressed) this.selectSwatch(quad, pinnedHex);
+                });
+                btn.addEventListener('pointerleave', cancelPress);
+
+                return btn;
+            }
+
+            selectSwatch(quad, pinnedHex) {
+                let hex;
+                if (pinnedHex) {
+                    hex = pinnedHex;
+                } else {
+                    const candidates = quad.filter(c => c.toUpperCase() !== this.current);
+                    const pool = candidates.length ? candidates : quad;
+                    hex = pool[Math.floor(Math.random() * pool.length)];
+                }
+                if (navigator.vibrate) navigator.vibrate(10);
+                this.applyAccent(hex, true);
+                this.render();
+            }
+
+            toggleFavorite(hex) {
+                const upper = hex.toUpperCase();
+                const idx = this.favorites.findIndex(f => f.toUpperCase() === upper);
+                if (idx !== -1) {
+                    this.favorites.splice(idx, 1);
+                    window.showToast('Removed from favorites');
+                } else {
+                    this.favorites.unshift(hex);
+                    window.showToast('Pinned to favorites!');
+                }
+                this.saveFavorites();
+                this.render();
+            }
+
+            applyAccent(hex, persist) {
+                this.current = hex.toUpperCase();
+                document.documentElement.style.setProperty('--accent', hex);
+                document.documentElement.style.setProperty('--accent-text', this.contrastTextFor(hex));
+                if (persist) {
+                    window.OS_STATE.accent = hex;
+                    saveState();
+                }
+            }
+
+            contrastTextFor(hex) {
+                const h = hex.replace('#', '');
+                const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
+                const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+                return yiq >= 150 ? '#111827' : '#ffffff';
+            }
+        }
+
         // Registry for the skin system (HARD RULE 5). Add a new entry + a matching
         // body[data-skin="..."] CSS block to introduce another interface style —
         // never fork the app itself.
@@ -2221,16 +2401,16 @@
                 SKINS.forEach(skin => {
                     const active = skin.id === this.current;
                     const btn = document.createElement('button');
-                    btn.className = `w-full flex items-center gap-3 p-3 rounded-2xl border transition-all text-left ${active ? 'bg-blue-500/15 border-blue-400/40' : 'bg-black/20 border-transparent hover:bg-black/30'}`;
+                    btn.className = `w-full flex items-center gap-3 p-3 rounded-2xl border transition-all text-left ${active ? 'accent-bg-soft accent-border-soft' : 'bg-black/20 border-transparent hover:bg-black/30'}`;
                     btn.innerHTML = `
-                        <div class="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${active ? 'bg-blue-500 text-white' : 'bg-white/10 text-gray-300'}">
+                        <div class="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${active ? 'accent-bg text-white' : 'bg-white/10 text-gray-300'}">
                             <i data-lucide="${skin.icon}" class="w-[18px] h-[18px]"></i>
                         </div>
                         <div class="flex-1 min-w-0">
                             <div class="text-white font-bold text-sm">${skin.label}</div>
                             <div class="text-gray-400 text-[11px] leading-tight truncate">${skin.description}</div>
                         </div>
-                        ${active ? '<i data-lucide="check-circle-2" class="w-5 h-5 text-blue-400 shrink-0"></i>' : ''}
+                        ${active ? '<i data-lucide="check-circle-2" class="w-5 h-5 accent-text shrink-0"></i>' : ''}
                     `;
                     btn.addEventListener('click', () => this.setSkin(skin.id));
                     this.pickerEl.appendChild(btn);
@@ -2361,6 +2541,7 @@
                 if (data.gridSize) window.OS_STATE.gridSize = data.gridSize;
                 if (data.autoArrange !== undefined) window.OS_STATE.autoArrange = data.autoArrange;
                 if (data.skin) { window.OS_STATE.skin = data.skin; if (window.SkinManager) { window.SkinManager.current = data.skin; document.body.setAttribute('data-skin', data.skin); window.SkinManager.render(); } }
+                if (data.accent) { window.OS_STATE.accent = data.accent; if (window.ThemeManager) { window.ThemeManager.applyAccent(data.accent, false); window.ThemeManager.render(); } }
                 saveState();
                 window.Renderer.render();
                 if (window.Layout) window.Layout.calculateGrid();
@@ -2385,6 +2566,7 @@
                         gridSize: window.OS_STATE.gridSize,
                         autoArrange: window.OS_STATE.autoArrange,
                         skin: window.OS_STATE.skin,
+                        accent: window.OS_STATE.accent,
                         updatedAt: Date.now()
                     });
                 } catch (e) {
@@ -2484,6 +2666,7 @@
                     window.Renderer.render();
                     if (window.Layout) window.Layout.calculateGrid();
                     if (window.SkinManager) { window.SkinManager.current = window.OS_STATE.skin; document.body.setAttribute('data-skin', window.OS_STATE.skin); window.SkinManager.render(); }
+                    if (window.ThemeManager) { window.ThemeManager.applyAccent(window.OS_STATE.accent, false); window.ThemeManager.render(); }
 
                     if (this.ready) {
                         const { auth, signOut, signInAnonymously } = this.fb;
@@ -2510,6 +2693,7 @@
         window.ScannerEngine = new OSScannerEngine();
         window.SettingsManager = new OSSettingsManager();
         window.SkinManager = new OSSkinManager();
+        window.ThemeManager = new OSThemeManager();
         window.Layout = new LayoutManager(window.Renderer);
         window.CloudSync = new OSCloudSyncManager();
 
