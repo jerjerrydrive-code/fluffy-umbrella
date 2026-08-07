@@ -387,6 +387,159 @@
             border: 1px solid rgba(255, 255, 255, 0.7);
         }
 
+        /* ---------- SKIN: "soft" (neumorphism) ----------
+           Surfaces are the SAME colour as the ground and are separated only by a two-light
+           shadow pair: a highlight up-left, a shade down-right. Nothing is drawn with borders.
+
+           Two things this skin has to do that "glass" did not:
+
+           1. It covers the wallpaper with an opaque ground. Extruded shadows only read against
+              a flat, controlled surface — over a photo they turn to mud. A skin owning the
+              backdrop is a legitimate skin decision, but it does mean a custom wallpaper is not
+              visible while "soft" is active. That is the trade, stated rather than hidden.
+           2. It inverts the light/dark polarity. The rest of the app paints white text over a
+              dark wallpaper; here the ground is near-white, so every one of those labels would
+              vanish. Text colour is therefore re-declared for each container this skin restyles.
+              The containers are listed explicitly — #scanner-modal is deliberately NOT among
+              them, because the camera view must stay dark.
+
+           Neumorphism's usual failure is illegible low-contrast text. Avoided on purpose: the
+           surfaces are soft, the TYPE is not. --soft-ink on --soft-bg is ~11:1, comfortably past
+           WCAG AA, and the accent is only ever used for state, never for body copy. */
+        body[data-skin="soft"] {
+            --soft-bg: #e4e9f0;
+            --soft-light: rgba(255, 255, 255, 0.92);
+            --soft-shade: rgba(160, 174, 196, 0.55);
+            --soft-ink: #2b3442;
+            --soft-ink-soft: #66718a;
+            --soft-raised: 6px 6px 14px var(--soft-shade), -6px -6px 14px var(--soft-light);
+            --soft-raised-sm: 4px 4px 9px var(--soft-shade), -4px -4px 9px var(--soft-light);
+            --soft-inset: inset 4px 4px 9px var(--soft-shade), inset -4px -4px 9px var(--soft-light);
+        }
+        body[data-skin="soft"]::before {
+            content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+            background: var(--soft-bg);
+        }
+
+        body[data-skin="soft"] .ios-glass {
+            background: var(--soft-bg);
+            backdrop-filter: none; -webkit-backdrop-filter: none;
+            border: none;
+            box-shadow: var(--soft-raised);
+        }
+        body[data-skin="soft"] #os-header button {
+            background: var(--soft-bg);
+            backdrop-filter: none; -webkit-backdrop-filter: none;
+            border: none;
+            box-shadow: var(--soft-raised-sm);
+        }
+        body[data-skin="soft"] #os-header button:active { box-shadow: var(--soft-inset); }
+
+        /* The code plate stays opaque white — same rule as "glass": scannability is functional.
+           Here it reads as a card pressed into the soft ground. */
+        body[data-skin="soft"] .app-icon { box-shadow: var(--soft-raised); }
+        body[data-skin="soft"] .app-label {
+            color: var(--soft-ink);
+            text-shadow: 0 1px 0 var(--soft-light);
+        }
+        body[data-skin="soft"] .pagination-dot {
+            background: var(--soft-shade);
+            box-shadow: inset 1px 1px 2px rgba(160, 174, 196, 0.8);
+        }
+        body[data-skin="soft"] .pagination-dot.active { background: var(--accent); }
+
+        /* Polarity flip. Explicit container list — the scanner modal is excluded on purpose. */
+        body[data-skin="soft"] :is(#os-header, #main-dock, #library-overlay, #settings-panel, #account-panel) :is(.text-white, .text-gray-300, .text-gray-400, .text-gray-500) {
+            color: var(--soft-ink);
+        }
+        body[data-skin="soft"] :is(#os-header, #main-dock, #library-overlay) svg { color: var(--soft-ink); }
+        body[data-skin="soft"] #os-clock { color: var(--soft-ink); text-shadow: 0 1px 0 var(--soft-light); }
+
+        body[data-skin="soft"] #library-overlay,
+        body[data-skin="soft"] #item-fullscreen-layer {
+            background: var(--soft-bg);
+            backdrop-filter: none; -webkit-backdrop-filter: none;
+        }
+        body[data-skin="soft"] #library-overlay .bg-white\/10,
+        body[data-skin="soft"] #library-list > div {
+            background: var(--soft-bg);
+            border: none;
+            box-shadow: var(--soft-raised-sm);
+        }
+        body[data-skin="soft"] #library-list > div:active { box-shadow: var(--soft-inset); }
+        body[data-skin="soft"] #library-overlay h2,
+        body[data-skin="soft"] #library-list h4 { color: var(--soft-ink); }
+        body[data-skin="soft"] #library-overlay #library-count,
+        body[data-skin="soft"] #library-list p,
+        body[data-skin="soft"] #library-list .lib-meta { color: var(--soft-ink-soft); }
+        body[data-skin="soft"] #library-search { color: var(--soft-ink); }
+        body[data-skin="soft"] #library-search::placeholder { color: var(--soft-ink-soft); }
+        body[data-skin="soft"] #btn-close-library {
+            background: var(--soft-bg); border: none; box-shadow: var(--soft-raised-sm);
+        }
+        body[data-skin="soft"] .library-sort-btn {
+            background: var(--soft-bg); border: none;
+            box-shadow: var(--soft-raised-sm); color: var(--soft-ink-soft);
+        }
+        body[data-skin="soft"] .library-sort-btn.active {
+            box-shadow: var(--soft-inset); color: var(--accent);
+        }
+
+        body[data-skin="soft"] :is(#settings-panel, #account-panel, #create-panel, #rename-panel) {
+            background: var(--soft-bg);
+            border: none;
+            box-shadow: var(--soft-raised), 0 24px 60px -20px rgba(90, 104, 128, 0.45);
+        }
+        /* Inner grouping blocks inside Settings/Account are dark slabs in the default skin
+           (bg-[#2c2c2e]); here they press into the panel instead of sitting on it. The nested
+           segmented control (bg-black/40) presses deeper still, so the hierarchy survives
+           without any colour difference to carry it. Getting this list wrong is very visible:
+           a missed slab stays dark while the text on it has already flipped to dark ink. */
+        body[data-skin="soft"] :is(#settings-panel, #account-panel) .bg-\[\#2c2c2e\] {
+            background: var(--soft-bg);
+            box-shadow: var(--soft-inset);
+        }
+        body[data-skin="soft"] :is(#settings-panel, #account-panel) :is(.bg-black\/40, .bg-black\/30, .bg-black\/20, .bg-white\/5) {
+            background: var(--soft-bg);
+            box-shadow: var(--soft-inset);
+        }
+        body[data-skin="soft"] :is(#settings-panel, #account-panel) :is(.bg-white\/10, .bg-white\/20) {
+            background: var(--soft-bg);
+            box-shadow: var(--soft-raised-sm);
+        }
+        /* Segmented buttons: unselected sit flush, the selected one lifts out on the accent.
+           #settings-panel is in these selectors for SPECIFICITY, not scope: the polarity-flip
+           rule above already matches .text-gray-300 inside #settings-panel at (1,2,0), so a
+           plain .grid-select-btn.active at (0,3,0) loses to it and the selected segment ends up
+           painted in dark ink on the accent fill. Keep an ID in any rule that has to beat it. */
+        body[data-skin="soft"] #settings-panel .grid-select-btn { color: var(--soft-ink-soft); }
+        body[data-skin="soft"] #settings-panel .grid-select-btn.active {
+            color: var(--accent-text);
+            box-shadow: var(--soft-raised-sm);
+        }
+        /* Skin picker rows read as raised cards on the pressed-in section. */
+        body[data-skin="soft"] #skin-picker button { box-shadow: var(--soft-raised-sm); }
+
+        /* The off-state toggle track is a dark grey pill everywhere else — the one control that
+           still read as foreign on the soft panel. Here "off" is a groove pressed into the
+           ground and "on" fills with the live accent, so state is carried by depth and colour
+           rather than by a floating dark chip. */
+        body[data-skin="soft"] .apple-toggle-bg {
+            background: var(--soft-bg);
+            box-shadow: inset 2px 2px 5px var(--soft-shade), inset -2px -2px 5px var(--soft-light);
+        }
+        body[data-skin="soft"] input:checked + .apple-toggle-bg {
+            background: var(--accent);
+            box-shadow: inset 2px 2px 5px rgba(0, 0, 0, 0.18);
+        }
+        body[data-skin="soft"] .apple-toggle-knob { box-shadow: var(--soft-raised-sm); }
+
+        /* A near-opaque black scrim would fight a light skin. Lighten it so the modal reads as
+           lifted off the same soft ground rather than punched through a dark sheet. */
+        body[data-skin="soft"] :is(#settings-modal, #account-modal, #rename-modal, #create-modal) {
+            background: rgba(190, 200, 216, 0.55);
+        }
+
         /* Brief whole-app blur/scale pulse while a skin swap is committed underneath it */
         .morph-pulse { transform: scale(0.93) translateY(15px); filter: blur(12px) brightness(0.7); }
     </style>
@@ -752,7 +905,12 @@
          *    rather than a hotlinked photo. The app now needs no network and no build step to
          *    run. Boot went from ~25s (eight doomed CDN requests) to near-instant, and the test
          *    suite from 3.2min to ~20s. See HARD RULE 8.
-         *  - Skin "glass" (Phase 1 of 4): see the skin notes below.
+         *  - Skins "glass" and "soft" (Phase 1, 2 of 4): see the skin notes below.
+         *  - Accent contrast: OSThemeManager.contrastTextFor() now measures real WCAG 2.1
+         *    relative luminance instead of a YIQ brightness cutoff. Measured across the restored
+         *    palette this took accents meeting AA for normal text from 2234/2704 to 2576/2704.
+         *    The remaining ~5% cannot reach 4.5:1 against black OR white; fixing those means
+         *    darkening the FILL (an --accent-strong var), which is Phase 5.
          *  - Regression test suite (tests/regression.spec.js, Playwright): Stage 3 work. Every
          *    fix above used to be verified once by hand with a throwaway script and then thrown
          *    away — this is that verification made permanent. Run with `npm test` (needs
@@ -780,8 +938,15 @@
          *      test asserts exactly that. One deliberate exception: the white plate behind a
          *      barcode stays OPAQUE — a code on a translucent surface can fail to scan, and
          *      scannability is functional, not decorative.
-         *    - "soft"   — neumorphism: near-white, dual-light extruded shadows, minimal chrome
-         *      (white QR-scanner reference).
+         *    - "soft"   — DONE. Neumorphism: surfaces the same colour as the ground, separated
+         *      only by a two-light shadow pair. Two things it does that "glass" does not, and
+         *      that "aurora"/"classic" should learn from: it COVERS the wallpaper with an opaque
+         *      ground (extruded shadows turn to mud over a photo — a stated trade, not a bug),
+         *      and it INVERTS the text polarity, since the rest of the app paints white text for
+         *      a dark wallpaper. The container list for that flip is explicit and #scanner-modal
+         *      is deliberately excluded so the camera view stays dark. Watch the specificity: the
+         *      flip rule carries an ID, so any rule that must beat it needs one too — see the
+         *      note on .grid-select-btn.active.
          *    - "aurora" — dark mesh/aurora gradient cards, high-contrast vivid blooms (AI OS
          *      reference).
          *    - "classic" — a polished pass over the ORIGINAL dock look rather than a new
@@ -2684,11 +2849,34 @@
                 }
             }
 
+            // Pick whichever of ink/white actually contrasts better with the accent, measured
+            // with WCAG 2.1 relative luminance.
+            //
+            // This replaced a YIQ brightness cutoff (yiq >= 150 ? ink : white). YIQ is a rough
+            // perceptual guess, not a contrast measurement, and it was picking white on accents
+            // where white does not pass: the default #3B82F6 scored 3.68:1 against white — under
+            // the 4.5:1 AA needs for normal-size text — while ink scores 4.54:1 and passes. With
+            // 1352 reachable accents that misjudgement was reachable across a lot of the palette,
+            // and it applied to every .accent-on-accent surface in the app.
+            //
+            // Known limit: a few very light accents can't reach 4.5:1 against EITHER colour. The
+            // real fix there is to darken the FILL behind the text (an --accent-strong variable)
+            // rather than keep hunting for a text colour; that is Phase 5 work. This picks the
+            // best available option in every case, which is strictly better than the guess.
             contrastTextFor(hex) {
-                const h = hex.replace('#', '');
-                const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
-                const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-                return yiq >= 150 ? '#111827' : '#ffffff';
+                const lum = (h) => {
+                    const c = h.replace('#', '');
+                    const [r, g, b] = [0, 2, 4].map(i => {
+                        const v = parseInt(c.substring(i, i + 2), 16) / 255;
+                        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+                    });
+                    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                };
+                const ratio = (a, b) => {
+                    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+                    return (hi + 0.05) / (lo + 0.05);
+                };
+                return ratio('#ffffff', hex) >= ratio('#111827', hex) ? '#ffffff' : '#111827';
             }
         }
 
@@ -2698,7 +2886,8 @@
         const SKINS = [
             { id: 'dock', label: 'iOS Dock', icon: 'layout-grid', description: 'The classic home-screen dock & pages layout.' },
             { id: 'scancard', label: 'Scan Card', icon: 'credit-card', description: 'A clean result-card view for your codes.' },
-            { id: 'glass', label: 'Glass', icon: 'droplets', description: 'Frosted glass over an ambient colour field.' }
+            { id: 'glass', label: 'Glass', icon: 'droplets', description: 'Frosted glass over an ambient colour field.' },
+            { id: 'soft', label: 'Soft', icon: 'circle', description: 'Tactile surfaces moulded from soft light.' }
         ];
 
         class OSSkinManager {

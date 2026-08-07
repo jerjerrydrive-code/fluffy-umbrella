@@ -528,3 +528,93 @@ test.describe('Accent swatch rendering', () => {
         expect(s.color).toBe('rgb(18, 52, 86)');
     });
 });
+
+test.describe('Soft skin (Phase 1)', () => {
+    const toSoft = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await page.evaluate(() => window.SkinManager.setSkin('soft'));
+        await page.waitForTimeout(600);
+    };
+
+    // Contrast ratio per WCAG 2.1, from two "rgb(r, g, b)" strings.
+    const contrast = (a, b) => {
+        const lum = (s) => {
+            const [r, g, bl] = s.match(/\d+/g).slice(0, 3).map(Number).map((v) => {
+                const c = v / 255;
+                return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+            });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+        };
+        const [l1, l2] = [lum(a), lum(b)].sort((x, y) => y - x);
+        return (l1 + 0.05) / (l2 + 0.05);
+    };
+
+    test('inverts text polarity so labels stay legible on the light ground', async ({ page }) => {
+        // The rest of the app paints white text over a dark wallpaper. This skin's ground is
+        // near-white, so every one of those labels would vanish if the flip were missed. This is
+        // the single most likely thing to break when the skin's container list drifts.
+        await toSoft(page);
+
+        const { label, ground } = await page.evaluate(() => ({
+            label: getComputedStyle(document.querySelector('.app-label')).color,
+            ground: getComputedStyle(document.body, '::before').backgroundColor
+        }));
+
+        expect(label).not.toBe('rgb(255, 255, 255)');
+        expect(contrast(label, ground)).toBeGreaterThanOrEqual(4.5); // WCAG AA
+    });
+
+    test('every Settings section is re-grounded, not left dark under dark text', async ({ page }) => {
+        // Regression: the section slabs use bg-[#2c2c2e] and the segmented control bg-black/40.
+        // An early version of this skin flipped the TEXT to dark ink but missed those
+        // backgrounds, leaving dark-on-dark and an unreadable Settings panel.
+        await toSoft(page);
+        await page.click('#btn-open-settings');
+        await page.waitForTimeout(400);
+
+        const darkSurfaces = await page.evaluate(() => {
+            const lum = (s) => {
+                const m = s.match(/\d+/g);
+                if (!m) return 1;
+                return (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) / 255;
+            };
+            return [...document.querySelectorAll('#settings-panel *')]
+                .filter(el => {
+                    const bg = getComputedStyle(el).backgroundColor;
+                    return bg && !bg.includes('rgba(0, 0, 0, 0)') && lum(bg) < 0.35;
+                })
+                .map(el => el.className.toString().slice(0, 60));
+        });
+
+        // The only legitimately dark things are accent-filled controls (the active segment sits
+        // on var(--accent)) and the off-state toggle track — neither carries dark ink.
+        const offenders = darkSurfaces.filter(c => !/accent-bg|grid-select-btn|rounded-full/.test(c));
+        expect(offenders, `dark surfaces left in Settings: ${offenders.join(' | ')}`).toEqual([]);
+    });
+
+    test('the selected segment stays legible on its accent fill', async ({ page }) => {
+        // The polarity-flip rule matches .text-gray-300 inside #settings-panel, which outranks a
+        // plain .grid-select-btn.active — so the selected segment silently rendered dark ink on
+        // the accent fill. Any rule that must beat the flip needs an ID in it too.
+        await toSoft(page);
+        await page.click('#btn-open-settings');
+        await page.waitForTimeout(400);
+
+        const { color, bg } = await page.evaluate(() => {
+            const el = document.querySelector('.grid-select-btn.active');
+            const cs = getComputedStyle(el);
+            return { color: cs.color, bg: cs.backgroundColor };
+        });
+        expect(contrast(color, bg)).toBeGreaterThanOrEqual(4.5);
+    });
+
+    test('switching soft -> dock restores the dark-wallpaper polarity', async ({ page }) => {
+        await toSoft(page);
+        await page.evaluate(() => window.SkinManager.setSkin('dock'));
+        await page.waitForTimeout(600);
+        const label = await page.evaluate(() =>
+            getComputedStyle(document.querySelector('.app-label')).color);
+        expect(label).toBe('rgb(255, 255, 255)');
+    });
+});

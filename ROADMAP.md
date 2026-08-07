@@ -24,7 +24,7 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 21 passing in ~20s):
+Built and covered by the regression suite (`npm test`, 27 passing in ~25s):
 
 | Area | State |
 |---|---|
@@ -32,8 +32,8 @@ Built and covered by the regression suite (`npm test`, 21 passing in ~20s):
 | Codes | Generator + Quick Add templates (7 types), item viewer (enlarge / copy / save PNG / rename) |
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, smart payload parsing |
 | Library | Browse-all view: filter + sort by Recent / Name / Format |
-| Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin |
-| Skins | `dock` (default), `scancard`, `glass` — layered over one DOM via `OSSkinManager` |
+| Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin, WCAG-measured accent text |
+| Skins | `dock` (default), `scancard`, `glass`, `soft` — layered over one DOM via `OSSkinManager` |
 | Platform | Installable PWA, **fully self-contained** (no CDN needed to render), Firebase cloud sync (strictly optional) |
 
 The foundation is done. Everything below is building **on** it — never forking it (HARD RULE 5).
@@ -49,7 +49,7 @@ same DOM and the same interaction contract. `scancard` is the template to copy.
 | Skin | Aesthetic | Reference |
 |---|---|---|
 | `glass` ✅ | **Shipped.** Ambient colour field behind frosted translucent chrome. Tints entirely from `var(--accent)` via `color-mix()`, so it follows the user's theme rather than pinning the reference's lavender — the pattern the other three should copy | ScanIT |
-| `soft` | Neumorphism — near-white, dual-light extruded shadows, minimal chrome, one big tactile capture button | white QR-scanner |
+| `soft` ✅ | **Shipped.** Neumorphism — surfaces the same colour as the ground, separated only by a two-light shadow pair. Covers the wallpaper (extruded shadows need a flat ground) and inverts text polarity, both of which `aurora` will need too | white QR-scanner |
 | `aurora` | Dark mesh/aurora gradients, vivid colour blooms behind high-contrast type | AI OS collage |
 | `classic` | **Polished original.** Not a new look — the current dock aesthetic with tightened spacing, type scale, shadow depth and corner radii | our own v2 |
 
@@ -141,8 +141,10 @@ install with nothing lost. This is the phase that makes the app trustworthy enou
 **Months 5–6 · Jan–Feb 2027**
 
 - **Accessibility**: full keyboard navigation, screen-reader labels on every control, focus
-  traps in modals, `prefers-reduced-motion` honoured by the physics engine, WCAG AA contrast
-  enforced by the accent contrast calculator
+  traps in modals, `prefers-reduced-motion` honoured by the physics engine. The accent contrast
+  calculator is **partly done early** — it now measures real WCAG luminance (95% of the palette
+  meets AA, up from 83%); the remainder needs an `--accent-strong` darkened fill so white text
+  can be used on light accents without failing
 - **Internationalisation**: extract every string to a table, ship English + 3 more, RTL layout
 - ~~**Self-host the CDN dependencies**~~ — **done early**, pulled forward out of necessity. See
   risk 2. Remaining performance work: sub-1s first paint on real hardware, and trimming the
