@@ -885,3 +885,152 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         }
     });
 });
+
+test.describe('Quick Add template registry (Phase 2)', () => {
+    test('every template is well formed and its icon actually resolves', async ({ page }) => {
+        // Icons fail SILENTLY: an unknown lucide name renders an empty tile with no glyph and no
+        // console error. Five brand names (instagram, twitter, facebook, youtube, linkedin) were
+        // shipping exactly that, because lucide does not carry brand logos. Structure is checked
+        // in the same pass so a malformed addition cannot reach the grid either.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const report = await page.evaluate(() => {
+            const keys = Object.keys(window.lucide.icons || window.lucide);
+            const pascal = (s) => s.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('');
+            const cats = new Set(['popular', 'social', 'personal', 'utility']);
+            const malformed = [], missingIcon = [];
+
+            window.QUICK_TEMPLATES.forEach(t => {
+                if (!t.id || !t.label || !t.icon || !cats.has(t.cat) ||
+                    !Array.isArray(t.fields) || !t.fields.length || typeof t.build !== 'function') {
+                    malformed.push(t.id || '(no id)');
+                }
+                if (!keys.includes(t.icon) && !keys.includes(pascal(t.icon))) missingIcon.push(`${t.id}:${t.icon}`);
+            });
+
+            const ids = window.QUICK_TEMPLATES.map(t => t.id);
+            return { malformed, missingIcon, total: ids.length, dupes: ids.length - new Set(ids).size };
+        });
+
+        expect(report.malformed, `malformed: ${report.malformed.join(', ')}`).toEqual([]);
+        expect(report.missingIcon, `unresolved icons: ${report.missingIcon.join(', ')}`).toEqual([]);
+        expect(report.dupes, 'duplicate template ids').toBe(0);
+        expect(report.total).toBeGreaterThanOrEqual(22);
+    });
+
+    test('each type builds the payload its spec requires', async ({ page }) => {
+        // Payload format is the whole contract of a code — a scanner does nothing useful with
+        // "nearly right". Builders are called directly so all of these are covered without
+        // driving 22 forms through the UI.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const built = await page.evaluate(() => {
+            const samples = {
+                wifi: { ssid: 'Net', sec: 'WPA', pass: 'pw' },
+                url: { url: 'example.com' },
+                email: { to: 'a@b.com', subject: 'Hi there' },
+                phone: { number: '+15551234567' },
+                sms: { number: '+15551234567', body: 'yo' },
+                contact: { name: 'Jane Doe', phone: '123', email: 'j@d.com' },
+                instagram: { handle: '@me' },
+                whatsapp: { number: '+1 555-123-4567' },
+                youtube: { handle: 'chan' },
+                geo: { lat: '51.5007', lng: '-0.1246', label: 'Big Ben' },
+                crypto: { coin: 'bitcoin', address: 'bc1qxyz', amount: '0.5' }
+            };
+            const out = {};
+            for (const [id, v] of Object.entries(samples)) {
+                const t = window.QUICK_TEMPLATES.find(x => x.id === id);
+                out[id] = t ? { data: t.build(v).data, bcid: t.bcid || 'azteccode' } : null;
+            }
+            return out;
+        });
+
+        expect(built.wifi.data).toBe('WIFI:S:Net;T:WPA;P:pw;;');
+        expect(built.url.data).toBe('https://example.com');           // scheme added
+        expect(built.email.data).toBe('mailto:a@b.com?subject=Hi%20there'); // subject encoded
+        expect(built.phone.data).toBe('tel:+15551234567');
+        expect(built.sms.data).toBe('sms:+15551234567?body=yo');
+        expect(built.contact.data).toContain('BEGIN:VCARD');
+        expect(built.contact.data).toContain('FN:Jane Doe');
+        expect(built.instagram.data).toBe('https://instagram.com/me'); // leading @ stripped
+        expect(built.whatsapp.data).toBe('https://wa.me/15551234567'); // wa.me takes digits only
+        expect(built.youtube.data).toBe('https://youtube.com/@chan');
+        expect(built.geo.data).toBe('geo:51.5007,-0.1246');
+        expect(built.crypto.data).toBe('bitcoin:bc1qxyz?amount=0.5');
+
+        // HARD RULE 6: Aztec everywhere except formats that genuinely need QR.
+        expect(built.wifi.bcid).toBe('qrcode');
+        expect(built.contact.bcid).toBe('qrcode');
+        expect(built.url.bcid).toBe('azteccode');
+        expect(built.instagram.bcid).toBe('azteccode');
+    });
+
+    test('categories filter the grid, and Popular is the default', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.CodeGenerator.open());
+        await page.waitForTimeout(400);
+
+        await expect(page.locator('.tpl-cat-btn[data-cat="popular"]')).toHaveClass(/active/);
+        await expect(page.locator('#template-grid button')).toHaveCount(7);
+
+        await page.click('.tpl-cat-btn[data-cat="social"]');
+        await page.waitForTimeout(300);
+        await expect(page.locator('#template-grid button')).toHaveCount(10);
+
+        await page.click('.tpl-cat-btn[data-cat="utility"]');
+        await page.waitForTimeout(300);
+        await expect(page.locator('#template-grid button')).toHaveCount(3);
+
+        // Every template must be reachable from some category, or it may as well not exist.
+        const totals = await page.evaluate(() => {
+            const counts = {};
+            window.QUICK_TEMPLATES.forEach(t => { counts[t.cat] = (counts[t.cat] || 0) + 1; });
+            return { counts, total: window.QUICK_TEMPLATES.length };
+        });
+        expect(Object.values(totals.counts).reduce((a, b) => a + b, 0)).toBe(totals.total);
+    });
+
+    test('a required field blocks the save centrally', async ({ page }) => {
+        // Validation moved out of each per-type branch into one loop over declared fields. If it
+        // regresses, a type silently saves a half-empty payload.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const before = await page.evaluate(() => window.OS_STATE.apps.length);
+
+        await page.evaluate(() => window.CodeGenerator.open());
+        await page.waitForTimeout(300);
+        await page.click('.tpl-cat-btn[data-cat="social"]');
+        await page.waitForTimeout(300);
+        await page.locator('#template-grid button').first().click(); // Instagram
+        await page.click('#tpl-save-btn');                            // handle left empty
+        await page.waitForTimeout(400);
+
+        expect(await page.evaluate(() => window.OS_STATE.apps.length)).toBe(before);
+        await expect(page.locator('#create-modal')).toHaveClass(/opacity-100/); // stays open
+    });
+
+    test('a social template saves end to end through the real UI', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.CodeGenerator.open());
+        await page.waitForTimeout(300);
+        await page.click('.tpl-cat-btn[data-cat="social"]');
+        await page.waitForTimeout(300);
+        await page.locator('#template-grid button').first().click();
+        await page.fill('#tpl-instagram-handle', '@claude');
+        await page.click('#tpl-save-btn');
+        await page.waitForTimeout(600);
+
+        const created = await page.evaluate(() => {
+            const items = window.OS_STATE.apps.filter(a => a.type === 'grid');
+            return items[items.length - 1];
+        });
+        expect(created.data).toBe('https://instagram.com/claude');
+        expect(created.title).toBe('Instagram @claude');
+        expect(created.bcid).toBe('azteccode');
+    });
+});

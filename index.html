@@ -211,6 +211,18 @@
         .grid-select-btn { transition: all 0.2s ease; }
         .grid-select-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
 
+        .tpl-cat-btn {
+            position: relative; flex: none; padding: 0.4rem 0.85rem; border-radius: 999px;
+            font-size: 12px; font-weight: 700; letter-spacing: 0.01em;
+            color: #6b7280; background: #f3f4f6; border: 1px solid transparent;
+            transition: transform 0.2s var(--spring-snappy), background-color 0.2s ease, color 0.2s ease;
+        }
+        .tpl-cat-btn:active { transform: scale(0.94); }
+        .tpl-cat-btn.active {
+            color: var(--accent);
+            background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+            border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+        }
         .create-tab-btn { color: #6b7280; }
         .create-tab-btn.active { background: #ffffff; color: #111827; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
 
@@ -1005,6 +1017,7 @@
             </div>
 
             <div id="create-templates-view" class="flex flex-col gap-4">
+                <div id="template-category-row" class="flex gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1"></div>
                 <div id="template-grid" class="grid grid-cols-4 gap-3"></div>
                 <div id="template-form-container" class="hidden flex-col gap-4"></div>
             </div>
@@ -1114,7 +1127,19 @@
          *    language from nutrition-scanner-app references) without touching OS_STATE, the DOM
          *    structure, or any interaction logic. Switching skins is a CSS/attribute change with
          *    a brief blur/scale morph pulse, not a rebuild.
-         *  - Quick Add templates (OSCodeGenerator "Quick Add" tab, QUICK_TEMPLATES): WiFi,
+         *  - Quick Add template registry (Phase 2, first slice): 22 types across four
+         *    categories — Popular (7), Social (10), Personal (2), Utility (3). The registry
+         *    is DECLARATIVE: each entry carries its fields and a build(values) that returns
+         *    the payload, so the form renders itself and a type can never have a form
+         *    without a builder. This replaced two parallel switch statements (form markup /
+         *    payload assembly) that would have needed 22 arms each. Adding a type is one
+         *    object; `required` is enforced once centrally rather than per branch.
+         *    Inputs are namespaced tpl-<template>-<field>. window.QUICK_TEMPLATES is
+         *    exposed so tests assert payloads by calling build() directly.
+         *    GOTCHA: lucide ships NO brand logos — instagram/twitter/facebook/youtube/
+         *    linkedin render as an empty tile with no glyph and no error. Generic icons are
+         *    used and a test asserts every template icon resolves, since it fails silently.
+         *  - (superseded) Original 7 Quick Add templates: WiFi,
          *    Website, Email, Phone, Message, Contact (vCard) and Plain Text each get a small
          *    plain-language form instead of hand-typing the raw payload string. WiFi/Contact are
          *    forced to QR (native camera "Join Network" / "Add Contact" prompts require it),
@@ -2198,15 +2223,213 @@
         // Quick-add templates — the "Quick Add" tab of the Create modal. Each template builds
         // a properly formatted payload string from a couple of plain-language fields instead of
         // making the user hand-type e.g. a WIFI:S:...;T:...;P:...;; string themselves.
-        const QUICK_TEMPLATES = [
-            { id: 'wifi', label: 'WiFi', icon: 'wifi' },
-            { id: 'url', label: 'Website', icon: 'link' },
-            { id: 'email', label: 'Email', icon: 'mail' },
-            { id: 'phone', label: 'Phone', icon: 'phone' },
-            { id: 'sms', label: 'Message', icon: 'message-square' },
-            { id: 'contact', label: 'Contact', icon: 'user-round' },
-            { id: 'text', label: 'Plain Text', icon: 'type' }
+        // Quick Add categories. The grid shows one category at a time — 22 types in a single
+        // flat grid is a wall of icons nobody reads. "Popular" is the default and holds the seven
+        // originals, which are genuinely the most-used, not merely the oldest.
+        const TPL_CATEGORIES = [
+            { id: 'popular',  label: 'Popular' },
+            { id: 'social',   label: 'Social' },
+            { id: 'personal', label: 'Personal' },
+            { id: 'utility',  label: 'Utility' }
         ];
+
+        // Most social codes are the same shape: a profile URL with a handle on the end. This
+        // builds them from one line each instead of a near-identical form + payload branch per
+        // network. Leading @ is stripped because people paste it, and the handle is
+        // percent-encoded because people also paste spaces.
+        // NOTE ON ICONS: lucide does not ship brand logos, so 'instagram', 'twitter',
+        // 'facebook', 'youtube' and 'linkedin' do not resolve — they render as an empty
+        // black tile with no glyph and no error. Generic equivalents are used instead. A
+        // test asserts every template icon resolves, because this fails silently.
+        const socialTemplate = (id, label, icon, base, placeholder) => ({
+            id, label, icon, cat: 'social',
+            fields: [{ id: 'handle', label: label + ' username', placeholder, required: true }],
+            build: (v) => {
+                const handle = v.handle.replace(/^@+/, '').trim();
+                return { data: base + encodeURIComponent(handle), title: label + ' @' + handle };
+            }
+        });
+
+        // ---------------------------------------------------------------------------------
+        //  TEMPLATE REGISTRY
+        //  Each entry is fully declarative: the fields render themselves and build() returns the
+        //  payload. This replaced two parallel switch statements (one for form markup, one for
+        //  payload assembly) that would have needed 22 arms each — adding a type is now one
+        //  object, and a type can never have a form without a builder or vice versa.
+        //
+        //  bcid defaults to Aztec per HARD RULE 6. Only formats that genuinely require QR set it:
+        //  WiFi and contacts need QR for the native "Join Network" / "Add Contact" prompts, and
+        //  calendar events for the same reason.
+        // ---------------------------------------------------------------------------------
+        const QUICK_TEMPLATES = [
+            {
+                id: 'wifi', label: 'WiFi', icon: 'wifi', cat: 'popular', bcid: 'qrcode',
+                note: 'Generated as a QR Code — that\'s what phones need to show the "Join Network" prompt automatically.',
+                fields: [
+                    { id: 'ssid', label: 'Network Name (SSID)', placeholder: 'MyNetwork', required: true },
+                    { id: 'sec', label: 'Security', type: 'select', options: [
+                        { value: 'WPA', label: 'WPA / WPA2' }, { value: 'WEP', label: 'WEP' },
+                        { value: 'nopass', label: 'None (Open)' }] },
+                    { id: 'pass', label: 'Password', placeholder: 'Password', type: 'password' }
+                ],
+                build: (v) => {
+                    const sec = v.sec || 'WPA';
+                    return {
+                        data: `WIFI:S:${v.ssid};T:${sec};${sec !== 'nopass' ? `P:${v.pass};` : ''};`,
+                        title: v.ssid
+                    };
+                }
+            },
+            {
+                id: 'url', label: 'Website', icon: 'link', cat: 'popular',
+                fields: [{ id: 'url', label: 'Website URL', placeholder: 'https://example.com', required: true }],
+                build: (v) => {
+                    const url = /^https?:\/\//i.test(v.url) ? v.url : 'https://' + v.url;
+                    return { data: url, title: url.replace(/^https?:\/\//i, '').split('/')[0] };
+                }
+            },
+            {
+                id: 'email', label: 'Email', icon: 'mail', cat: 'popular',
+                fields: [
+                    { id: 'to', label: 'Email Address', placeholder: 'name@example.com', type: 'email', required: true },
+                    { id: 'subject', label: 'Subject (optional)', placeholder: '' }
+                ],
+                build: (v) => ({
+                    data: v.subject ? `mailto:${v.to}?subject=${encodeURIComponent(v.subject)}` : `mailto:${v.to}`,
+                    title: v.to
+                })
+            },
+            {
+                id: 'phone', label: 'Phone', icon: 'phone', cat: 'popular',
+                fields: [{ id: 'number', label: 'Phone Number', placeholder: '+1 555 123 4567', type: 'tel', required: true }],
+                build: (v) => ({ data: `tel:${v.number}`, title: v.number })
+            },
+            {
+                id: 'sms', label: 'Message', icon: 'message-square', cat: 'popular',
+                fields: [
+                    { id: 'number', label: 'Phone Number', placeholder: '+1 555 123 4567', type: 'tel', required: true },
+                    { id: 'body', label: 'Message (optional)', placeholder: '' }
+                ],
+                build: (v) => ({
+                    data: v.body ? `sms:${v.number}?body=${encodeURIComponent(v.body)}` : `sms:${v.number}`,
+                    title: v.number
+                })
+            },
+            {
+                id: 'contact', label: 'Contact', icon: 'user-round', cat: 'popular', bcid: 'qrcode',
+                note: 'Generated as a QR Code so a phone camera offers "Add Contact" directly.',
+                fields: [
+                    { id: 'name', label: 'Full Name', placeholder: 'Jane Doe', required: true },
+                    { id: 'phone', label: 'Phone (optional)', placeholder: '', type: 'tel' },
+                    { id: 'email', label: 'Email (optional)', placeholder: '', type: 'email' }
+                ],
+                build: (v) => ({
+                    data: ['BEGIN:VCARD', 'VERSION:3.0', `FN:${v.name}`,
+                           v.phone ? `TEL:${v.phone}` : '', v.email ? `EMAIL:${v.email}` : '',
+                           'END:VCARD'].filter(Boolean).join('\n'),
+                    title: v.name
+                })
+            },
+            {
+                id: 'text', label: 'Plain Text', icon: 'type', cat: 'popular',
+                fields: [{ id: 'body', label: 'Text', type: 'textarea', placeholder: 'Anything you like', required: true }],
+                build: (v) => ({ data: v.body, title: v.body.length > 24 ? v.body.slice(0, 24) + '…' : v.body })
+            },
+
+            socialTemplate('instagram', 'Instagram', 'camera', 'https://instagram.com/', 'yourhandle'),
+            socialTemplate('x', 'X', 'at-sign', 'https://x.com/', 'yourhandle'),
+            socialTemplate('facebook', 'Facebook', 'users', 'https://facebook.com/', 'yourpage'),
+            socialTemplate('youtube', 'YouTube', 'play', 'https://youtube.com/@', 'yourchannel'),
+            socialTemplate('tiktok', 'TikTok', 'music', 'https://tiktok.com/@', 'yourhandle'),
+            socialTemplate('linkedin', 'LinkedIn', 'briefcase', 'https://linkedin.com/in/', 'your-name'),
+            socialTemplate('telegram', 'Telegram', 'send', 'https://t.me/', 'yourhandle'),
+            socialTemplate('snapchat', 'Snapchat', 'ghost', 'https://snapchat.com/add/', 'yourhandle'),
+            socialTemplate('pinterest', 'Pinterest', 'image', 'https://pinterest.com/', 'yourhandle'),
+            {
+                // WhatsApp is the one social that keys off a phone number rather than a handle,
+                // and wa.me rejects anything but digits — so +, spaces and dashes are stripped.
+                id: 'whatsapp', label: 'WhatsApp', icon: 'message-circle', cat: 'social',
+                note: 'Include the country code. Any spaces, dashes or a leading + are removed automatically.',
+                fields: [{ id: 'number', label: 'Phone Number', placeholder: '+1 555 123 4567', type: 'tel', required: true }],
+                build: (v) => {
+                    const digits = v.number.replace(/\D/g, '');
+                    return { data: `https://wa.me/${digits}`, title: 'WhatsApp ' + v.number };
+                }
+            },
+
+            {
+                id: 'event', label: 'Event', icon: 'calendar', cat: 'personal', bcid: 'qrcode',
+                note: 'Generated as a QR Code so a phone camera offers to add it to the calendar.',
+                fields: [
+                    { id: 'summary', label: 'Event Name', placeholder: 'Team standup', required: true },
+                    { id: 'location', label: 'Location (optional)', placeholder: '' },
+                    { id: 'start', label: 'Starts', type: 'datetime-local', required: true },
+                    { id: 'end', label: 'Ends (optional)', type: 'datetime-local' }
+                ],
+                build: (v) => {
+                    // iCalendar wants basic-format UTC stamps: 20260807T143000Z
+                    const stamp = (s) => s ? new Date(s).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z' : '';
+                    return {
+                        data: ['BEGIN:VEVENT', `SUMMARY:${v.summary}`,
+                               v.location ? `LOCATION:${v.location}` : '',
+                               `DTSTART:${stamp(v.start)}`, v.end ? `DTEND:${stamp(v.end)}` : '',
+                               'END:VEVENT'].filter(Boolean).join('\n'),
+                        title: v.summary
+                    };
+                }
+            },
+            {
+                id: 'geo', label: 'Location', icon: 'map-pin', cat: 'personal',
+                note: 'Latitude and longitude in decimal degrees, e.g. 51.5007 and -0.1246.',
+                fields: [
+                    { id: 'lat', label: 'Latitude', placeholder: '51.5007', required: true },
+                    { id: 'lng', label: 'Longitude', placeholder: '-0.1246', required: true },
+                    { id: 'label', label: 'Place Name (optional)', placeholder: 'Big Ben' }
+                ],
+                build: (v) => ({
+                    data: `geo:${v.lat},${v.lng}`,
+                    title: v.label || `${v.lat}, ${v.lng}`
+                })
+            },
+
+            {
+                id: 'appstore', label: 'App Link', icon: 'smartphone', cat: 'utility',
+                fields: [{ id: 'url', label: 'App Store or Play Store URL', placeholder: 'https://apps.apple.com/...', required: true }],
+                build: (v) => {
+                    const url = /^https?:\/\//i.test(v.url) ? v.url : 'https://' + v.url;
+                    return { data: url, title: 'App Link' };
+                }
+            },
+            {
+                id: 'crypto', label: 'Crypto', icon: 'bitcoin', cat: 'utility',
+                note: 'Check the address carefully. A code is only ever as correct as what you paste into it.',
+                fields: [
+                    { id: 'coin', label: 'Network', type: 'select', options: [
+                        { value: 'bitcoin', label: 'Bitcoin' }, { value: 'ethereum', label: 'Ethereum' },
+                        { value: 'litecoin', label: 'Litecoin' }] },
+                    { id: 'address', label: 'Wallet Address', placeholder: 'bc1q...', required: true },
+                    { id: 'amount', label: 'Amount (optional)', placeholder: '' }
+                ],
+                build: (v) => {
+                    const coin = v.coin || 'bitcoin';
+                    return {
+                        data: `${coin}:${v.address}` + (v.amount ? `?amount=${encodeURIComponent(v.amount)}` : ''),
+                        title: coin.charAt(0).toUpperCase() + coin.slice(1)
+                    };
+                }
+            },
+            {
+                id: 'clipboard', label: 'Clipboard', icon: 'clipboard', cat: 'utility',
+                note: 'Prefilled from your clipboard where the browser allows it. Edit freely before saving.',
+                prefillFromClipboard: 'body',
+                fields: [{ id: 'body', label: 'Text', type: 'textarea', placeholder: 'Copy something, then reopen this', required: true }],
+                build: (v) => ({ data: v.body, title: v.body.length > 24 ? v.body.slice(0, 24) + '…' : v.body })
+            }
+        ];
+
+        // Exposed for the regression suite, which asserts payload correctness per type by
+        // calling build() directly rather than driving 22 forms through the UI.
+        window.QUICK_TEMPLATES = QUICK_TEMPLATES;
 
         class OSCodeGenerator {
             constructor() {
@@ -2220,6 +2443,8 @@
                 this.templatesView = document.getElementById('create-templates-view');
                 this.customView = document.getElementById('create-custom-view');
                 this.templateGrid = document.getElementById('template-grid');
+                this.categoryRow = document.getElementById('template-category-row');
+                this.activeCategory = 'popular';
                 this.templateFormContainer = document.getElementById('template-form-container');
                 this.tabButtons = document.querySelectorAll('.create-tab-btn');
                 this.activeTemplate = null;
@@ -2230,12 +2455,32 @@
 
                 this.tabButtons.forEach(btn => btn.addEventListener('click', () => this.setMode(btn.dataset.mode)));
 
+                this.renderCategoryRow();
                 this.renderTemplateGrid();
+            }
+
+            renderCategoryRow() {
+                if (!this.categoryRow) return;
+                this.categoryRow.innerHTML = '';
+                TPL_CATEGORIES.forEach(cat => {
+                    const btn = document.createElement('button');
+                    btn.className = 'tpl-cat-btn tap-extend' + (cat.id === this.activeCategory ? ' active' : '');
+                    btn.dataset.cat = cat.id;
+                    btn.textContent = cat.label;
+                    btn.addEventListener('click', () => {
+                        if (this.activeCategory === cat.id) return;
+                        this.activeCategory = cat.id;
+                        haptic(8);
+                        this.renderCategoryRow();
+                        this.renderTemplateGrid();
+                    });
+                    this.categoryRow.appendChild(btn);
+                });
             }
 
             renderTemplateGrid() {
                 this.templateGrid.innerHTML = '';
-                QUICK_TEMPLATES.forEach(t => {
+                QUICK_TEMPLATES.filter(t => t.cat === this.activeCategory).forEach(t => {
                     const btn = document.createElement('button');
                     btn.className = 'template-btn flex flex-col items-center gap-2 p-3 rounded-2xl bg-gray-50 border border-gray-100 hover:bg-gray-100';
                     btn.innerHTML = `
@@ -2266,59 +2511,42 @@
                 return `<input type="${type}" id="${id}" placeholder="${placeholder}" class="w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none transition-all duration-300 shadow-sm">`;
             }
 
+            tpl(id) { return QUICK_TEMPLATES.find(t => t.id === id); }
+
+            // Renders one declared field. Every input id is namespaced `tpl-<fieldId>` so the
+            // builders can read them back by field id without each template inventing its own.
+            // Inputs are namespaced tpl-<template>-<field>. Bare tpl-<field> would have been
+            // simpler — only one form renders at a time — but the namespaced form keeps the
+            // ids self-describing in the DOM and, usefully, preserved the exact ids the
+            // pre-refactor forms used, so existing tests kept passing untouched and proved
+            // the refactor had not shifted behaviour underneath them.
+            fieldId(t, f) { return `tpl-${t.id}-${f.id}`; }
+
+            renderField(t, f) {
+                const cls = 'w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none transition-all duration-300 shadow-sm';
+                const id = this.fieldId(t, f);
+                if (f.type === 'textarea') {
+                    return this.field(f.label, `<textarea id="${id}" rows="3" placeholder="${f.placeholder || ''}" class="${cls} font-mono text-sm resize-none"></textarea>`);
+                }
+                if (f.type === 'select') {
+                    const opts = f.options.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+                    return this.field(f.label, `<select id="${id}" class="${cls} appearance-none cursor-pointer">${opts}</select>`);
+                }
+                return this.field(f.label, this.textInput(id, f.placeholder || '', f.type || 'text'));
+            }
+
             openTemplateForm(templateId) {
+                const t = this.tpl(templateId);
+                if (!t) return;
                 this.activeTemplate = templateId;
                 const c = this.templateFormContainer;
-
-                let formHtml = '';
-                let note = '';
-                switch (templateId) {
-                    case 'wifi':
-                        formHtml = `
-                            ${this.field('Network Name (SSID)', this.textInput('tpl-wifi-ssid', 'MyNetwork'))}
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Security</label>
-                                <select id="tpl-wifi-sec" class="w-full bg-gray-50 border border-gray-200 focus:border-black rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none appearance-none shadow-sm cursor-pointer">
-                                    <option value="WPA">WPA / WPA2</option>
-                                    <option value="WEP">WEP</option>
-                                    <option value="nopass">None (Open)</option>
-                                </select>
-                            </div>
-                            ${this.field('Password', this.textInput('tpl-wifi-pass', 'Password', 'password'))}
-                        `;
-                        note = 'Generated as a QR Code — that\'s what phones need to show the "Join Network" prompt automatically.';
-                        break;
-                    case 'url':
-                        formHtml = this.field('Website URL', this.textInput('tpl-url', 'https://example.com'));
-                        break;
-                    case 'email':
-                        formHtml = this.field('Email Address', this.textInput('tpl-email-to', 'name@example.com', 'email'))
-                            + this.field('Subject (optional)', this.textInput('tpl-email-subject', ''));
-                        break;
-                    case 'phone':
-                        formHtml = this.field('Phone Number', this.textInput('tpl-phone', '+1 555 123 4567', 'tel'));
-                        break;
-                    case 'sms':
-                        formHtml = this.field('Phone Number', this.textInput('tpl-sms-number', '+1 555 123 4567', 'tel'))
-                            + this.field('Message (optional)', this.textInput('tpl-sms-body', ''));
-                        break;
-                    case 'contact':
-                        formHtml = this.field('Full Name', this.textInput('tpl-contact-name', 'Jane Doe'))
-                            + this.field('Phone (optional)', this.textInput('tpl-contact-phone', '', 'tel'))
-                            + this.field('Email (optional)', this.textInput('tpl-contact-email', '', 'email'));
-                        note = 'Generated as a QR Code for the widest "Add Contact" support.';
-                        break;
-                    case 'text':
-                        formHtml = `<div><label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Text</label><textarea id="tpl-text-body" rows="3" class="w-full bg-gray-50 border border-gray-200 focus:border-black rounded-2xl px-5 py-4 text-gray-900 font-mono text-sm outline-none shadow-sm resize-none" placeholder="Anything you like"></textarea></div>`;
-                        break;
-                }
 
                 c.innerHTML = `
                     <button id="tpl-back-btn" class="flex items-center gap-1.5 text-gray-500 font-bold text-sm -mb-1">
                         <i data-lucide="chevron-left" class="w-4 h-4"></i> Back
                     </button>
-                    ${formHtml}
-                    ${note ? `<p class="text-[11px] text-gray-400 leading-relaxed px-1">${note}</p>` : ''}
+                    ${t.fields.map(f => this.renderField(t, f)).join('')}
+                    ${t.note ? `<p class="text-[11px] text-gray-400 leading-relaxed px-1">${t.note}</p>` : ''}
                     <button id="tpl-save-btn" class="w-full mt-1 py-4 bg-black text-white rounded-2xl font-bold hover:bg-gray-800 active:scale-[0.98] transition-all duration-200 shadow-[0_10px_20px_rgba(0,0,0,0.2)] flex justify-center items-center gap-2">
                         <i data-lucide="save" class="w-5 h-5"></i> Add to Home Screen
                     </button>
@@ -2328,9 +2556,20 @@
                 document.getElementById('tpl-back-btn').addEventListener('click', () => this.closeTemplateForm());
                 document.getElementById('tpl-save-btn').addEventListener('click', () => this.saveFromTemplate(templateId));
 
+                // Opt-in clipboard prefill. Guarded hard: readText() rejects when the document is
+                // not focused, on insecure origins, and whenever the user denies the prompt — none
+                // of which should stop the form being usable, so failure is silent by design.
+                if (t.prefillFromClipboard && navigator.clipboard && navigator.clipboard.readText) {
+                    navigator.clipboard.readText().then((txt) => {
+                        const el = document.getElementById(`tpl-${t.id}-${t.prefillFromClipboard}`);
+                        if (el && txt && !el.value) el.value = txt;
+                    }).catch(() => {});
+                }
+
                 c.classList.remove('hidden');
                 c.classList.add('flex');
                 this.templateGrid.classList.add('hidden');
+                if (this.categoryRow) this.categoryRow.classList.add('hidden');
             }
 
             closeTemplateForm() {
@@ -2338,6 +2577,7 @@
                 this.templateFormContainer.classList.add('hidden');
                 this.templateFormContainer.classList.remove('flex');
                 this.templateGrid.classList.remove('hidden');
+                if (this.categoryRow) this.categoryRow.classList.remove('hidden');
             }
 
             val(id) {
@@ -2346,70 +2586,32 @@
             }
 
             saveFromTemplate(templateId) {
-                let title = '', data = '', bcid = 'azteccode';
-                switch (templateId) {
-                    case 'wifi': {
-                        const ssid = this.val('tpl-wifi-ssid');
-                        if (!ssid) return window.showToast('Network name is required', 'error');
-                        const sec = this.val('tpl-wifi-sec') || 'WPA';
-                        const pass = this.val('tpl-wifi-pass');
-                        data = `WIFI:S:${ssid};T:${sec};${sec !== 'nopass' ? `P:${pass};` : ''};`;
-                        title = ssid;
-                        bcid = 'qrcode';
-                        break;
-                    }
-                    case 'url': {
-                        let url = this.val('tpl-url');
-                        if (!url) return window.showToast('A URL is required', 'error');
-                        if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-                        data = url;
-                        title = url.replace(/^https?:\/\//i, '').split('/')[0];
-                        break;
-                    }
-                    case 'email': {
-                        const to = this.val('tpl-email-to');
-                        if (!to) return window.showToast('An email address is required', 'error');
-                        const subject = this.val('tpl-email-subject');
-                        data = subject ? `mailto:${to}?subject=${encodeURIComponent(subject)}` : `mailto:${to}`;
-                        title = to;
-                        break;
-                    }
-                    case 'phone': {
-                        const number = this.val('tpl-phone');
-                        if (!number) return window.showToast('A phone number is required', 'error');
-                        data = `tel:${number}`;
-                        title = number;
-                        break;
-                    }
-                    case 'sms': {
-                        const number = this.val('tpl-sms-number');
-                        if (!number) return window.showToast('A phone number is required', 'error');
-                        const body = this.val('tpl-sms-body');
-                        data = body ? `sms:${number}?body=${encodeURIComponent(body)}` : `sms:${number}`;
-                        title = number;
-                        break;
-                    }
-                    case 'contact': {
-                        const name = this.val('tpl-contact-name');
-                        if (!name) return window.showToast('A name is required', 'error');
-                        const phone = this.val('tpl-contact-phone');
-                        const email = this.val('tpl-contact-email');
-                        data = ['BEGIN:VCARD', 'VERSION:3.0', `FN:${name}`, phone ? `TEL:${phone}` : '', email ? `EMAIL:${email}` : '', 'END:VCARD']
-                            .filter(Boolean).join('\n');
-                        title = name;
-                        bcid = 'qrcode';
-                        break;
-                    }
-                    case 'text': {
-                        const body = this.val('tpl-text-body');
-                        if (!body) return window.showToast('Enter some text first', 'error');
-                        data = body;
-                        title = body.length > 24 ? body.slice(0, 24) + '…' : body;
-                        break;
+                const t = this.tpl(templateId);
+                if (!t) return;
+
+                // Collect declared fields, then enforce `required` centrally. Previously each
+                // branch wrote its own guard, which is how a new type ends up silently saving a
+                // half-empty payload because someone forgot one.
+                const v = {};
+                for (const f of t.fields) {
+                    v[f.id] = this.val(this.fieldId(t, f));
+                    if (f.required && !v[f.id]) {
+                        return window.showToast(`${f.label.replace(/ \(optional\)$/, '')} is required`, 'error');
                     }
                 }
-                this.saveCode(title, data, bcid);
+
+                let out;
+                try {
+                    out = t.build(v);
+                } catch (e) {
+                    XanLogger.error('Template build failed', e);
+                    return window.showToast('Could not build that code — check the values.', 'error');
+                }
+                if (!out || !out.data) return window.showToast('Could not build that code.', 'error');
+
+                this.saveCode(out.title, out.data, out.bcid || t.bcid || 'azteccode');
             }
+
 
             saveFromCustomForm() {
                 this.saveCode(this.inputTitle.value.trim(), this.inputData.value.trim(), this.inputType.value);

@@ -24,12 +24,12 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 38 passing in ~38s):
+Built and covered by the regression suite (`npm test`, 43 passing in ~42s):
 
 | Area | State |
 |---|---|
 | Home screen | Paged icon grid, floating dock, physics drag-reorder, swipe-down search, edit mode |
-| Codes | Generator + Quick Add templates (7 types), item viewer (enlarge / copy / save PNG / rename) |
+| Codes | Generator + **22 Quick Add types in 4 categories**, item viewer (enlarge / copy / save PNG / rename) |
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, smart payload parsing |
 | Library | Browse-all view: filter + sort by Recent / Name / Format |
 | Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin, WCAG-measured accent text |
@@ -86,11 +86,13 @@ by default and let every skin opt in — do not fork the structure.
 
 ---
 
-## Phase 2 — The Create Engine
+## Phase 2 — The Create Engine 🔨 IN PROGRESS
 **Months 2–3 · Oct–Nov 2026**
 
-Today: 7 Quick Add templates. Target: a categorised type library matching what commercial
-scanners ship.
+~~Today: 7 Quick Add templates.~~ **Done: 22 types across four categories**, on a declarative
+registry — each entry carries its fields and a `build()`, so adding a type is one object rather
+than an arm in two parallel switch statements. Remaining in this phase: the format browser and
+code styling.
 
 - **Socials:** Instagram, WhatsApp, X, Facebook, YouTube, TikTok, LinkedIn, Telegram, Snapchat, Pinterest
 - **Personal:** Email, Phone, SMS, vCard/MeCard, Calendar event, Location/Geo
