@@ -1944,3 +1944,132 @@ test.describe('Named pages (Phase 4)', () => {
             window.OS_STATE.apps.some(a => a.title === 'Renamed Properly'))).toBe(true);
     });
 });
+
+test.describe('Folders (Phase 4)', () => {
+    test('membership is derived, never a second copy of the truth', async ({ page }) => {
+        // Codes stay in OS_STATE.apps and carry a folderId; the folder holds no child list. A
+        // folder keeping its own list would drift the first time a code was deleted elsewhere
+        // while the folder still named it.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const r = await page.evaluate(() => {
+            const ids = window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.id);
+            const folder = window.createFolderFrom(ids[1], ids[0]);
+            const before = window.folderChildren(folder.id).length;
+            // Delete a member the way the Library would, with no folder bookkeeping at all.
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== ids[1]);
+            return { folderKeys: Object.keys(folder), before, after: window.folderChildren(folder.id).length };
+        });
+
+        expect(r.folderKeys).not.toContain('children');   // nothing to keep in step
+        expect(r.before).toBe(2);
+        expect(r.after).toBe(1);                          // membership just follows
+    });
+
+    test('a folder dissolves rather than lingering with one code', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => {
+            const ids = window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.id);
+            const f = window.createFolderFrom(ids[1], ids[0]);
+            const res = window.removeFromFolder(ids[1]);
+            return {
+                dissolved: res.dissolved,
+                foldersLeft: window.OS_STATE.apps.filter(a => a.type === 'folder').length,
+                onGrid: window.OS_STATE.apps.filter(a => a.type === 'grid' && !a.folderId).length
+            };
+        });
+        expect(r.dissolved).toBe(true);
+        expect(r.foldersLeft).toBe(0);
+        expect(r.onGrid).toBe(3);   // both codes back out, nothing lost
+    });
+
+    test('deleting a folder frees its codes instead of taking them with it', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(async () => {
+            const ids = window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.id);
+            const f = window.createFolderFrom(ids[1], ids[0]);
+            window.addToFolder(f.id, ids[2]);
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+            await new Promise(res => setTimeout(res, 300));
+
+            document.querySelector(`[data-id="${f.id}"] .edit-only`).click();
+            await new Promise(res => setTimeout(res, 500));
+            return {
+                folders: window.OS_STATE.apps.filter(a => a.type === 'folder').length,
+                codes: window.OS_STATE.apps.filter(a => a.type === 'grid').length,
+                orphaned: window.OS_STATE.apps.filter(a => a.type === 'grid' && a.folderId).length
+            };
+        });
+        expect(r.folders).toBe(0);
+        expect(r.codes).toBe(3);     // every code survived
+        expect(r.orphaned).toBe(0);  // and none left pointing at a folder that is gone
+    });
+
+    test('dragging one icon onto another and dwelling creates a folder', async ({ page }) => {
+        // The real gesture, driven with pointer events. Dwell is what separates "moving past
+        // this" from "I mean this one".
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(500);
+
+        const boxes = await page.evaluate(() => {
+            const icons = [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')].slice(0, 2);
+            return icons.map(el => { const r = el.getBoundingClientRect();
+                return { id: el.dataset.id, x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+        });
+
+        await page.mouse.move(boxes[1].x, boxes[1].y);
+        await page.mouse.down();
+        await page.mouse.move(boxes[1].x + 12, boxes[1].y + 12, { steps: 3 });  // engage
+        await page.mouse.move(boxes[0].x, boxes[0].y, { steps: 12 });           // onto the target
+        await page.waitForTimeout(900);                                          // dwell past 550ms
+        await page.mouse.up();
+        await page.waitForTimeout(800);
+
+        const r = await page.evaluate(() => ({
+            folders: window.OS_STATE.apps.filter(a => a.type === 'folder').length,
+            filed: window.OS_STATE.apps.filter(a => a.folderId).length
+        }));
+        expect(r.folders).toBe(1);
+        expect(r.filed).toBe(2);
+    });
+
+    test('a quick pass over an icon still reorders instead of making a folder', async ({ page }) => {
+        // The other half of the contract. Without the dwell timer every reorder that crossed an
+        // icon would try to merge.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(500);
+
+        const boxes = await page.evaluate(() => {
+            const icons = [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')].slice(0, 2);
+            return icons.map(el => { const r = el.getBoundingClientRect();
+                return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+        });
+
+        await page.mouse.move(boxes[1].x, boxes[1].y);
+        await page.mouse.down();
+        await page.mouse.move(boxes[1].x + 12, boxes[1].y + 12, { steps: 3 });
+        await page.mouse.move(boxes[0].x, boxes[0].y, { steps: 10 });
+        await page.mouse.up();                       // released immediately — no dwell
+        await page.waitForTimeout(800);
+
+        expect(await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(0);
+    });
+});

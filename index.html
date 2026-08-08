@@ -709,6 +709,13 @@
         }
 
         /* Brief whole-app blur/scale pulse while a skin swap is committed underneath it */
+        /* Armed folder target: the icon a dwell would merge into. Ring plus a slight lift,
+           so it reads as "this one opens up" rather than "this one is selected". */
+        .folder-target .app-icon {
+            transform: scale(1.12);
+            box-shadow: 0 0 0 3px var(--accent), 0 10px 26px -6px rgba(0,0,0,0.5);
+        }
+
         .morph-pulse { transform: scale(0.93) translateY(15px); filter: blur(12px) brightness(0.7); }
 
         /* ---------- Tap targets: Apple HIG 44x44pt minimum ----------
@@ -819,6 +826,11 @@
     <!-- LIBRARY: the dedicated browse-all-codes view behind the dock's Library button.
          Swipe-down search stays the ad-hoc "I know what I'm looking for" path; this is the
          "show me everything I've saved" path, with filtering and sorting. -->
+    <div id="folder-overlay" class="modal-spring fixed inset-0 z-[140] bg-black/55 backdrop-blur-3xl opacity-0 pointer-events-none flex flex-col items-center justify-center p-6">
+        <button id="folder-title" class="text-white text-[22px] font-bold tracking-tight mb-5 px-4 py-1.5 rounded-full active:scale-95 transition-transform"></button>
+        <div id="folder-grid" class="w-full max-w-[380px] grid grid-cols-4 gap-y-6 gap-x-2 justify-items-center"></div>
+        <p class="text-white/40 text-[11px] font-medium mt-8">Tap outside to close</p>
+    </div>
     <div id="library-overlay" class="modal-spring fixed inset-0 z-[130] bg-black/50 backdrop-blur-3xl opacity-0 pointer-events-none flex flex-col">
         <div class="flex items-center gap-3 px-5 pt-[calc(env(safe-area-inset-top,0px)+1.5rem)] pb-3 shrink-0">
             <div class="flex-1 min-w-0">
@@ -1231,6 +1243,19 @@
          *    barcode parses as a phone number. Product barcodes (8/12/13 digits) get
          *    lookup buttons rather than one action, since "what IS this" is the real
          *    question and no single provider answers it best.
+         *  - Folders (OSFolderManager, window.createFolderFrom / addToFolder /
+         *    removeFromFolder / folderChildren) — Phase 4. Drag an icon onto another and
+         *    DWELL to merge; a quick pass still reorders. The dwell timer is the whole
+         *    distinction between "moving past this" and "I mean this one", and without it
+         *    every reorder crossing an icon would try to make a folder. Both halves are
+         *    tested with real pointer events.
+         *    MEMBERSHIP IS DERIVED, not stored: codes stay in OS_STATE.apps carrying a
+         *    folderId, and the folder holds no child list. A folder keeping its own list
+         *    would be a second copy of the truth and would drift the first time a code was
+         *    deleted from the Library while the folder still named it. Search, history and
+         *    the Library therefore all keep working on folder contents unchanged.
+         *    A folder under two codes dissolves — a folder of one is an item in a costume.
+         *    Deleting a folder FREES its codes rather than taking them with it.
          *  - Named pages (OS_STATE.pageNames) — Phase 4. A chip above the page dots. It is
          *    shown unconditionally in EDIT MODE, not only when a page already has a name —
          *    a rename control you can only see once the thing is named cannot be used to
@@ -1764,7 +1789,17 @@
                 wrapper.dataset.id = itemData.id;
 
                 let iconInnerHtml = '';
-                if (itemData.type === 'grid' && itemData.bcid) {
+                if (itemData.type === 'folder') {
+                    // A 2x2 peek at what is inside, the way a folder is legible at a glance.
+                    const kids = window.folderChildren(itemData.id).slice(0, 4);
+                    const cells = Array.from({ length: 4 }, (_, i) => kids[i]
+                        ? `<div class="bg-white rounded-[3px] overflow-hidden flex items-center justify-center"><canvas id="fdr-${itemData.id}-${i}" class="w-full h-full object-contain pixelated"></canvas></div>`
+                        : '<div class="bg-white/25 rounded-[3px]"></div>').join('');
+                    iconInnerHtml = `
+                        <div class="w-full h-full grid grid-cols-2 grid-rows-2 gap-[3px] p-[5px] bg-white/25 backdrop-blur-xl pointer-events-none">
+                            ${cells}
+                        </div>`;
+                } else if (itemData.type === 'grid' && itemData.bcid) {
                     iconInnerHtml = `
                         <div class="w-full h-full bg-white flex items-center justify-center p-2.5 shadow-[0_2px_10px_rgba(0,0,0,0.15)] pointer-events-none">
                             <canvas id="can-${itemData.id}" class="w-full h-full object-contain pixelated"></canvas>
@@ -1806,13 +1841,15 @@
                     if (window.DragEngine && window.DragEngine.wasDragging) return; 
                     
                     if (window.OS_STATE.isEditMode || e.target.closest('.edit-only')) {
-                        if(window.OS_STATE.isEditMode && !e.target.closest('.edit-only') && itemData.type === 'grid') {
+                        if(window.OS_STATE.isEditMode && !e.target.closest('.edit-only') && (itemData.type === 'grid' || itemData.type === 'folder')) {
                             window.InteractionManager.openRename(itemData);
                         }
                         return;
                     }
 
-                    if (itemData.type === 'grid') {
+                    if (itemData.type === 'folder') {
+                        if (window.FolderManager) window.FolderManager.open(itemData.id);
+                    } else if (itemData.type === 'grid') {
                         if (window.InteractionManager) window.InteractionManager.openEnlarge(itemData);
                     } else if (itemData.id === 'nav_gen') {
                         if (window.CodeGenerator) window.CodeGenerator.open();
@@ -1827,6 +1864,13 @@
                     }
                 });
 
+                if (itemData.type === 'folder') {
+                    setTimeout(() => {
+                        window.folderChildren(itemData.id).slice(0, 4).forEach((kid, i) => {
+                            window.renderCode(`fdr-${itemData.id}-${i}`, kid, { scale: 1 });
+                        });
+                    }, 10);
+                }
                 if (itemData.type === 'grid' && itemData.bcid) {
                     setTimeout(() => {
                         window.renderCode(`can-${itemData.id}`, itemData, { scale: 3 });
@@ -1837,6 +1881,15 @@
                 if (removeBtn) {
                     removeBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
+                        if (itemData.type === 'folder') {
+                            // Deleting the folder must not delete what is in it — the codes
+                            // return to the page the folder occupied.
+                            window.folderChildren(itemData.id).forEach(kid => {
+                                delete kid.folderId;
+                                kid.page = itemData.page || 0;
+                                kid.order = 999;
+                            });
+                        }
                         window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== itemData.id);
                         saveState();
                         wrapper.style.transition = 'transform 0.3s var(--spring-snappy), opacity 0.2s ease';
@@ -1850,7 +1903,9 @@
 
             render() {
                 const state = window.OS_STATE;
-                const gridItems = state.apps.filter(a => a.type === 'grid');
+                // Codes inside a folder are not on the grid; folders are.
+                const gridItems = state.apps.filter(a =>
+                    (a.type === 'grid' && !a.folderId) || a.type === 'folder');
                 const itemsPerPage = state.gridCols * state.gridRows;
                 let maxPage = 0;
                 
@@ -2045,6 +2100,7 @@
                 this.draggedEl = null; this.ghostEl = null;
                 this.containers = [];
                 this.wasDragging = false; this.isEngaged = false; this.isPageFlipping = false;
+                this.dwellTimer = null; this.dwellTarget = null; this.folderArmed = null;
                 
                 this.onPointerDown = this.onPointerDown.bind(this);
                 this.onPointerMove = this.onPointerMove.bind(this);
@@ -2075,6 +2131,7 @@
             }
 
             destroy() {
+                this.clearFolderDwell();
                 this.cleanupListeners();
             }
 
@@ -2087,6 +2144,7 @@
                 this.currentX = e.clientX; this.currentY = e.clientY;
                 
                 this.wasDragging = false; this.isEngaged = false; this.isPageFlipping = false;
+                this.dwellTimer = null; this.dwellTarget = null; this.folderArmed = null;
                 
                 this.targetEl = target;
                 this.startContainer = target.parentNode;
@@ -2159,6 +2217,12 @@
 
                 const under = document.elementFromPoint(e.clientX, e.clientY);
                 const closestSlot = under ? under.closest('.app-icon-wrapper, .empty-slot') : null;
+
+                // Folder dwell. Resting over another ICON (not an empty slot) for a moment
+                // arms a merge; a quick pass keeps the existing swap behaviour. The timer is
+                // what separates "I am moving past this" from "I mean this one", and without
+                // it every reorder that crossed an icon would try to make a folder.
+                this.updateFolderDwell(closestSlot);
                 const targetContainer = closestSlot ? closestSlot.parentNode : null;
 
                 if (closestSlot && closestSlot !== this.draggedEl && closestSlot !== this.ghostEl && this.containers.includes(targetContainer)) {
@@ -2229,13 +2293,74 @@
                 saveState();
             }
 
+            updateFolderDwell(slot) {
+                const isIcon = slot && slot.classList.contains('app-icon-wrapper') &&
+                               slot !== this.draggedEl && slot !== this.ghostEl;
+
+                if (!isIcon || slot !== this.dwellTarget) {
+                    this.clearFolderDwell();
+                    this.dwellTarget = isIcon ? slot : null;
+                    if (isIcon) {
+                        this.dwellTimer = setTimeout(() => {
+                            // Re-check on fire: the pointer may have moved on, and arming a merge
+                            // against an icon the finger already left is how you get a folder you
+                            // never asked for.
+                            if (this.dwellTarget !== slot) return;
+                            this.folderArmed = slot;
+                            slot.classList.add('folder-target');
+                            haptic(18);
+                        }, 550);
+                    }
+                }
+            }
+
+            clearFolderDwell() {
+                if (this.dwellTimer) clearTimeout(this.dwellTimer);
+                this.dwellTimer = null;
+                if (this.folderArmed) this.folderArmed.classList.remove('folder-target');
+                this.folderArmed = null;
+                this.dwellTarget = null;
+            }
+
+            // Returns true when the drop was consumed as a folder action.
+            resolveFolderDrop() {
+                const target = this.folderArmed;
+                if (!target) return false;
+                const dragId = this.draggedEl && this.draggedEl.dataset.id;
+                const targetId = target.dataset.id;
+                this.clearFolderDwell();
+                if (!dragId || !targetId || dragId === targetId) return false;
+
+                const targetItem = window.OS_STATE.apps.find(a => a.id === targetId);
+                if (!targetItem) return false;
+
+                const ok = targetItem.type === 'folder'
+                    ? window.addToFolder(targetId, dragId)
+                    : !!window.createFolderFrom(dragId, targetId);
+                if (!ok) return false;
+
+                haptic([12, 40, 12]);
+                return true;
+            }
+
             onPointerUp(e) {
                 document.removeEventListener('pointermove', this.onPointerMove);
                 document.removeEventListener('pointerup', this.onPointerUp);
                 document.removeEventListener('pointercancel', this.onPointerUp);
                 
                 if (this.targetEl) this.targetEl.classList.remove('drag-ready');
-                if (!this.isEngaged) return;
+                if (!this.isEngaged) { this.clearFolderDwell(); return; }
+
+                // A folder drop replaces the reorder entirely — the dragged icon is going INTO
+                // something, so animating it back into a grid slot would be wrong.
+                if (this.resolveFolderDrop()) {
+                    if (this.draggedEl) this.draggedEl.style = '';
+                    if (this.ghostEl) this.ghostEl.remove();
+                    this.draggedEl = null; this.ghostEl = null;
+                    window.Renderer.render();
+                    setTimeout(() => { this.wasDragging = false; }, 50);
+                    return;
+                }
 
                 const ghostRect = this.ghostEl.getBoundingClientRect();
                 this.draggedEl.style.transition = 'transform 0.4s var(--spring-snappy)';
@@ -3067,6 +3192,90 @@
             return rows.join('\n');
         };
 
+        // ---------------------------------------------------------------------------------
+        //  FOLDERS
+        //  A folder is an item of type 'folder' sitting on the grid like any other. Its contents
+        //  are NOT stored on the folder — codes stay in OS_STATE.apps and simply carry a folderId.
+        //  That is the important decision: a folder holding its own child list would be a second
+        //  copy of the truth, and the two would drift the first time a code was deleted from the
+        //  Library while its folder still listed it. Deriving membership means there is nothing
+        //  to keep in step, and search, history and the Library all keep working unchanged.
+        //
+        //  A folder with fewer than two codes has no reason to exist, so it dissolves — taking a
+        //  code out of a pair returns the other to the grid rather than leaving a folder of one,
+        //  which is exactly what iOS does and what people expect.
+        // ---------------------------------------------------------------------------------
+        window.folderChildren = function(folderId) {
+            return window.OS_STATE.apps
+                .filter(a => a.folderId === folderId && a.type === 'grid')
+                .sort((a, b) => (a.order || 0) - (b.order || 0));
+        };
+
+        // Puts an item into a folder, taking the first free slot inside it.
+        window.addToFolder = function(folderId, itemId) {
+            const item = window.OS_STATE.apps.find(a => a.id === itemId);
+            const folder = window.OS_STATE.apps.find(a => a.id === folderId && a.type === 'folder');
+            if (!item || !folder || item.id === folder.id) return false;
+            item.folderId = folderId;
+            item.order = window.folderChildren(folderId).length;
+            delete item.page;
+            saveState();
+            return true;
+        };
+
+        // Drag one code onto another: the target's slot becomes a folder holding both.
+        window.createFolderFrom = function(dragId, targetId) {
+            const st = window.OS_STATE;
+            const dragged = st.apps.find(a => a.id === dragId);
+            const target = st.apps.find(a => a.id === targetId);
+            if (!dragged || !target || dragId === targetId) return null;
+            if (dragged.type !== 'grid' || target.type !== 'grid') return null;
+            if (dragged.folderId || target.folderId) return null;   // already filed away
+
+            const folder = {
+                id: 'fd_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+                type: 'folder',
+                title: 'Folder',
+                page: target.page || 0,
+                order: target.order || 0
+            };
+            st.apps.push(folder);
+            // Target first so it keeps the position the folder replaced.
+            window.addToFolder(folder.id, target.id);
+            window.addToFolder(folder.id, dragged.id);
+            saveState();
+            return folder;
+        };
+
+        // Returns { dissolved } so callers know whether the folder is still there.
+        window.removeFromFolder = function(itemId) {
+            const st = window.OS_STATE;
+            const item = st.apps.find(a => a.id === itemId);
+            if (!item || !item.folderId) return { dissolved: false };
+
+            const folder = st.apps.find(a => a.id === item.folderId);
+            delete item.folderId;
+            if (folder) {
+                item.page = folder.page || 0;
+                item.order = 999;   // lands at the end of the page; the renderer packs it in
+            }
+
+            const left = folder ? window.folderChildren(folder.id) : [];
+            if (folder && left.length < 2) {
+                // A folder of one is just an item wearing a costume.
+                left.forEach(child => {
+                    delete child.folderId;
+                    child.page = folder.page || 0;
+                    child.order = folder.order || 0;
+                });
+                st.apps = st.apps.filter(a => a.id !== folder.id);
+                saveState();
+                return { dissolved: true };
+            }
+            saveState();
+            return { dissolved: false };
+        };
+
         // Exposed for the regression suite, which asserts payload correctness per type by
         // calling build() directly rather than driving 22 forms through the UI.
         window.QUICK_TEMPLATES = QUICK_TEMPLATES;
@@ -3458,7 +3667,9 @@
                 }
 
                 const state = window.OS_STATE;
-                const gridItems = state.apps.filter(a => a.type === 'grid');
+                // Codes inside a folder are not on the grid; folders are.
+                const gridItems = state.apps.filter(a =>
+                    (a.type === 'grid' && !a.folderId) || a.type === 'folder');
                 const itemsPerPage = state.gridCols * state.gridRows;
 
                 let targetPage = 0;
@@ -5042,6 +5253,85 @@
             }
         }
 
+        class OSFolderManager {
+            constructor() {
+                this.overlay = document.getElementById('folder-overlay');
+                this.grid = document.getElementById('folder-grid');
+                this.titleEl = document.getElementById('folder-title');
+                this.activeId = null;
+
+                // Backdrop only — a tap on a child must not close the folder underneath it.
+                this.overlay.addEventListener('click', (e) => { if (e.target === this.overlay) this.close(); });
+                this.titleEl.addEventListener('click', () => this.rename());
+            }
+
+            open(folderId) {
+                const folder = window.OS_STATE.apps.find(a => a.id === folderId && a.type === 'folder');
+                if (!folder) return;
+                this.activeId = folderId;
+                this.titleEl.textContent = folder.title || 'Folder';
+                this.render();
+                this.overlay.classList.remove('opacity-0', 'pointer-events-none');
+                this.overlay.classList.add('opacity-100', 'pointer-events-auto');
+            }
+
+            close() {
+                this.activeId = null;
+                this.overlay.classList.add('opacity-0', 'pointer-events-none');
+                this.overlay.classList.remove('opacity-100', 'pointer-events-auto');
+            }
+
+            isOpen() { return !this.overlay.classList.contains('pointer-events-none'); }
+
+            rename() {
+                const folder = window.OS_STATE.apps.find(a => a.id === this.activeId);
+                if (!folder) return;
+                window.InteractionManager.promptFor({
+                    heading: 'Name folder',
+                    value: folder.title || '',
+                    placeholder: 'e.g. Travel, Work',
+                    onSave: (text) => {
+                        folder.title = text || 'Folder';
+                        saveState();
+                        this.titleEl.textContent = folder.title;
+                        window.Renderer.render();
+                    }
+                });
+            }
+
+            render() {
+                const kids = window.folderChildren(this.activeId);
+                this.grid.innerHTML = '';
+
+                kids.forEach(kid => {
+                    const cell = document.createElement('div');
+                    cell.className = 'flex flex-col items-center gap-1.5 w-full';
+                    cell.innerHTML = `
+                        <button class="fdr-open w-[60px] h-[60px] rounded-[22.5%] bg-white p-2 shadow-lg active:scale-95 transition-transform overflow-hidden">
+                            <canvas id="fopen-${kid.id}" class="w-full h-full object-contain pixelated"></canvas>
+                        </button>
+                        <span class="app-label"></span>
+                        <button class="fdr-out tap-extend relative text-[10px] font-bold text-white/50 hover:text-white transition-colors">Take out</button>
+                    `;
+                    cell.querySelector('.app-label').textContent = kid.title;
+                    cell.querySelector('.fdr-open').addEventListener('click', () => {
+                        this.close();
+                        setTimeout(() => window.InteractionManager.openEnlarge(kid), 300);
+                    });
+                    cell.querySelector('.fdr-out').addEventListener('click', () => {
+                        const res = window.removeFromFolder(kid.id);
+                        haptic(12);
+                        window.Renderer.render();
+                        // Taking the second-to-last code out dissolves the folder, so there is
+                        // nothing left to show — close rather than render an empty shell.
+                        if (res.dissolved) this.close(); else this.render();
+                    });
+                    this.grid.appendChild(cell);
+                    window.renderCode(`fopen-${kid.id}`, kid, { scale: 3 });
+                });
+            }
+        }
+
         // --- INIT ---
         window.TimeEngine = new OSTimeEngine();
         window.Renderer = new OSRenderer();
@@ -5054,6 +5344,7 @@
         window.applyMotionPreference();
         window.SettingsManager = new OSSettingsManager();
         window.LibraryManager = new OSLibraryManager();
+        window.FolderManager = new OSFolderManager();
         window.SkinManager = new OSSkinManager();
         window.ThemeManager = new OSThemeManager();
         window.Layout = new LayoutManager(window.Renderer);

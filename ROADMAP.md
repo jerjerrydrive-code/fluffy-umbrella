@@ -24,11 +24,11 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 77 passing in ~85s):
+Built and covered by the regression suite (`npm test`, 82 passing in ~85s):
 
 | Area | State |
 |---|---|
-| Home screen | Paged icon grid, **named pages**, floating dock, physics drag-reorder, swipe-down search, edit mode |
+| Home screen | Paged icon grid, **folders**, **named pages**, floating dock, physics drag-reorder, swipe-down search, edit mode |
 | Codes | **22 Quick Add types in 4 categories**, **11-format browser**, **per-code colours with a scannability validator**, item viewer |
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, **scan-from-image**, **batch mode**, **12-type payload parser**, share |
 | Library | **Saved / Scanned / Created** switch, starred favourites, **multi-select bulk delete/export**, filter + sort |
@@ -140,8 +140,9 @@ payloads degrade to plain text with copy/share, never an error.
 ## Phase 4 — Organisation & Data Ownership 🔨 IN PROGRESS
 **Months 4–5 · Dec 2026–Jan 2027**
 
-- **Folders** on the home screen (drag one icon onto another — the physics engine already has the
-  hit-testing for it)
+- ~~**Folders**~~ ✅ drag an icon onto another and dwell to merge; a quick pass still
+  reorders. Membership is derived (codes carry a `folderId`, folders hold no child list), so
+  nothing can drift. Under two codes a folder dissolves; deleting one frees its contents
 - ~~**Named pages**~~ ✅ a chip above the page dots, editable in edit mode; syncs and is
   backed up. Page reordering still to do
 - **Tags + starred** codes, surfaced as Library filters
