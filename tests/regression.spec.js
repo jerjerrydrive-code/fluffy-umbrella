@@ -1263,3 +1263,144 @@ test.describe('Code styling and scannability (Phase 2)', () => {
         expect(painted.black && painted.white).toBe(true);
     });
 });
+
+test.describe('Payload parser (Phase 3)', () => {
+    test('classifies every payload type, and orders the rules correctly', async ({ page }) => {
+        // Extracted from an if-chain inside the scanner's success handler that mixed detection
+        // with DOM writes, so none of it was testable. Rule ORDER is the fragile part: specific
+        // prefixes must beat the loose bare-text heuristics, or MECARD: parses as plain text and
+        // a 13-digit product barcode parses as a phone number.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const r = await page.evaluate(() => {
+            const cases = {
+                url: 'https://example.com/x', bareDomain: 'example.com',
+                wifi: 'WIFI:S:MyNet;T:WPA;P:pw;;',
+                vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:Jane Doe\nEND:VCARD',
+                mecard: 'MECARD:N:Smith,John;;',
+                event: 'BEGIN:VEVENT\nSUMMARY:Standup\nEND:VEVENT',
+                geo: 'geo:51.5007,-0.1246', crypto: 'bitcoin:bc1qxyz?amount=0.5',
+                mailto: 'mailto:a@b.com', bareEmail: 'a@b.com',
+                tel: 'tel:+15551234567', barePhone: '+1 555 123 4567',
+                sms: 'sms:+15551234567',
+                ean13: '5012345678900', ean8: '12345678',
+                prose: 'just some words here', empty: ''
+            };
+            const out = {};
+            for (const [k, v] of Object.entries(cases)) out[k] = window.parsePayload(v);
+            return out;
+        });
+
+        expect(r.url.type).toBe('url');
+        expect(r.url.title).toBe('example.com');          // hostname, not the whole URL
+        expect(r.bareDomain.primary.href).toBe('https://example.com'); // scheme added
+        expect(r.wifi.type).toBe('wifi');
+        expect(r.wifi.fields.ssid).toBe('MyNet');         // regressed once: SSID came back empty
+        expect(r.vcard.type).toBe('vcard');
+        expect(r.vcard.fields.name).toBe('Jane Doe');
+        expect(r.mecard.type).toBe('mecard');             // must beat the plain-text fallback
+        expect(r.event.fields.summary).toBe('Standup');
+        expect(r.geo.type).toBe('geo');
+        expect(r.geo.primary.href).toContain('maps.google.com');
+        expect(r.crypto.type).toBe('crypto');
+        expect(r.mailto.type).toBe('email');
+        expect(r.bareEmail.primary.href).toBe('mailto:a@b.com');
+        expect(r.tel.type).toBe('phone');
+        expect(r.barePhone.type).toBe('phone');
+        expect(r.sms.type).toBe('sms');
+        expect(r.prose.type).toBe('text');
+        expect(r.empty.type).toBe('empty');
+
+        // Retail lengths must beat the phone heuristic, which would otherwise claim them.
+        expect(r.ean13.type).toBe('product');
+        expect(r.ean8.type).toBe('product');
+        expect(r.ean13.lookups.length).toBe(4);
+        expect(r.ean13.lookups[0].url).toContain('5012345678900');
+    });
+
+    test('the parser never navigates — it only describes', async ({ page }) => {
+        // Purity is what makes the rules above testable without a camera. If a branch ever
+        // reintroduces a side effect, this catches it.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const before = page.url();
+        await page.evaluate(() => {
+            ['https://example.com', 'tel:+15551234567', 'mailto:a@b.com', 'geo:1,2']
+                .forEach(t => window.parsePayload(t));
+        });
+        await page.waitForTimeout(300);
+        expect(page.url()).toBe(before);
+    });
+});
+
+test.describe('Generate → decode round trip (Phase 3)', () => {
+    test('a generated code decodes back to exactly what went in', async ({ page }) => {
+        // The strongest check in this suite: bwip-js encodes, html5-qrcode decodes the resulting
+        // image, and the text must survive unchanged. It covers the whole pipeline — payload
+        // building, rendering and reading — without needing a camera, and it is what makes the
+        // scan-from-image feature verifiable at all.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+
+        const results = await page.evaluate(async () => {
+            const payloads = [
+                'https://example.com/roundtrip',
+                'WIFI:S:MyNet;T:WPA;P:pw;;',
+                '5012345678900',
+                'BEGIN:VCARD\nVERSION:3.0\nFN:Jane Doe\nEND:VCARD'
+            ];
+            const out = [];
+            for (const text of payloads) {
+                const cv = document.createElement('canvas');
+                document.body.appendChild(cv);
+                bwipjs.toCanvas(cv, { bcid: 'qrcode', text, scale: 6, padding: 10,
+                                      backgroundcolor: 'ffffff', barcolor: '000000' });
+                const blob = await new Promise(res => cv.toBlob(res, 'image/png'));
+                cv.remove();
+
+                const host = document.createElement('div');
+                host.id = 'rt-host';
+                host.style.display = 'none';
+                document.body.appendChild(host);
+                try {
+                    const decoded = await new Html5Qrcode(host.id)
+                        .scanFile(new File([blob], 'c.png', { type: 'image/png' }), false);
+                    out.push({ text, decoded });
+                } catch (e) {
+                    out.push({ text, decoded: 'DECODE FAILED: ' + e });
+                } finally { host.remove(); }
+            }
+            return out;
+        });
+
+        for (const { text, decoded } of results) expect(decoded).toBe(text);
+    });
+
+    test('scan-from-image feeds a decoded photo through the same result path', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+
+        const shown = await page.evaluate(async () => {
+            const text = 'https://example.com/from-photo';
+            const cv = document.createElement('canvas');
+            document.body.appendChild(cv);
+            bwipjs.toCanvas(cv, { bcid: 'qrcode', text, scale: 6, padding: 10,
+                                  backgroundcolor: 'ffffff', barcolor: '000000' });
+            const blob = await new Promise(res => cv.toBlob(res, 'image/png'));
+            cv.remove();
+
+            await window.ScannerEngine.scanFromImage(new File([blob], 'photo.png', { type: 'image/png' }));
+            await new Promise(r => setTimeout(r, 600));
+            return {
+                data: document.getElementById('scan-result-data').innerText,
+                label: document.getElementById('scan-result-format').innerText,
+                parsedType: window.ScannerEngine.parsedResult && window.ScannerEngine.parsedResult.type
+            };
+        });
+
+        expect(shown.data).toBe('https://example.com/from-photo');
+        expect(shown.parsedType).toBe('url');
+        expect(shown.label).toContain('WEBSITE');
+    });
+});

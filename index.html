@@ -1097,6 +1097,10 @@
                 <i data-lucide="x" class="w-6 h-6"></i>
             </button>
             <div class="flex items-center gap-3">
+                <input type="file" id="scan-image-input" accept="image/*" class="hidden">
+                <button id="btn-scan-image" title="Scan an image" class="p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white pointer-events-auto">
+                    <i data-lucide="image" class="w-5 h-5"></i>
+                </button>
                 <button id="btn-switch-cam" class="p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white opacity-50" style="pointer-events: none;">
                     <i data-lucide="switch-camera" class="w-5 h-5"></i>
                 </button>
@@ -1119,6 +1123,7 @@
             <div class="bg-gray-50 rounded-[1.5rem] p-4 border border-gray-100 shadow-inner mt-2">
                 <p id="scan-result-data" class="text-gray-800 font-mono text-sm break-all max-h-32 overflow-y-auto hide-scrollbar"></p>
             </div>
+            <div id="scan-lookup-row" class="hidden flex gap-2 mt-3"></div>
             <div class="flex gap-3 mt-4">
                 <button id="btn-scan-discard" class="p-4 bg-gray-100 text-gray-500 rounded-2xl hover:bg-gray-200 active:scale-95 transition-all"><i data-lucide="rotate-ccw" class="w-5 h-5"></i></button>
                 <button id="btn-scan-copy" class="flex-1 py-3.5 bg-gray-100 text-gray-700 rounded-2xl font-bold hover:bg-gray-200 active:scale-95 transition-all text-[15px]">Copy</button>
@@ -1174,6 +1179,21 @@
          *    <select> is now a hidden input of the same id, so saveFromCustomForm and the
          *    scanner prefill kept working untouched — the browser is layered ON that
          *    contract, not a replacement for it.
+         *  - Payload parser (window.parsePayload) + scan-from-image — Phase 3, first slice.
+         *    Detection was an if-chain inside the scanner's success handler that mixed
+         *    matching with DOM writes and navigation, so none of it could be tested and
+         *    every new payload type meant another branch inside UI code. Now a PURE
+         *    function: it returns a type, a label and an href, and never navigates. That
+         *    is what makes 12 payload types testable on a machine with no camera.
+         *    RULE ORDER IS LOAD-BEARING: specific prefixes must be tried before the loose
+         *    bare-text heuristics, or MECARD: parses as plain text and a 13-digit retail
+         *    barcode parses as a phone number. Product barcodes (8/12/13 digits) get
+         *    lookup buttons rather than one action, since "what IS this" is the real
+         *    question and no single provider answers it best.
+         *  - Round-trip test: bwip-js encodes, html5-qrcode decodes the resulting PNG,
+         *    text must survive unchanged. Covers payload building, rendering AND reading
+         *    in one assertion, with no camera — and it is what makes scan-from-image
+         *    verifiable at all.
          *  - Code styling + scannability (window.checkScannability, window.renderCode):
          *    per-code fg/bg colours, drawn from the recovered palette so a code can match
          *    the accent the user picked. Two rules, and the SECOND is the one a naive
@@ -2615,6 +2635,124 @@
             }
         };
 
+        // ---------------------------------------------------------------------------------
+        //  PAYLOAD PARSER
+        //  Turns raw scanned text into what it MEANS, plus the one action a person actually wants.
+        //  Extracted from a long if-chain inside the scanner's success handler that interleaved
+        //  detection with DOM writes and side effects, so none of it could be tested and every new
+        //  payload type meant another branch in the middle of UI code.
+        //
+        //  Deliberately PURE: it returns an href and a label, it never navigates. That keeps every
+        //  rule below testable without a camera, which matters because this device has none.
+        //
+        //  Order is significant — the specific prefixes must be tried before the loose bare-text
+        //  heuristics, or "MECARD:N:..." gets matched as plain text and a bare 13-digit product
+        //  barcode gets matched as a phone number.
+        // ---------------------------------------------------------------------------------
+        const PRODUCT_LOOKUPS = [
+            { name: 'Google',     url: (c) => `https://www.google.com/search?q=${c}` },
+            { name: 'Amazon',     url: (c) => `https://www.amazon.com/s?k=${c}` },
+            { name: 'eBay',       url: (c) => `https://www.ebay.com/sch/i.html?_nkw=${c}` },
+            { name: 'DuckDuckGo', url: (c) => `https://duckduckgo.com/?q=${c}` }
+        ];
+
+        window.parsePayload = function(raw) {
+            const data = String(raw == null ? '' : raw).trim();
+            const lower = data.toLowerCase();
+            const hit = (type, label, icon, primary, extra) =>
+                Object.assign({ type, label, icon, primary: primary || null, raw: data }, extra || {});
+
+            if (!data) return hit('empty', 'EMPTY', 'file-question', null, { title: '' });
+
+            // --- explicit schemes and structured formats, most specific first ---
+            if (lower.startsWith('wifi:')) {
+                // Match fields against the body with the WIFI: prefix removed. Anchoring on
+                // (?:^|;) against the FULL string silently failed for the first field, because
+                // S: there follows the prefix colon rather than the start or a semicolon — the
+                // SSID came back empty for every network.
+                const body = data.slice(5);
+                const field = (k) => (body.match(new RegExp(`(?:^|;)${k}:((?:[^;\\\\]|\\\\.)*)`, 'i')) || [])[1] || '';
+                const ssid = field('S').replace(/\\(.)/g, '$1');
+                return hit('wifi', 'WI-FI NETWORK', 'wifi', null,
+                    { fields: { ssid, security: field('T') || 'WPA' }, title: ssid });
+            }
+            if (lower.startsWith('begin:vcard')) {
+                const name = (data.match(/(?:^|\n)FN:(.*)/i) || [])[1] || '';
+                return hit('vcard', 'CONTACT CARD', 'user-round', null,
+                    { fields: { name: name.trim() }, title: name.trim() || 'Contact' });
+            }
+            if (lower.startsWith('mecard:')) {
+                const name = (data.match(/N:([^;]*)/i) || [])[1] || '';
+                return hit('mecard', 'CONTACT CARD', 'user-round', null,
+                    { fields: { name: name.trim() }, title: name.trim() || 'Contact' });
+            }
+            if (lower.startsWith('begin:vevent')) {
+                const summary = (data.match(/(?:^|\n)SUMMARY:(.*)/i) || [])[1] || '';
+                return hit('event', 'CALENDAR EVENT', 'calendar', null,
+                    { fields: { summary: summary.trim() }, title: summary.trim() || 'Event' });
+            }
+            if (lower.startsWith('geo:')) {
+                const [lat, lng] = data.slice(4).split(',');
+                return hit('geo', 'LOCATION', 'map-pin',
+                    { label: 'Open in Maps', icon: 'map', href: `https://maps.google.com/?q=${encodeURIComponent(lat + ',' + (lng || ''))}` },
+                    { fields: { lat, lng }, title: `${lat}, ${lng || ''}` });
+            }
+            if (/^(bitcoin|ethereum|litecoin|dogecoin):/i.test(data)) {
+                const coin = lower.split(':')[0];
+                return hit('crypto', coin.toUpperCase() + ' ADDRESS', 'bitcoin', null,
+                    { fields: { coin }, title: coin.charAt(0).toUpperCase() + coin.slice(1) });
+            }
+            if (lower.startsWith('mailto:')) {
+                return hit('email', 'EMAIL ADDRESS', 'mail',
+                    { label: 'Send Email', icon: 'mail', href: data },
+                    { title: data.slice(7).split('?')[0] });
+            }
+            if (lower.startsWith('smsto:') || lower.startsWith('sms:')) {
+                const num = data.replace(/^(smsto|sms):/i, '').split(/[?:]/)[0];
+                return hit('sms', 'TEXT MESSAGE', 'message-square',
+                    { label: 'Send Message', icon: 'message-square', href: `sms:${num}` }, { title: num });
+            }
+            if (lower.startsWith('tel:')) {
+                const num = data.slice(4);
+                return hit('phone', 'PHONE NUMBER', 'phone',
+                    { label: 'Call', icon: 'phone', href: `tel:${num}` }, { title: num });
+            }
+            if (/^https?:\/\//i.test(data)) {
+                let host = data;
+                try { host = new URL(data).hostname.replace(/^www\./, ''); } catch (e) {}
+                return hit('url', 'WEBSITE', 'globe',
+                    { label: 'Open Link', icon: 'external-link', href: data }, { title: host });
+            }
+
+            // --- bare text heuristics, loosest last ---
+            // Retail barcode lengths: EAN-8, UPC-A, EAN-13. Checked BEFORE the phone heuristic,
+            // which would otherwise claim any 12-13 digit string.
+            if (/^\d+$/.test(data) && [8, 12, 13].includes(data.length)) {
+                return hit('product', 'PRODUCT BARCODE', 'package', null, {
+                    title: data,
+                    lookups: PRODUCT_LOOKUPS.map(l => ({ name: l.name, url: l.url(encodeURIComponent(data)) }))
+                });
+            }
+            if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data)) {
+                return hit('email', 'EMAIL ADDRESS', 'mail',
+                    { label: 'Send Email', icon: 'mail', href: `mailto:${data}` }, { title: data });
+            }
+            if (/^[+]?[\d\s().-]{7,20}$/.test(data) && /\d{7,}/.test(data.replace(/\D/g, ''))) {
+                return hit('phone', 'PHONE NUMBER', 'phone',
+                    { label: 'Call', icon: 'phone', href: `tel:${data.replace(/\s/g, '')}` }, { title: data });
+            }
+            // A bare domain like "example.com" — worth offering, but only when it really looks
+            // like one, so ordinary prose with a full stop is not turned into a link.
+            if (/^[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i.test(data) && !data.includes(' ')) {
+                return hit('url', 'WEBSITE', 'globe',
+                    { label: 'Open Link', icon: 'external-link', href: 'https://' + data },
+                    { title: data.split('/')[0] });
+            }
+
+            return hit('text', 'TEXT', 'type', null,
+                { title: data.length > 24 ? data.slice(0, 24) + '…' : data });
+        };
+
         // Exposed for the regression suite, which asserts payload correctness per type by
         // calling build() directly rather than driving 22 forms through the UI.
         window.QUICK_TEMPLATES = QUICK_TEMPLATES;
@@ -3083,6 +3221,13 @@
                 document.getElementById('btn-toggle-flash').addEventListener('click', () => this.toggleFlash());
                 document.getElementById('btn-switch-cam').addEventListener('click', () => this.switchCamera());
 
+                const imgInput = document.getElementById('scan-image-input');
+                document.getElementById('btn-scan-image').addEventListener('click', () => imgInput.click());
+                imgInput.addEventListener('change', (e) => {
+                    const f = e.target.files[0];
+                    e.target.value = '';   // so picking the same file twice still fires
+                    this.scanFromImage(f);
+                });
                 document.getElementById('btn-scan-discard').addEventListener('click', () => this.resetScan());
                 document.getElementById('btn-scan-copy').addEventListener('click', () => {
                     if (this.currentResult) {
@@ -3338,71 +3483,35 @@
 
                 this.currentFormat = bcid;
                 
-                // Smart Data Parsing Engine
-                let parsedType = 'TEXT';
-                let actionText = 'Save';
-                let actionIcon = 'save';
-                let actionCallback = () => {
-                    this.stop();
-                    window.CodeGenerator.open(this.currentResult, this.currentFormat);
-                };
+                // Detection lives in window.parsePayload — pure, ordered and tested. This block
+                // only turns that verdict into UI, which is the split the old if-chain lacked.
+                const parsed = window.parsePayload(data);
+                this.parsedResult = parsed;
 
-                const urlRegex = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
-                if (urlRegex.test(data)) {
-                    parsedType = 'WEBSITE';
-                    actionText = 'Open Link';
-                    actionIcon = 'external-link';
-                    actionCallback = () => {
-                        let link = data;
-                        if (!link.startsWith('http://') && !link.startsWith('https://')) link = 'https://' + link;
-                        window.open(link, '_blank');
-                        this.stop();
-                    };
-                }
-                
-                if (data.startsWith('WIFI:')) {
-                    parsedType = 'WI-FI NETWORK';
-                    actionText = 'Copy Password';
-                    actionIcon = 'wifi';
-                    actionCallback = () => {
-                        const passMatch = data.match(/P:(.*?);/);
-                        if (passMatch && passMatch[1]) {
-                            let textArea = document.createElement("textarea");
-                            textArea.value = passMatch[1];
-                            textArea.style.position = "fixed"; textArea.style.left = "-999999px";
-                            document.body.appendChild(textArea);
-                            textArea.focus(); textArea.select();
-                            try { document.execCommand('copy'); window.showToast('Password Copied!'); } catch(e){}
-                            textArea.remove();
-                        } else {
-                            window.showToast('No password found in code.');
-                        }
-                    };
+                const actionText = parsed.primary ? parsed.primary.label : 'Save';
+                const actionIcon = parsed.primary ? parsed.primary.icon : 'save';
+                const actionCallback = parsed.primary
+                    ? () => { window.open(parsed.primary.href, '_blank', 'noopener'); }
+                    : () => { window.CodeGenerator.open(data, this.currentFormat); this.stop(); };
+
+                // Product barcodes get lookup buttons instead of one action — the useful question
+                // for a retail code is "what IS this", and no single provider answers that best.
+                const row = document.getElementById('scan-lookup-row');
+                if (row) {
+                    row.innerHTML = '';
+                    row.classList.toggle('hidden', !parsed.lookups);
+                    (parsed.lookups || []).forEach(l => {
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'tap-extend flex-1 py-2.5 px-2 bg-gray-100 hover:bg-gray-200 rounded-xl text-[12px] font-bold text-gray-700 transition-colors';
+                        btn.textContent = l.name;
+                        btn.addEventListener('click', () => window.open(l.url, '_blank', 'noopener'));
+                        row.appendChild(btn);
+                    });
                 }
 
-                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-                if (emailRegex.test(data) || data.toLowerCase().startsWith('mailto:')) {
-                    parsedType = 'EMAIL ADDRESS';
-                    actionText = 'Send Email';
-                    actionIcon = 'mail';
-                    actionCallback = () => {
-                        let mailto = data.toLowerCase().startsWith('mailto:') ? data : `mailto:${data}`;
-                        window.location.href = mailto;
-                        this.stop();
-                    };
-                }
 
-                if (data.toLowerCase().startsWith('tel:')) {
-                    parsedType = 'PHONE NUMBER';
-                    actionText = 'Call Number';
-                    actionIcon = 'phone';
-                    actionCallback = () => {
-                        window.location.href = data;
-                        this.stop();
-                    };
-                }
-
-                this.formatLabel.innerHTML = `${formatDisplay} <span class="accent-text font-black text-xs ml-2 uppercase tracking-widest accent-bg-soft px-2 py-0.5 rounded-md">${parsedType}</span>`;
+                this.formatLabel.innerHTML = `${formatDisplay} <span class="accent-text font-black text-xs ml-2 uppercase tracking-widest accent-bg-soft px-2 py-0.5 rounded-md">${parsed.label}</span>`;
                 this.dataView.innerText = data;
                 
                 this.actionBtn.innerHTML = `<i data-lucide="${actionIcon}" class="w-4 h-4 inline-block mr-1"></i> ${actionText}`;
@@ -3416,6 +3525,34 @@
                 setTimeout(() => {
                     this.sheet.classList.remove('translate-y-full');
                 }, 300);
+            }
+
+            // Decode a code out of a saved photo or screenshot. Uses html5-qrcode's scanFile on
+            // a SEPARATE hidden element rather than the live camera host, because that element is
+            // mid-stream whenever the camera is running and reusing it tears the stream down.
+            async scanFromImage(file) {
+                if (!file) return;
+                this.setStatus('Reading image...');
+                const host = document.createElement('div');
+                host.id = 'scan-file-host';
+                host.style.display = 'none';
+                document.body.appendChild(host);
+                let text;
+                try {
+                    text = await new Html5Qrcode(host.id).scanFile(file, false);
+                } catch (e) {
+                    XanLogger.warn('No code found in image', e && e.message);
+                    this.setStatus('No code found in that image.', true);
+                    window.showToast('No code found in that image.', 'error');
+                    return;
+                } finally {
+                    host.remove();
+                }
+                // Deliberately OUTSIDE the try. Handling the result inside it meant any bug in
+                // handleSuccess was caught by the decode handler and reported as "no code found"
+                // — which is exactly how this was first written, and it hid a plain typo in the
+                // method name behind a plausible-looking user-facing message.
+                this.handleSuccess(text, 'QR_CODE');
             }
 
             async stop() {
