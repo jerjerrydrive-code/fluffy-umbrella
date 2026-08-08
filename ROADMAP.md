@@ -24,14 +24,14 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 55 passing in ~59s):
+Built and covered by the regression suite (`npm test`, 60 passing in ~60s):
 
 | Area | State |
 |---|---|
 | Home screen | Paged icon grid, floating dock, physics drag-reorder, swipe-down search, edit mode |
 | Codes | **22 Quick Add types in 4 categories**, **11-format browser**, **per-code colours with a scannability validator**, item viewer |
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, **scan-from-image**, **12-type payload parser with contextual actions** |
-| Library | Browse-all view: filter + sort by Recent / Name / Format |
+| Library | **Saved / Scanned / Created** switch, filter + sort by Recent / Name / Format |
 | Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin, WCAG-measured accent text |
 | Skins | **6** — `dock`, `scancard`, `glass`, `soft`, `aurora`, `classic`, all over one DOM via `OSSkinManager` |
 | Settings | Grid density, auto-arrange, wallpaper, accent, skin, **Vibration & Animations switches** |
@@ -120,9 +120,10 @@ test (generate → decode → compare). Aztec stays the default everywhere (HARD
 ## Phase 3 — The Scan Engine 🔨 IN PROGRESS
 **Months 3–4 · Nov–Dec 2026**
 
-- **Batch scanning** — continuous mode, running list, multi-select, save-all
+- ~~**Batch scanning**~~ ✅ continuous mode, running tray with per-item removal, save-all
 - ~~**Scan from image**~~ ✅ pick a photo or screenshot; decoded via `scanFile`
-- **History** split **Scanned** vs **Created**, with timestamps and starred favourites
+- ~~**History** split **Scanned** vs **Created**~~ ✅ with relative timestamps, capped at 200,
+  device-local by construction. Starred favourites still to do
 - ~~**Contextual result actions**~~ ✅ `window.parsePayload` classifies 12 types (URL, bare
   domain, WiFi, vCard, MECARD, calendar event, geo, crypto, email, phone, SMS, retail barcode,
   plain text) and returns the one action worth offering. Product barcodes get **"search info in"**

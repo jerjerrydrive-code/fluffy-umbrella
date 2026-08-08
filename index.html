@@ -68,16 +68,16 @@
             background-repeat: no-repeat;
         }
 
-        /* Library sort pills. Active state is accent-driven per HARD RULE 7 — no hardcoded hex. */
-        .library-sort-btn {
+        /* Library source + sort pills. Active state is accent-driven per HARD RULE 7. */
+        .library-sort-btn, .library-src-btn {
             position: relative;
             padding: 0.4rem 0.9rem; border-radius: 999px; font-size: 12.5px; font-weight: 700;
             letter-spacing: 0.01em; color: rgba(255,255,255,0.55);
             background: rgba(255,255,255,0.08); border: 1px solid transparent;
             transition: transform 0.2s var(--spring-snappy), background-color 0.2s ease, color 0.2s ease;
         }
-        .library-sort-btn:active { transform: scale(0.94); }
-        .library-sort-btn.active {
+        .library-sort-btn:active, .library-src-btn:active { transform: scale(0.94); }
+        .library-sort-btn.active, .library-src-btn.active {
             color: var(--accent);
             background-color: color-mix(in srgb, var(--accent) 16%, transparent);
             border-color: color-mix(in srgb, var(--accent) 35%, transparent);
@@ -833,6 +833,7 @@
                 <i data-lucide="search" class="w-[18px] h-[18px] text-white/40 mr-2.5 shrink-0"></i>
                 <input type="text" id="library-search" class="bg-transparent text-white w-full h-11 outline-none placeholder:text-white/40 font-medium text-[15px]" placeholder="Filter by name, data or format">
             </div>
+            <div class="flex gap-2" id="library-source-row"></div>
             <div class="flex gap-2" id="library-sort-row">
                 <button class="library-sort-btn tap-extend active" data-sort="recent">Recent</button>
                 <button class="library-sort-btn tap-extend" data-sort="name">Name</button>
@@ -1098,6 +1099,10 @@
             </button>
             <div class="flex items-center gap-3">
                 <input type="file" id="scan-image-input" accept="image/*" class="hidden">
+                <button id="btn-scan-batch" title="Batch mode" class="relative p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white pointer-events-auto">
+                    <i data-lucide="layers" class="w-5 h-5"></i>
+                    <span id="scan-batch-count" class="hidden absolute -top-1 -right-1 min-w-[20px] h-5 px-1 accent-bg accent-on-accent text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-transparent shadow-md">0</span>
+                </button>
                 <button id="btn-scan-image" title="Scan an image" class="p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white pointer-events-auto">
                     <i data-lucide="image" class="w-5 h-5"></i>
                 </button>
@@ -1108,6 +1113,17 @@
                     <i data-lucide="zap" class="w-5 h-5"></i>
                 </button>
             </div>
+        </div>
+        <div id="scanner-batch-tray" class="hidden absolute bottom-0 left-0 right-0 z-40 bg-white rounded-t-[2rem] p-6 pb-10 shadow-[0_-20px_50px_rgba(0,0,0,0.3)] flex flex-col gap-3">
+            <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto"></div>
+            <div class="flex items-center justify-between">
+                <h3 class="text-gray-900 font-bold text-lg tracking-tight">Batch <span id="batch-title-count" class="text-gray-400 font-semibold"></span></h3>
+                <button id="btn-batch-clear" class="text-gray-500 font-bold text-sm active:opacity-60">Clear</button>
+            </div>
+            <div id="batch-list" class="flex flex-col gap-2 max-h-56 overflow-y-auto hide-scrollbar"></div>
+            <button id="btn-batch-save" class="w-full py-4 accent-bg accent-on-accent rounded-2xl font-bold active:scale-[0.98] transition-all shadow-lg flex justify-center items-center gap-2">
+                <i data-lucide="save" class="w-5 h-5"></i> Save all
+            </button>
         </div>
         <div id="scanner-result-sheet" class="absolute bottom-0 left-0 right-0 z-30 bg-white rounded-t-[2rem] p-6 pb-10 transform translate-y-full transition-transform duration-500 shadow-[0_-20px_50px_rgba(0,0,0,0.3)] flex flex-col gap-4">
             <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-2"></div>
@@ -1190,6 +1206,24 @@
          *    barcode parses as a phone number. Product barcodes (8/12/13 digits) get
          *    lookup buttons rather than one action, since "what IS this" is the real
          *    question and no single provider answers it best.
+         *  - History (OS_STATE.history, window.recordHistory) + batch scanning — Phase 3.
+         *    History is SEPARATE from OS_STATE.apps on purpose: the home screen is a space
+         *    a person curates, history is an append-only log they never asked to maintain.
+         *    Merging them would litter the grid with every incidental scan. Capped at
+         *    HISTORY_LIMIT (200) because a scanning session fills fast and an uncapped log
+         *    grows until a save throws QuotaExceededError and takes the rest of OS_STATE
+         *    with it. NOT synced — the Firestore payload is an explicit allowlist, so it
+         *    is device-local by construction (same reasoning as wallpaper, HARD RULE 4),
+         *    and a test asserts the key never appears there.
+         *    saveCode() takes a `source`: a code read by the camera is SCANNED even when
+         *    it is saved to the home screen. Recording it in both places made every batch
+         *    item show up under Scanned AND Created simultaneously.
+         *    The Library gained a Saved / Scanned / Created switch — one flat control, not
+         *    nested tabs, since "which list is this" is a single question.
+         *    Batch mode intercepts in handleSuccess BEFORE any single-result work: camera
+         *    keeps running, results accumulate, nothing is logged until Save all, so a
+         *    code removed from the tray never reaches the log. Dedupe is essential rather
+         *    than nice — a camera re-reads one label many times a second.
          *  - Round-trip test: bwip-js encodes, html5-qrcode decodes the resulting PNG,
          *    text must survive unchanged. Covers payload building, rendering AND reading
          *    in one assertion, with no camera — and it is what makes scan-from-image
@@ -1395,7 +1429,7 @@
         const DEFAULT_STATE = {
             currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: false,
             gridSize: 'auto', wallpaper: null, skin: 'dock', accent: '#3b82f6',
-            haptics: true, animations: true,
+            haptics: true, animations: true, history: [],
             apps: [
                 { id: 'bc_1', title: 'My WiFi', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'WIFI:S:MyNetwork;T:WPA;P:Password;;' },
                 { id: 'bc_2', title: 'Website', type: 'grid', page: 0, order: 1, bcid: 'azteccode', data: 'https://neodrag.dev' },
@@ -1421,6 +1455,7 @@
             if(!window.OS_STATE.accent) window.OS_STATE.accent = '#3b82f6';
             if(window.OS_STATE.haptics === undefined) window.OS_STATE.haptics = true;
             if(window.OS_STATE.animations === undefined) window.OS_STATE.animations = true;
+            if(!Array.isArray(window.OS_STATE.history)) window.OS_STATE.history = [];
             
             window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== 'sys_settings');
             
@@ -2753,6 +2788,54 @@
                 { title: data.length > 24 ? data.slice(0, 24) + '…' : data });
         };
 
+        // ---------------------------------------------------------------------------------
+        //  HISTORY
+        //  Every code this device has scanned or created, whether or not it was kept on the home
+        //  screen. Deliberately SEPARATE from OS_STATE.apps: the home screen is a curated space a
+        //  person arranges, while history is an append-only log they did not ask to maintain.
+        //  Conflating them would mean every incidental scan littering the grid.
+        //
+        //  Capped at HISTORY_LIMIT because localStorage is finite and a scanning session can add
+        //  entries fast — this is a log, not an archive, and the cap is what stops it quietly
+        //  growing until a save throws QuotaExceededError and takes the rest of the state with it.
+        //
+        //  NOT synced to Firestore. Same reasoning as the wallpaper (HARD RULE 4): it is bulky,
+        //  device-local by nature, and nobody needs their laptop to know what their phone scanned.
+        // ---------------------------------------------------------------------------------
+        const HISTORY_LIMIT = 200;
+
+        window.recordHistory = function(entry) {
+            try {
+                const state = window.OS_STATE;
+                if (!state) return null;
+                if (!Array.isArray(state.history)) state.history = [];
+                if (!entry || !entry.data) return null;
+
+                // Re-scanning the same code should refresh its position, not stack duplicates —
+                // pointing a camera at one label twice is the normal case, not a new event.
+                const dupe = state.history.findIndex(h => h.data === entry.data && h.source === entry.source);
+                const starred = dupe !== -1 ? state.history[dupe].starred : false;
+                if (dupe !== -1) state.history.splice(dupe, 1);
+
+                state.history.unshift({
+                    id: 'h_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+                    data: entry.data,
+                    bcid: entry.bcid || 'qrcode',
+                    title: entry.title || (window.parsePayload(entry.data).title || 'Code'),
+                    source: entry.source === 'created' ? 'created' : 'scanned',
+                    ts: Date.now(),
+                    starred: !!starred
+                });
+                if (state.history.length > HISTORY_LIMIT) state.history.length = HISTORY_LIMIT;
+                saveState();
+                return state.history[0];
+            } catch (e) {
+                // History is a convenience. It must never be able to break scanning or saving.
+                XanLogger.warn('History record failed', e && e.message);
+                return null;
+            }
+        };
+
         // Exposed for the regression suite, which asserts payload correctness per type by
         // calling build() directly rather than driving 22 forms through the UI.
         window.QUICK_TEMPLATES = QUICK_TEMPLATES;
@@ -3134,7 +3217,10 @@
                 this.panel.classList.remove('translate-y-0', 'scale-100');
             }
 
-            saveCode(title, data, bcid, style = null) {
+            // `source` says how this code came to exist. A code read by the camera is
+            // SCANNED even when it is then saved to the home screen — logging it as both
+            // made every batch item appear in the Scanned and Created lists at once.
+            saveCode(title, data, bcid, style = null, source = 'created') {
                 if (!title || !data) {
                     window.showToast('Please fill all fields', 'error');
                     return;
@@ -3181,6 +3267,7 @@
                 };
 
                 window.OS_STATE.apps.push(newItem);
+                window.recordHistory({ data, bcid, title, source });
                 saveState();
 
                 this.close();
@@ -3221,6 +3308,11 @@
                 document.getElementById('btn-toggle-flash').addEventListener('click', () => this.toggleFlash());
                 document.getElementById('btn-switch-cam').addEventListener('click', () => this.switchCamera());
 
+                this.batchMode = false;
+                this.batch = [];
+                document.getElementById('btn-scan-batch').addEventListener('click', () => this.toggleBatch());
+                document.getElementById('btn-batch-save').addEventListener('click', () => this.saveBatch());
+                document.getElementById('btn-batch-clear').addEventListener('click', () => { this.batch = []; this.renderBatch(); });
                 const imgInput = document.getElementById('scan-image-input');
                 document.getElementById('btn-scan-image').addEventListener('click', () => imgInput.click());
                 imgInput.addEventListener('change', (e) => {
@@ -3458,11 +3550,33 @@
                 this.startCameraFlow();
             }
 
+            // One place mapping a decoder format name to a bwip-js bcid. Batch and single
+            // scanning both need it, and they must not disagree about what was read.
+            formatToBcid(format) {
+                const f = (format || '').toUpperCase();
+                if (f === 'CODE_128' || f === 'CODE_39') return 'code128';
+                if (f === 'DATA_MATRIX') return 'datamatrix';
+                if (f === 'PDF_417') return 'pdf417';
+                if (f === 'AZTEC') return 'azteccode';
+                if (f === 'EAN_13' || f === 'UPC_A') return 'code128';
+                return 'qrcode';
+            }
+
             handleSuccess(data, format) {
+                // Batch intercepts BEFORE any of the single-result work: no camera stop, no
+                // result sheet, no history write yet (that happens on Save all, so a code
+                // removed from the tray never reaches the log).
+                if (this.batchMode) {
+                    const added = this.addToBatch(data, this.formatToBcid(format));
+                    if (added) this.setStatus(`${this.batch.length} in batch — keep scanning.`);
+                    this.isProcessing = false;
+                    return;
+                }
                 haptic([40, 60, 40]);
 
                 this.stopCamera();
                 this.currentResult = data;
+                window.recordHistory({ data, bcid: this.currentFormat || 'qrcode', source: 'scanned' });
 
                 document.getElementById('scanner-cutout').classList.add('scanner-frame-active');
                 document.getElementById('scanner-laser').classList.add('hidden');
@@ -3471,7 +3585,7 @@
                     document.getElementById(`corner-${i}`).classList.replace('border-white/90', 'border-green-400');
                 }
 
-                let bcid = 'qrcode';
+                let bcid = this.formatToBcid(format);
                 let formatDisplay = 'QR Code';
                 const f = (format || '').toUpperCase();
                 if (f === 'CODE_128') { bcid = 'code128'; formatDisplay = 'Code 128'; }
@@ -3525,6 +3639,82 @@
                 setTimeout(() => {
                     this.sheet.classList.remove('translate-y-full');
                 }, 300);
+            }
+
+            // Batch mode. Normal scanning stops the camera on the first hit and shows one
+            // result; in batch the camera keeps running and results accumulate, which is the
+            // difference between reading one label and inventorying a shelf.
+            toggleBatch() {
+                this.batchMode = !this.batchMode;
+                haptic(12);
+                document.getElementById('btn-scan-batch').classList.toggle('accent-bg', this.batchMode);
+                if (this.batchMode) {
+                    this.setStatus('Batch mode — keep scanning.');
+                } else {
+                    this.batch = [];
+                    this.renderBatch();
+                    this.setStatus('Point at a code.');
+                }
+            }
+
+            addToBatch(data, bcid) {
+                if (!this.batch) this.batch = [];
+                // A camera sees the same label many times a second, so dedupe is not a nicety —
+                // without it one code fills the tray before you can move the phone.
+                if (this.batch.some(b => b.data === data)) return false;
+                const parsed = window.parsePayload(data);
+                this.batch.push({ data, bcid: bcid || 'qrcode', title: parsed.title || 'Code' });
+                haptic(25);
+                this.renderBatch();
+                return true;
+            }
+
+            renderBatch() {
+                const tray = document.getElementById('scanner-batch-tray');
+                const list = document.getElementById('batch-list');
+                const badge = document.getElementById('scan-batch-count');
+                const n = (this.batch || []).length;
+
+                badge.textContent = String(n);
+                badge.classList.toggle('hidden', n === 0);
+                document.getElementById('batch-title-count').textContent = n ? `· ${n}` : '';
+                tray.classList.toggle('hidden', !(this.batchMode && n > 0));
+
+                list.innerHTML = '';
+                (this.batch || []).forEach((b, i) => {
+                    const row = document.createElement('div');
+                    row.className = 'flex items-center gap-3 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2.5';
+                    row.innerHTML = `
+                        <span class="text-[10px] font-black text-gray-400 w-5 shrink-0">${i + 1}</span>
+                        <span class="flex-1 min-w-0">
+                            <span class="block font-bold text-[13px] text-gray-900 truncate"></span>
+                            <span class="block text-[11px] text-gray-500 font-mono truncate"></span>
+                        </span>
+                        <button class="tap-extend relative p-1.5 text-gray-400 hover:text-red-500 shrink-0"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    `;
+                    // textContent for scanned values (HARD RULE 9 — untrusted input).
+                    row.querySelectorAll('span span')[0].textContent = b.title;
+                    row.querySelectorAll('span span')[1].textContent = b.data;
+                    row.querySelector('button').addEventListener('click', () => {
+                        this.batch.splice(i, 1);
+                        this.renderBatch();
+                    });
+                    list.appendChild(row);
+                });
+                safeCreateIcons();
+            }
+
+            saveBatch() {
+                const items = this.batch || [];
+                if (!items.length) return;
+                // saveCode does the history write, tagged 'scanned' — recording it here as well
+                // logged every item twice, once under each source.
+                items.forEach(b => window.CodeGenerator.saveCode(b.title, b.data, b.bcid, null, 'scanned'));
+                const n = items.length;
+                this.batch = [];
+                this.renderBatch();
+                window.showToast(`Saved ${n} ${n === 1 ? 'code' : 'codes'}`);
+                this.stop();
             }
 
             // Decode a code out of a saved photo or screenshot. Uses html5-qrcode's scanFile on
@@ -4089,6 +4279,10 @@
                     const ref = doc(db, 'xancode_users', this.currentUser.uid, 'state', 'home');
                     // Wallpaper is deliberately excluded — see HARD RULE 4.
                     await setDoc(ref, {
+                        // NB: history is deliberately absent. The payload is an explicit
+                        // allowlist, so it stays device-local by construction rather than
+                        // by anyone remembering to strip it (same reasoning as wallpaper,
+                        // HARD RULE 4 — bulky, device-local, and of no use on another device).
                         apps: window.OS_STATE.apps,
                         gridSize: window.OS_STATE.gridSize,
                         autoArrange: window.OS_STATE.autoArrange,
@@ -4220,8 +4414,10 @@
                 this.countEl = document.getElementById('library-count');
                 this.searchInput = document.getElementById('library-search');
                 this.sortRow = document.getElementById('library-sort-row');
+                this.sourceRow = document.getElementById('library-source-row');
                 this.sort = 'recent';
                 this.query = '';
+                this.source = 'saved';   // saved | scanned | created
 
                 document.getElementById('btn-close-library').addEventListener('click', () => this.close());
                 this.searchInput.addEventListener('input', (e) => {
@@ -4244,9 +4440,49 @@
                 });
             }
 
+            // saved = the curated home screen; scanned/created = the append-only history log.
+            // One flat control rather than nested tabs, because "which list am I looking at" is a
+            // single question and stacking two tab strips to answer it reads as a maze.
+            renderSourceRow() {
+                if (!this.sourceRow) return;
+                const sources = [
+                    { id: 'saved', label: 'Saved' },
+                    { id: 'scanned', label: 'Scanned' },
+                    { id: 'created', label: 'Created' }
+                ];
+                this.sourceRow.innerHTML = '';
+                sources.forEach(src => {
+                    const btn = document.createElement('button');
+                    btn.className = 'library-src-btn tap-extend' + (src.id === this.source ? ' active' : '');
+                    btn.dataset.source = src.id;
+                    btn.textContent = src.label;
+                    btn.addEventListener('click', () => {
+                        if (this.source === src.id) return;
+                        this.source = src.id;
+                        haptic(8);
+                        this.renderSourceRow();
+                        this.renderList();
+                    });
+                    this.sourceRow.appendChild(btn);
+                });
+            }
+
+            // History entries are shaped like grid items on the way out, so every consumer —
+            // the row renderer, renderCode, the item viewer — works on both without branching.
+            sourceItems() {
+                if (this.source === 'saved') {
+                    return window.OS_STATE.apps.filter(a => a.type === 'grid');
+                }
+                return (window.OS_STATE.history || [])
+                    .filter(h => h.source === this.source)
+                    .map(h => ({ id: h.id, title: h.title, data: h.data, bcid: h.bcid,
+                                 type: 'grid', createdAt: h.ts, starred: h.starred, fromHistory: true }));
+            }
+
             open() {
                 this.searchInput.value = '';
                 this.query = '';
+                this.renderSourceRow();
                 this.renderList();
                 this.overlay.classList.remove('opacity-0', 'pointer-events-none');
                 this.overlay.classList.add('opacity-100', 'pointer-events-auto');
@@ -4273,7 +4509,7 @@
 
             collect() {
                 const q = this.query.trim().toLowerCase();
-                let items = window.OS_STATE.apps.filter(a => a.type === 'grid');
+                let items = this.sourceItems();
 
                 if (q) {
                     items = items.filter(a =>
@@ -4293,13 +4529,27 @@
                 return items;
             }
 
+            // A saved code lives on a home-screen page, so "Page 2" is the useful fact. A history
+            // entry does not — it showed "Page 1" for everything, which is worse than showing
+            // nothing. For those, when it happened is the fact that matters.
+            rowMeta(app) {
+                if (!app.fromHistory) return `Page ${(app.page || 0) + 1}`;
+                const mins = Math.floor((Date.now() - (app.createdAt || 0)) / 60000);
+                if (mins < 1) return 'Just now';
+                if (mins < 60) return `${mins}m ago`;
+                const hrs = Math.floor(mins / 60);
+                if (hrs < 24) return `${hrs}h ago`;
+                return `${Math.floor(hrs / 24)}d ago`;
+            }
+
             renderList() {
                 const items = this.collect();
-                const total = window.OS_STATE.apps.filter(a => a.type === 'grid').length;
+                const total = this.sourceItems().length;
 
+                const noun = total === 1 ? 'code' : 'codes';
                 this.countEl.textContent = this.query.trim()
-                    ? `${items.length} of ${total} ${total === 1 ? 'code' : 'codes'}`
-                    : `${total} saved ${total === 1 ? 'code' : 'codes'}`;
+                    ? `${items.length} of ${total} ${noun}`
+                    : `${total} ${this.source} ${noun}`;
 
                 this.list.innerHTML = '';
 
@@ -4314,7 +4564,9 @@
                         <p class="text-white/40 text-[12.5px] font-medium leading-relaxed"></p>
                     `;
                     empty.querySelector('p:last-child').textContent = total
-                        ? `Nothing saved matches "${this.query.trim()}".`
+                        ? `Nothing here matches "${this.query.trim()}".`
+                        : this.source === 'scanned' ? 'Codes you scan will appear here.'
+                        : this.source === 'created' ? 'Codes you create will appear here.'
                         : 'Codes you create or scan will collect here.';
                     this.list.appendChild(empty);
                     safeCreateIcons();
@@ -4333,7 +4585,7 @@
                             <p class="text-white/45 text-[11px] font-mono truncate mt-0.5"></p>
                             <div class="flex gap-2 mt-1.5 items-center">
                                 <span class="accent-text accent-bg-soft text-[9.5px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded"></span>
-                                <span class="lib-meta text-white/35 text-[10px] font-semibold">Page ${(app.page || 0) + 1}</span>
+                                <span class="lib-meta text-white/35 text-[10px] font-semibold">${this.rowMeta(app)}</span>
                             </div>
                         </div>
                         <i data-lucide="chevron-right" class="w-5 h-5 text-white/25 shrink-0"></i>

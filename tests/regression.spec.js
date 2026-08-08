@@ -1404,3 +1404,140 @@ test.describe('Generate → decode round trip (Phase 3)', () => {
         expect(shown.label).toContain('WEBSITE');
     });
 });
+
+test.describe('History and batch scanning (Phase 3)', () => {
+    test('history logs scans and creations separately, and dedupes', async ({ page }) => {
+        // History is deliberately separate from OS_STATE.apps: the home screen is curated, the
+        // log is not, and merging them would litter the grid with every incidental scan.
+        // Re-scanning the same label is the normal case, so a repeat refreshes position rather
+        // than stacking duplicates.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const r = await page.evaluate(() => {
+            window.OS_STATE.history = [];
+            window.recordHistory({ data: 'https://a.example', source: 'scanned' });
+            window.recordHistory({ data: '5012345678900', source: 'scanned' });
+            window.recordHistory({ data: 'https://a.example', source: 'scanned' });
+            window.recordHistory({ data: 'made-this', source: 'created', title: 'Mine' });
+            const h = window.OS_STATE.history;
+            return {
+                total: h.length,
+                scanned: h.filter(x => x.source === 'scanned').length,
+                created: h.filter(x => x.source === 'created').length,
+                newestFirst: h[0].data,
+                derivedTitle: h.find(x => x.data === 'https://a.example').title
+            };
+        });
+
+        expect(r.total).toBe(3);          // four calls, one was a repeat
+        expect(r.scanned).toBe(2);
+        expect(r.created).toBe(1);
+        expect(r.newestFirst).toBe('made-this');
+        expect(r.derivedTitle).toBe('a.example'); // titled by the payload parser
+    });
+
+    test('history is capped and never breaks the caller', async ({ page }) => {
+        // localStorage is finite and a scanning session fills fast. Without a cap this grows
+        // until a save throws QuotaExceededError and takes the rest of OS_STATE with it.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => {
+            window.OS_STATE.history = [];
+            for (let i = 0; i < 260; i++) window.recordHistory({ data: 'code-' + i, source: 'scanned' });
+            const bad = window.recordHistory({ data: '', source: 'scanned' }); // junk must not throw
+            return { len: window.OS_STATE.history.length, bad, newest: window.OS_STATE.history[0].data };
+        });
+        expect(r.len).toBeLessThanOrEqual(200);
+        expect(r.newest).toBe('code-259');   // newest kept, oldest dropped
+        expect(r.bad).toBeNull();
+    });
+
+    test('history stays out of the cloud payload', async ({ page }) => {
+        // Device-local by construction, like the wallpaper (HARD RULE 4). The sync payload is an
+        // explicit allowlist, and this asserts history was never added to it.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        // Read the real source rather than a re-serialised DOM, and take the whole object
+        // literal so the check cannot pass by accident on a truncated slice.
+        const src = await (await fetch('http://localhost:4173/index.html')).text();
+        const start = src.indexOf('await setDoc(ref, {');
+        expect(start, 'sync payload not found').toBeGreaterThan(-1);
+        const payload = src.slice(start, src.indexOf('});', start));
+        expect(payload).toContain('apps:');          // sanity: we sliced the right block
+        // Match the KEY, not the bare word — the comment above the payload explains why history
+        // is excluded, and searching for the word alone matched that prose instead of any code.
+        const keys = [...payload.matchAll(/^\s*([a-zA-Z_$][\w$]*)\s*:/gm)].map(m => m[1]);
+        expect(keys, `sync keys: ${keys.join(', ')}`).not.toContain('history');
+        expect(keys).toContain('apps');
+    });
+
+    test('the Library switches between saved, scanned and created', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => {
+            window.OS_STATE.history = [];
+            window.recordHistory({ data: 'https://scanned.example', source: 'scanned' });
+            window.recordHistory({ data: 'https://made.example', source: 'created' });
+        });
+
+        await page.click('#dock-container [data-id="nav_lib"]');
+        await page.waitForTimeout(600);
+        const saved = await page.locator('#library-list > div').count();
+        expect(saved).toBeGreaterThan(0);
+
+        await page.click('.library-src-btn[data-source="scanned"]');
+        await page.waitForTimeout(400);
+        await expect(page.locator('#library-list > div')).toHaveCount(1);
+        await expect(page.locator('#library-count')).toContainText('scanned');
+        // "Page 1" is meaningless for a log entry; history rows show when instead.
+        await expect(page.locator('#library-list')).not.toContainText('Page 1');
+
+        await page.click('.library-src-btn[data-source="created"]');
+        await page.waitForTimeout(400);
+        await expect(page.locator('#library-list > div')).toHaveCount(1);
+        await expect(page.locator('#library-list')).toContainText('made.example');
+    });
+
+    test('batch mode collects without stopping, dedupes, and saves all at once', async ({ page }) => {
+        // The whole point of batch is that the camera keeps running. A duplicate must not be
+        // added — a camera re-reads the same label many times a second, so without dedupe one
+        // code fills the tray before the phone can be moved.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const collected = await page.evaluate(() => {
+            const S = window.ScannerEngine;
+            window.OS_STATE.history = [];
+            S.toggleBatch();
+            S.handleSuccess('https://one.example', 'QR_CODE');
+            S.handleSuccess('https://two.example', 'QR_CODE');
+            S.handleSuccess('https://one.example', 'QR_CODE'); // repeat frame
+            return {
+                mode: S.batchMode,
+                count: S.batch.length,
+                // No single-result sheet, and nothing logged yet — a code removed from the tray
+                // must never reach history.
+                sheetStillHidden: document.getElementById('scanner-result-sheet').classList.contains('translate-y-full'),
+                historyEmpty: window.OS_STATE.history.length === 0
+            };
+        });
+        expect(collected.mode).toBe(true);
+        expect(collected.count).toBe(2);
+        expect(collected.sheetStillHidden).toBe(true);
+        expect(collected.historyEmpty).toBe(true);
+
+        const saved = await page.evaluate(() => {
+            const before = window.OS_STATE.apps.filter(a => a.type === 'grid').length;
+            window.ScannerEngine.saveBatch();
+            return {
+                added: window.OS_STATE.apps.filter(a => a.type === 'grid').length - before,
+                logged: window.OS_STATE.history.length,
+                trayCleared: window.ScannerEngine.batch.length
+            };
+        });
+        expect(saved.added).toBe(2);
+        expect(saved.logged).toBe(2);
+        expect(saved.trayCleared).toBe(0);
+    });
+});
