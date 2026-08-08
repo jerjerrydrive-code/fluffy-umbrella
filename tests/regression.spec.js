@@ -2218,3 +2218,441 @@ test.describe('Page reordering (Phase 4)', () => {
         await expect(page.locator('#btn-page-right')).not.toBeDisabled();
     });
 });
+
+test.describe('Back navigation (XanNav)', () => {
+    // The report was "I get stuck in a lot of pages and cant go back". Nothing in the app was
+    // wired to history, so hardware Back on Android left the PWA instead of closing the layer
+    // on top. Each of these opens a layer the way the UI opens it, then presses Back.
+    const boot = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+    };
+    const isOpen = (page, id) => page.evaluate(
+        (i) => document.getElementById(i).classList.contains('pointer-events-auto'), id);
+
+    for (const [name, id, open] of [
+        ['the Library',      'library-overlay',       () => window.LibraryManager.open()],
+        ['Settings',         'settings-modal',        () => window.SettingsManager.open()],
+        ['the code editor',  'create-modal',          () => window.CodeGenerator.open()],
+        ['search',           'search-overlay',        () => window.GestureManager.openSearch()],
+    ]) {
+        test(`Back closes ${name}`, async ({ page }) => {
+            await boot(page);
+            await page.evaluate(open);
+            await page.waitForTimeout(300);
+            expect(await isOpen(page, id)).toBe(true);
+
+            await page.goBack();
+            await page.waitForTimeout(400);
+            expect(await isOpen(page, id)).toBe(false);
+        });
+    }
+
+    test('Back unwinds nested layers one at a time, innermost first', async ({ page }) => {
+        await boot(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(250);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(250);
+
+        expect(await isOpen(page, 'library-overlay')).toBe(true);
+        expect(await isOpen(page, 'settings-modal')).toBe(true);
+
+        await page.goBack();
+        await page.waitForTimeout(400);
+        // Settings was on top, so only Settings goes.
+        expect(await isOpen(page, 'settings-modal')).toBe(false);
+        expect(await isOpen(page, 'library-overlay')).toBe(true);
+
+        await page.goBack();
+        await page.waitForTimeout(400);
+        expect(await isOpen(page, 'library-overlay')).toBe(false);
+    });
+
+    test('closing by button unwinds history too, so Back does not reopen anything', async ({ page }) => {
+        // The failure this guards: close with the X, then press Back, and the leftover history
+        // entry pops you into a layer you already dismissed — or worse, out of the app.
+        await boot(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(250);
+        await page.locator('#btn-close-library').click();
+        await page.waitForTimeout(400);
+
+        expect(await page.evaluate(() => window.XanNav.stack.length)).toBe(0);
+        expect(await page.evaluate(() => (history.state && history.state.xanDepth) || 0)).toBe(0);
+    });
+
+    test('closing one layer and opening another in the same tick keeps the new one', async ({ page }) => {
+        // Finishing a scan closes the scanner and opens the editor in one tick. MutationObserver
+        // delivers records in observer-registration order, so the arrival can be seen before the
+        // departure — the stack must not treat the newcomer as collateral of the layer below it.
+        await boot(page);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(250);
+        await page.evaluate(() => { window.SettingsManager.close(); window.LibraryManager.open(); });
+        await page.waitForTimeout(500);
+
+        expect(await isOpen(page, 'library-overlay')).toBe(true);
+        expect(await isOpen(page, 'settings-modal')).toBe(false);
+        expect(await page.evaluate(() => window.XanNav.stack.map(l => l.id))).toEqual(['library-overlay']);
+        expect(await page.evaluate(() => (history.state && history.state.xanDepth) || 0)).toBe(1);
+
+        // And Back still gets you out of the one that is actually open.
+        await page.goBack();
+        await page.waitForTimeout(400);
+        expect(await isOpen(page, 'library-overlay')).toBe(false);
+    });
+
+    test('Back leaves edit mode instead of leaving the app', async ({ page }) => {
+        await boot(page);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+
+        await page.goBack();
+        await page.waitForTimeout(700);
+        expect(await page.evaluate(() => window.OS_STATE.isEditMode)).toBe(false);
+        expect(await page.evaluate(() => document.body.classList.contains('edit-mode'))).toBe(false);
+    });
+
+    test('Escape closes the top layer on desktop', async ({ page }) => {
+        await boot(page);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(300);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(400);
+        expect(await isOpen(page, 'settings-modal')).toBe(false);
+    });
+
+    test('every dismissable layer is registered, so none can become a dead end', async ({ page }) => {
+        await boot(page);
+        const registered = await page.evaluate(() => [...window.XanNav.layers.keys()]);
+        for (const id of ['search-overlay', 'item-fullscreen-layer', 'library-overlay',
+                          'folder-overlay', 'settings-modal', 'account-modal', 'rename-modal',
+                          'create-modal', 'scanner-modal', 'edit-mode']) {
+            expect(registered, `${id} is not reachable by Back`).toContain(id);
+        }
+    });
+});
+
+test.describe('Edit-mode dragging (report: "I have to re-tap the icons")', () => {
+    const enterEditMode = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+    };
+    const centres = (page) => page.evaluate(() =>
+        [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')].slice(0, 3).map(el => {
+            const r = el.getBoundingClientRect();
+            return { id: el.dataset.id, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }));
+
+    test('dropping an icon on an empty slot does not kick you out of edit mode', async ({ page }) => {
+        // This was the actual cause of the re-tapping. Releasing over a free slot synthesised a
+        // click on that slot, the background-tap handler read it as "done rearranging", and edit
+        // mode ended — so every further move needed another long press.
+        await enterEditMode(page);
+        const icons = await centres(page);
+        const empty = await page.evaluate(() => {
+            const s = document.querySelector('#workspace-pager .empty-slot');
+            if (!s) return null;
+            const r = s.getBoundingClientRect();
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+        expect(empty, 'the first page needs a free slot for this test').not.toBeNull();
+
+        await page.mouse.move(icons[0].x, icons[0].y);
+        await page.mouse.down();
+        await page.mouse.move(icons[0].x + 12, icons[0].y + 12, { steps: 3 });
+        await page.mouse.move(empty.x, empty.y, { steps: 10 });
+        await page.mouse.up();
+        await page.waitForTimeout(900);
+
+        expect(await page.evaluate(() => window.OS_STATE.isEditMode)).toBe(true);
+        expect(await page.evaluate(() => document.body.classList.contains('edit-mode'))).toBe(true);
+    });
+
+    test('a second icon can be moved straight after the first, with no tap in between', async ({ page }) => {
+        await enterEditMode(page);
+        const icons = await centres(page);
+
+        // First move.
+        await page.mouse.move(icons[0].x, icons[0].y);
+        await page.mouse.down();
+        await page.mouse.move(icons[0].x + 12, icons[0].y + 12, { steps: 3 });
+        await page.mouse.move(icons[2].x, icons[2].y, { steps: 10 });
+        await page.mouse.up();
+        await page.waitForTimeout(120);   // deliberately inside the 400ms settle window
+
+        // Second move begins before the first has finished animating home. The settle timer
+        // used to fire mid-flight here and strip the new drag's transform.
+        await page.mouse.move(icons[1].x, icons[1].y);
+        await page.mouse.down();
+        await page.mouse.move(icons[1].x + 12, icons[1].y + 12, { steps: 3 });
+        const engaged = await page.evaluate(() => window.DragEngine.isEngaged);
+        await page.mouse.move(icons[0].x, icons[0].y, { steps: 10 });
+        await page.mouse.up();
+        await page.waitForTimeout(900);
+
+        expect(engaged, 'the second drag never engaged').toBe(true);
+        expect(await page.evaluate(() => window.OS_STATE.isEditMode)).toBe(true);
+        // No icon may be left detached from the grid by an interrupted settle.
+        expect(await page.evaluate(() =>
+            [...document.querySelectorAll('.app-icon-wrapper')]
+                .filter(el => el.style.position === 'fixed').length)).toBe(0);
+        expect(await page.evaluate(() =>
+            document.querySelectorAll('.custom-drag-ghost').length)).toBe(0);
+    });
+
+    test('an icon that reaches the grid without a render is still draggable', async ({ page }) => {
+        // Listeners used to be attached to each icon element inside init(). That stayed correct
+        // only because render() calls init() as its last step — an icon arriving in the grid by
+        // any other route got none, and would jiggle without being pickable. Delegation removes
+        // the dependency on that ordering. Here the icon is cloned straight into the page, with
+        // no render, which is the case per-icon binding could not cover.
+        await enterEditMode(page);
+        await page.evaluate(() => {
+            const page0 = document.querySelector('#workspace-pager .sortable-page');
+            const slot = page0.querySelector('.empty-slot');
+            const clone = page0.querySelector('.app-icon-wrapper').cloneNode(true);
+            clone.dataset.id = 'nav-test-clone';
+            slot.replaceWith(clone);
+        });
+        await page.waitForTimeout(200);
+        const icons = await page.evaluate(() => {
+            const el = document.querySelector('[data-id="nav-test-clone"]');
+            const r = el.getBoundingClientRect();
+            return [{ x: r.left + r.width / 2, y: r.top + r.height / 2 }];
+        });
+
+        await page.mouse.move(icons[0].x, icons[0].y);
+        await page.mouse.down();
+        await page.mouse.move(icons[0].x + 12, icons[0].y + 12, { steps: 3 });
+        expect(await page.evaluate(() => window.DragEngine.isEngaged)).toBe(true);
+        await page.mouse.up();
+        await page.waitForTimeout(700);
+    });
+});
+
+test.describe('Theme coverage (report: "so much doesnt even get themes")', () => {
+    // The accent used to reach only things that were already accent-coloured. Everything
+    // structural was a fixed grey, so picking any of the 1352 reachable accents changed a few
+    // controls and left the app looking the same.
+    const surfaceOf = (page, sel, prop = 'backgroundColor') =>
+        page.evaluate(([s, p]) => getComputedStyle(document.querySelector(s))[p], [sel, prop]);
+
+    test('chrome repaints when the accent changes, on every major surface', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => { window.SettingsManager.open(); window.LibraryManager.open(); });
+        await page.waitForTimeout(400);
+
+        const surfaces = ['#settings-panel', '#library-overlay', '#folder-overlay', '#main-dock',
+                          '#settings-modal', '#account-modal', '#create-panel', '#item-fullscreen-layer'];
+        const read = async () => {
+            const out = {};
+            for (const s of surfaces) out[s] = await surfaceOf(page, s);
+            return out;
+        };
+
+        await page.evaluate(() => window.ThemeManager.applyAccent('#1F5C6B', false));
+        await page.waitForTimeout(200);
+        const teal = await read();
+
+        await page.evaluate(() => window.ThemeManager.applyAccent('#F2B33F', false));
+        await page.waitForTimeout(200);
+        const amber = await read();
+
+        for (const s of surfaces) {
+            expect(teal[s], `${s} has no background at all`).not.toBe('rgba(0, 0, 0, 0)');
+            expect(amber[s], `${s} does not respond to the accent`).not.toBe(teal[s]);
+        }
+    });
+
+    test('the white plate behind a code is never tinted, on any accent', async ({ page }) => {
+        // Scannability is functional, not decorative: a tinted plate cuts the contrast a 1D
+        // reader needs. Every accent-driven surface rule must stop at the code.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => {
+            const item = window.OS_STATE.apps.find(a => a.type === 'grid');
+            window.InteractionManager.openEnlarge(item);
+        });
+        await page.waitForTimeout(600);
+
+        for (const accent of ['#1F5C6B', '#F2B33F', '#E97A7A', '#000000', '#FFFFFF']) {
+            await page.evaluate((a) => window.ThemeManager.applyAccent(a, false), accent);
+            await page.waitForTimeout(120);
+            expect(await surfaceOf(page, '.fullscreen-canvas-panel'),
+                   `plate tinted by accent ${accent}`).toBe('rgb(255, 255, 255)');
+        }
+    });
+
+    test('accent text stays readable on tinted chrome across the whole palette', async ({ page }) => {
+        // Tinting the chrome toward the accent made accent-coloured TEXT on that chrome much
+        // harder to read — a dark teal accent on teal-tinted panels fell under 2:1. Every one of
+        // the 1352 reachable accents has to clear 4.5:1 on both the dark and the light surface.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const worst = await page.evaluate(() => {
+            const { ratio, mixHex } = window.accentMath;
+            const tm = window.ThemeManager;
+            const row = document.getElementById('theme-swatch-row');
+            const accents = [...new Set([...row.children]
+                .filter(el => el._quad).flatMap(el => el._quad))];
+            let dark = { r: Infinity }, light = { r: Infinity };
+            for (const hex of accents) {
+                const onDark = ratio(tm.readableOn(hex, mixHex('#1c1c1e', hex, 0.08)),
+                                     mixHex('#1c1c1e', hex, 0.08));
+                const onLight = ratio(tm.readableOn(hex, mixHex('#ffffff', hex, 0.05)),
+                                      mixHex('#ffffff', hex, 0.05));
+                if (onDark < dark.r) dark = { r: onDark, hex };
+                if (onLight < light.r) light = { r: onLight, hex };
+            }
+            return { dark, light, count: accents.length };
+        });
+
+        expect(worst.count).toBeGreaterThan(1000);
+        expect(worst.dark.r, `worst accent on dark chrome: ${worst.dark.hex}`).toBeGreaterThanOrEqual(4.5);
+        expect(worst.light.r, `worst accent on light chrome: ${worst.light.hex}`).toBeGreaterThanOrEqual(4.5);
+    });
+
+    test('an accent that already passes is left exactly as the user picked it', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const unchanged = await page.evaluate(() => {
+            const { mixHex } = window.accentMath;
+            const hex = '#F2B33F';   // bright amber, comfortably readable on dark chrome
+            return window.ThemeManager.readableOn(hex, mixHex('#1c1c1e', hex, 0.08));
+        });
+        expect(unchanged.toUpperCase()).toBe('#F2B33F');
+    });
+});
+
+test.describe('Palette browsing (report: "im missing so many themes")', () => {
+    test('tapping a band selects that colour instead of one of the four at random', async ({ page }) => {
+        // The swatch shows four colours; tapping one should give you that one. Picking at
+        // random from the four meant getting the shade you were looking at was a matter of
+        // tapping until it came up.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(400);
+
+        const swatch = page.locator('#theme-swatch-row button.accent-swatch').nth(3);
+        const quad = await swatch.evaluate(el => el._quad);
+        const box = await swatch.boundingBox();
+
+        for (let band = 0; band < 4; band++) {
+            // Aim at the middle of each band in turn.
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height * (band + 0.5) / 4);
+            await page.mouse.down();
+            await page.mouse.up();
+            await page.waitForTimeout(120);
+            expect(await page.evaluate(() => window.OS_STATE.accent.toUpperCase()))
+                .toBe(quad[band].toUpperCase());
+        }
+    });
+
+    test('a tap with no coordinates still picks something rather than throwing', async ({ page }) => {
+        // Synthetic events and keyboard activation carry no clientY, so there is no band to
+        // read. That path has to keep working.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const swatch = page.locator('#theme-swatch-row button.accent-swatch').nth(2);
+        await swatch.dispatchEvent('pointerdown');
+        await swatch.dispatchEvent('pointerup');
+        await page.waitForTimeout(200);
+
+        const quad = await swatch.evaluate(el => el._quad);
+        expect(quad.map(c => c.toUpperCase()))
+            .toContain(await page.evaluate(() => window.OS_STATE.accent.toUpperCase()));
+    });
+
+    test('the whole palette can be browsed, not just the first screenful', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(400);
+
+        // The count is on the control, so the size of the palette is discoverable.
+        await expect(page.locator('#btn-theme-expand')).toHaveText(/Browse all 338/);
+
+        const strip = await page.locator('#theme-swatch-row').evaluate(el => ({
+            cols: getComputedStyle(el).gridTemplateColumns, wide: el.scrollWidth,
+        }));
+        expect(strip.cols).toBe('none');           // collapsed: one horizontal strip
+
+        await page.locator('#btn-theme-expand').click();
+        await page.waitForTimeout(300);
+
+        const grid = await page.locator('#theme-swatch-row').evaluate(el => ({
+            cols: getComputedStyle(el).gridTemplateColumns.split(' ').length,
+            tall: el.scrollHeight, wide: el.scrollWidth, box: el.clientWidth,
+        }));
+        expect(grid.cols).toBe(6);                  // expanded: wraps into a grid
+        expect(grid.wide).toBeLessThanOrEqual(grid.box + 1);   // no sideways scrolling left
+        expect(grid.tall).toBeGreaterThan(1000);    // and all 338 are in there to scroll through
+        await expect(page.locator('#btn-theme-expand')).toHaveText('Show less');
+    });
+
+    test('expanded swatches are big enough for their bands to be tappable', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(400);
+        await page.locator('#btn-theme-expand').click();
+        await page.waitForTimeout(300);
+
+        const box = await page.locator('#theme-swatch-row button.accent-swatch').first().boundingBox();
+        expect(box.height / 4).toBeGreaterThanOrEqual(9);
+    });
+});
+
+test.describe('Sign-in failures explain themselves', () => {
+    // The live site showed "Sign-in error: Error (auth/unauthorized-domain)" — a code, not a
+    // message. It is also the one failure here that is neither transient nor fixable in the
+    // app: the domain has to be listed in the Firebase project first.
+    const describe = (page, code) => page.evaluate(
+        (c) => window.CloudSync.describeAuthError({ code: c, message: 'Firebase: something (' + c + ').' }), code);
+
+    test('an unauthorised domain says what to do, and names the domain', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const text = await describe(page, 'auth/unauthorized-domain');
+        expect(text).toContain('localhost');            // the host actually being served
+        expect(text).toContain('Authorized domains');   // where to fix it
+        expect(text).not.toContain('auth/unauthorized-domain');
+        // And it says the app still works, because it does.
+        expect(text).toMatch(/without signing in/i);
+    });
+
+    test('a cancelled popup is silent rather than an error', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        expect(await describe(page, 'auth/popup-closed-by-user')).toBe('');
+
+        // An empty message hides the banner instead of showing a blank red line.
+        await page.evaluate(() => { window.CloudSync.showGuestError('something'); });
+        await page.evaluate(() => { window.CloudSync.showGuestError(''); });
+        expect(await page.evaluate(() =>
+            document.getElementById('account-guest-error').classList.contains('hidden'))).toBe(true);
+    });
+
+    test('an unknown code still produces a sentence, not a bare code', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const text = await describe(page, 'auth/some-new-thing');
+        expect(text.startsWith('Sign-in failed:')).toBe(true);
+        expect(text).not.toContain('Firebase: ');
+    });
+});
