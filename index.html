@@ -824,6 +824,7 @@
                 <h2 class="text-white text-[26px] font-bold tracking-tight leading-none">Library</h2>
                 <p id="library-count" class="text-white/50 text-[12px] font-medium mt-1.5"></p>
             </div>
+            <button id="btn-library-select" class="tap44 flex items-center justify-center px-3.5 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all shrink-0 text-white text-[13px] font-bold">Select</button>
             <button id="btn-close-library" class="tap44 flex items-center justify-center p-2.5 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all shrink-0">
                 <i data-lucide="x" class="w-5 h-5 text-white"></i>
             </button>
@@ -841,6 +842,12 @@
             </div>
         </div>
         <div id="library-list" class="flex-1 overflow-y-auto hide-scrollbar px-5 pb-[calc(env(safe-area-inset-bottom,0px)+2.5rem)] flex flex-col gap-2.5"></div>
+        <div id="library-select-bar" class="hidden shrink-0 px-5 pb-[calc(env(safe-area-inset-bottom,0px)+1.25rem)] pt-3 flex items-center gap-2 border-t border-white/10 bg-black/30 backdrop-blur-xl">
+            <button id="btn-select-all" class="tap-extend relative px-3.5 py-2.5 bg-white/10 rounded-xl text-white text-[13px] font-bold active:scale-95 transition-transform">All</button>
+            <span id="select-count" class="flex-1 text-white/60 text-[12.5px] font-semibold"></span>
+            <button id="btn-select-export" class="tap-extend relative px-3.5 py-2.5 bg-white/10 rounded-xl text-white text-[13px] font-bold active:scale-95 transition-transform">Export</button>
+            <button id="btn-select-delete" class="tap-extend relative px-3.5 py-2.5 bg-red-500/20 text-red-300 rounded-xl text-[13px] font-bold active:scale-95 transition-transform">Delete</button>
+        </div>
     </div>
 
     <div id="settings-modal" class="modal-spring fixed inset-0 z-[150] bg-black/60 backdrop-blur-xl opacity-0 pointer-events-none flex items-center justify-center p-4">
@@ -1223,6 +1230,14 @@
          *    barcode parses as a phone number. Product barcodes (8/12/13 digits) get
          *    lookup buttons rather than one action, since "what IS this" is the real
          *    question and no single provider answers it best.
+         *  - Bulk operations (Library -> Select) — Phase 4. Multi-select rows, then export
+         *    the selection as CSV or delete it. Two safety properties, both tested:
+         *      - Selection CLEARS whenever the visible set changes (source switch or
+         *        filter). A selection that survives a view change lets Delete remove
+         *        things the person cannot currently see, which is the worst possible
+         *        surprise for a destructive action.
+         *      - Delete only ever touches the ACTIVE source: deleting everything under
+         *        Saved cannot reach history, and vice versa.
          *  - Backup / restore (window.buildBackup, applyBackup, buildCsv) — Phase 4 start.
          *    Settings -> Your Data. The point is trust: everything out in one tap, back in
          *    on a fresh install with nothing lost. Three rules make that safe:
@@ -4664,10 +4679,17 @@
                 this.sort = 'recent';
                 this.query = '';
                 this.source = 'saved';   // saved | scanned | created
+                this.selectMode = false;
+                this.selected = new Set();
 
+                document.getElementById('btn-library-select').addEventListener('click', () => this.toggleSelectMode());
+                document.getElementById('btn-select-all').addEventListener('click', () => this.selectAll());
+                document.getElementById('btn-select-export').addEventListener('click', () => this.exportSelected());
+                document.getElementById('btn-select-delete').addEventListener('click', () => this.deleteSelected());
                 document.getElementById('btn-close-library').addEventListener('click', () => this.close());
                 this.searchInput.addEventListener('input', (e) => {
                     this.query = e.target.value;
+                    this.clearSelectionOnViewChange();
                     this.renderList();
                 });
                 this.sortRow.querySelectorAll('.library-sort-btn').forEach(btn => {
@@ -4705,6 +4727,7 @@
                     btn.addEventListener('click', () => {
                         if (this.source === src.id) return;
                         this.source = src.id;
+                        this.clearSelectionOnViewChange();
                         haptic(8);
                         this.renderSourceRow();
                         this.renderList();
@@ -4725,7 +4748,78 @@
                                  type: 'grid', createdAt: h.ts, starred: h.starred, fromHistory: true }));
             }
 
-            open() {
+            toggleSelectMode(force) {
+                this.selectMode = force !== undefined ? force : !this.selectMode;
+                this.selected.clear();
+                document.getElementById('btn-library-select').textContent = this.selectMode ? 'Done' : 'Select';
+                haptic(8);
+                this.renderList();
+            }
+
+            // Selection is cleared whenever the visible set changes — keeping a hidden selection
+            // alive across a filter or source switch means Delete can remove things the person
+            // cannot currently see, which is the worst possible surprise for a destructive action.
+            clearSelectionOnViewChange() {
+                if (this.selected.size) this.selected.clear();
+            }
+
+            selectAll() {
+                const visible = this.collect();
+                // Toggle: a second tap on a full selection clears it, which is what people expect
+                // from an "All" control that is already satisfied.
+                if (visible.every(i => this.selected.has(i.id))) this.selected.clear();
+                else visible.forEach(i => this.selected.add(i.id));
+                haptic(8);
+                this.renderList();
+            }
+
+            syncSelectBar() {
+                const bar = document.getElementById('library-select-bar');
+                bar.classList.toggle('hidden', !this.selectMode);
+                const n = this.selected.size;
+                document.getElementById('select-count').textContent =
+                    n ? `${n} selected` : 'Nothing selected';
+                ['btn-select-export', 'btn-select-delete'].forEach(id => {
+                    const b = document.getElementById(id);
+                    b.disabled = !n;
+                    b.classList.toggle('opacity-40', !n);
+                });
+            }
+
+            selectedItems() {
+                return this.collect().filter(i => this.selected.has(i.id));
+            }
+
+            exportSelected() {
+                const items = this.selectedItems();
+                if (!items.length) return;
+                const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+                const csv = ['title,data,format'].concat(
+                    items.map(i => [esc(i.title), esc(i.data), esc(i.bcid)].join(','))).join('\n');
+                window.SettingsManager.download(
+                    `xancode-selection-${new Date().toISOString().slice(0, 10)}.csv`, csv, 'text/csv');
+                window.showToast(`Exported ${items.length} ${items.length === 1 ? 'code' : 'codes'}`);
+            }
+
+            deleteSelected() {
+                const items = this.selectedItems();
+                if (!items.length) return;
+                const ids = new Set(items.map(i => i.id));
+
+                if (this.source === 'saved') {
+                    window.OS_STATE.apps = window.OS_STATE.apps.filter(a => !ids.has(a.id));
+                } else {
+                    window.OS_STATE.history = (window.OS_STATE.history || []).filter(h => !ids.has(h.id));
+                }
+                saveState();
+                this.selected.clear();
+                haptic(20);
+                window.showToast(`Deleted ${items.length} ${items.length === 1 ? 'code' : 'codes'}`);
+                this.renderList();
+                if (this.source === 'saved') window.Renderer.render();
+            }
+
+            open() {
                 this.searchInput.value = '';
                 this.query = '';
                 this.renderSourceRow();
@@ -4800,6 +4894,7 @@
                     ? `${items.length} of ${total} ${noun}`
                     : `${total} ${this.source} ${noun}`;
 
+                this.syncSelectBar();
                 this.list.innerHTML = '';
 
                 if (!items.length) {
@@ -4837,6 +4932,7 @@
                                 <span class="lib-meta text-white/35 text-[10px] font-semibold">${this.rowMeta(app)}</span>
                             </div>
                         </div>
+                        ${this.selectMode ? `<span class="lib-tick w-6 h-6 rounded-full border-2 shrink-0 flex items-center justify-center ${this.selected.has(app.id) ? 'accent-bg accent-border' : 'border-white/30'}">${this.selected.has(app.id) ? '<i data-lucide="check" class="w-3.5 h-3.5 accent-on-accent"></i>' : ''}</span>` : ''}
                         ${app.fromHistory ? `<button class="lib-star tap-extend relative p-1.5 shrink-0" aria-label="Star"><i data-lucide="star" class="w-[18px] h-[18px] ${app.starred ? 'fill-current text-amber-400' : 'text-white/25'}"></i></button>` : ''}
                         <i data-lucide="chevron-right" class="w-5 h-5 text-white/25 shrink-0"></i>
                     `;
@@ -4860,6 +4956,13 @@
                     }
 
                     row.addEventListener('click', () => {
+                        if (this.selectMode) {
+                            if (this.selected.has(app.id)) this.selected.delete(app.id);
+                            else this.selected.add(app.id);
+                            haptic(6);
+                            this.renderList();
+                            return;
+                        }
                         this.close();
                         setTimeout(() => window.InteractionManager.openEnlarge(app), 320);
                     });

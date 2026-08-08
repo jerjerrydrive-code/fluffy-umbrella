@@ -24,14 +24,14 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 68 passing in ~72s):
+Built and covered by the regression suite (`npm test`, 73 passing in ~90s):
 
 | Area | State |
 |---|---|
 | Home screen | Paged icon grid, floating dock, physics drag-reorder, swipe-down search, edit mode |
 | Codes | **22 Quick Add types in 4 categories**, **11-format browser**, **per-code colours with a scannability validator**, item viewer |
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, **scan-from-image**, **batch mode**, **12-type payload parser**, share |
-| Library | **Saved / Scanned / Created** switch, **starred favourites**, filter + sort |
+| Library | **Saved / Scanned / Created** switch, starred favourites, **multi-select bulk delete/export**, filter + sort |
 | Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin, WCAG-measured accent text |
 | Skins | **6** — `dock`, `scancard`, `glass`, `soft`, `aurora`, `classic`, all over one DOM via `OSSkinManager` |
 | Settings | Grid density, auto-arrange, wallpaper, accent, skin, Vibration & Animations, **backup / restore / CSV** |
@@ -148,7 +148,9 @@ payloads degrade to plain text with copy/share, never an error.
   (wallpaper included — a local file has no Firestore size cap), plus CSV export. Restore
   **only ever adds**: codes merge deduped by payload, so it can never delete what is already
   on the device. Bad files fail cleanly with state untouched
-- **Bulk operations**: multi-select in the Library → move / tag / delete / export
+- ~~**Bulk operations**~~ ✅ multi-select in the Library → export selection as CSV, or
+  delete. Selection clears on any view change so Delete can never reach something off-screen,
+  and it only ever touches the active source. Move/tag still to do
 - **Widgets**: a "most-used code" quick-access surface
 
 **Definition of done:** a user can get all their data out in one tap and restore it on a fresh

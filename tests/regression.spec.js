@@ -1730,3 +1730,119 @@ test.describe('Backup and restore (Phase 4)', () => {
         expect(csv).toContain('"a,b,""c"""');
     });
 });
+
+test.describe('Bulk operations (Phase 4)', () => {
+    const openLib = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.click('#dock-container [data-id="nav_lib"]');
+        await page.waitForTimeout(500);
+    };
+
+    test('select mode picks rows instead of opening them', async ({ page }) => {
+        await openLib(page);
+        await page.click('#btn-library-select');
+        await page.waitForTimeout(300);
+
+        await page.locator('#library-list > div').first().click();
+        await page.waitForTimeout(300);
+
+        await expect(page.locator('#select-count')).toContainText('1 selected');
+        // The row's normal action must not fire while selecting.
+        await expect(page.locator('#item-fullscreen-layer')).toHaveClass(/pointer-events-none/);
+        await expect(page.locator('#library-overlay')).not.toHaveClass(/pointer-events-none/);
+    });
+
+    test('deleting a selection removes exactly those codes', async ({ page }) => {
+        await openLib(page);
+        const before = await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.title));
+
+        await page.click('#btn-library-select');
+        await page.waitForTimeout(300);
+        await page.locator('#library-list > div').first().click();
+        await page.waitForTimeout(300);
+        const targetTitle = (await page.locator('#library-list h4').first().textContent()).trim();
+
+        await page.click('#btn-select-delete');
+        await page.waitForTimeout(500);
+
+        const after = await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.title));
+        expect(after.length).toBe(before.length - 1);
+        expect(after).not.toContain(targetTitle);
+    });
+
+    test('changing the view drops the selection', async ({ page }) => {
+        // A selection that survives a filter or source switch lets Delete remove things the
+        // person cannot currently see — the worst possible surprise for a destructive action.
+        await openLib(page);
+        await page.click('#btn-library-select');
+        await page.waitForTimeout(300);
+        await page.locator('#library-list > div').first().click();
+        await page.waitForTimeout(300);
+        await expect(page.locator('#select-count')).toContainText('1 selected');
+
+        await page.click('.library-src-btn[data-source="scanned"]');
+        await page.waitForTimeout(400);
+        await expect(page.locator('#select-count')).toContainText('Nothing selected');
+
+        await page.click('.library-src-btn[data-source="saved"]');
+        await page.waitForTimeout(400);
+        await page.fill('#library-search', 'wifi');
+        await page.waitForTimeout(400);
+        await expect(page.locator('#select-count')).toContainText('Nothing selected');
+    });
+
+    test('All toggles, and delete only ever touches the active source', async ({ page }) => {
+        await openLib(page);
+        await page.evaluate(() => {
+            window.OS_STATE.history = [];
+            window.recordHistory({ data: 'https://kept.example', source: 'scanned' });
+        });
+
+        await page.click('#btn-library-select');
+        await page.waitForTimeout(300);
+        await page.click('#btn-select-all');
+        await page.waitForTimeout(300);
+        const savedCount = await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'grid').length);
+        await expect(page.locator('#select-count')).toContainText(`${savedCount} selected`);
+
+        await page.click('#btn-select-all');          // second tap clears
+        await page.waitForTimeout(300);
+        await expect(page.locator('#select-count')).toContainText('Nothing selected');
+
+        // Delete everything under Saved; history must be untouched.
+        await page.click('#btn-select-all');
+        await page.waitForTimeout(200);
+        await page.click('#btn-select-delete');
+        await page.waitForTimeout(500);
+
+        const state = await page.evaluate(() => ({
+            saved: window.OS_STATE.apps.filter(a => a.type === 'grid').length,
+            history: window.OS_STATE.history.length
+        }));
+        expect(state.saved).toBe(0);
+        expect(state.history).toBe(1);   // a different source was never in scope
+    });
+
+    test('history entries can be deleted in bulk too', async ({ page }) => {
+        await openLib(page);
+        await page.evaluate(() => {
+            window.OS_STATE.history = [];
+            window.recordHistory({ data: 'https://a.example', source: 'scanned' });
+            window.recordHistory({ data: 'https://b.example', source: 'scanned' });
+        });
+        await page.click('.library-src-btn[data-source="scanned"]');
+        await page.waitForTimeout(400);
+        await page.click('#btn-library-select');
+        await page.waitForTimeout(300);
+        await page.click('#btn-select-all');
+        await page.waitForTimeout(300);
+        await page.click('#btn-select-delete');
+        await page.waitForTimeout(500);
+
+        expect(await page.evaluate(() => window.OS_STATE.history.length)).toBe(0);
+    });
+});
