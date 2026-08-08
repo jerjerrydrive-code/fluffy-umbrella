@@ -2816,3 +2816,89 @@ test('Folders: a merge survives the reorder swapping the target out from under t
     expect(r.folders, 'the merge was cancelled by the reorder swap').toBe(1);
     expect(r.filed).toBe(2);
 });
+
+test.describe('Text stays readable on every skin', () => {
+    // Each skin restyled the surfaces it knew about and listed the text to recolour by hand, so
+    // any control added afterwards kept whatever colour the default dark chrome had given it.
+    // That is how the Library's Saved/Scanned/Created row ended up at 1.22:1 on Soft and the
+    // code viewer's title at 1.11:1 on Aurora — present in the DOM, invisible on screen. Found
+    // by sweeping scripts/motion-audit.mjs across all six skins; this keeps it swept.
+    const SKINS = ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic'];
+
+    // Mirrors the audit's measurement, including its one hard-won rule: stop at a background
+    // IMAGE rather than walking past it to a colour underneath. The wallpaper is a gradient on
+    // a body whose background-COLOR is black, and walking past it reports every icon label on
+    // Soft as unreadable when it is dark ink on a light gradient.
+    const worstContrast = (page) => page.evaluate(() => {
+        const lum = (c) => {
+            const m = /rgba?\(([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(c);
+            if (!m) return null;
+            const [r, g, b] = m.slice(1, 4).map(v => {
+                const x = +v / 255;
+                return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+            });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        const behind = (el) => {
+            for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+                const cs = getComputedStyle(n);
+                if (cs.backgroundImage && cs.backgroundImage !== 'none') return null;
+                const bg = cs.backgroundColor;
+                const a = /rgba\([^)]*,\s*([\d.]+)\)$/.exec(bg);
+                if (bg && bg !== 'transparent' && (!a || +a[1] > 0.85)) return bg;
+            }
+            return null;
+        };
+        const shown = (el) => {
+            for (let n = el; n && n !== document.body; n = n.parentElement) {
+                const s = getComputedStyle(n);
+                if (s.display === 'none' || s.visibility === 'hidden' || +s.opacity < 0.05) return false;
+                if (n.classList.contains('pointer-events-none')) return false;
+            }
+            return true;
+        };
+
+        let worst = { ratio: Infinity, what: 'nothing measurable' };
+        for (const el of document.querySelectorAll('h1,h2,h3,h4,p,span,button,label,a')) {
+            if (el.children.length || !shown(el)) continue;
+            const text = (el.textContent || '').trim();
+            if (text.length < 2) continue;
+            const bg = behind(el);
+            if (!bg) continue;
+            const lf = lum(getComputedStyle(el).color), lb = lum(bg);
+            if (lf === null || lb === null) continue;
+            const ratio = (Math.max(lf, lb) + 0.05) / (Math.min(lf, lb) + 0.05);
+            if (ratio < worst.ratio) {
+                worst = { ratio, what: (el.id || el.className.toString().split(' ')[0] || el.tagName)
+                                       + ' "' + text.slice(0, 24) + '"' };
+            }
+        }
+        return worst;
+    });
+
+    for (const skin of SKINS) {
+        test(`${skin}: nothing is invisible in the Library or the code viewer`, async ({ page }) => {
+            await page.goto('/index.html');
+            await page.waitForTimeout(1300);
+            if (skin !== 'dock') {
+                await page.evaluate((s) => window.SkinManager.setSkin(s), skin);
+                await page.waitForTimeout(900);
+            }
+
+            for (const [name, open] of [
+                ['library', () => window.LibraryManager.open()],
+                ['settings', () => window.SettingsManager.open()],
+                ['viewer', () => window.InteractionManager.openEnlarge(
+                                   window.OS_STATE.apps.find(a => a.type === 'grid'))],
+            ]) {
+                await page.evaluate(open);
+                await page.waitForTimeout(700);
+                const worst = await worstContrast(page);
+                // 3:1 is the floor below which text is not dim but gone. Deliberately not 4.5:1:
+                // this is a "nothing is invisible" guard, not an AA audit, and holding every
+                // decorative label to AA on six skins would be a different piece of work.
+                expect(worst.ratio, `${skin}/${name}: ${worst.what}`).toBeGreaterThanOrEqual(3);
+            }
+        });
+    }
+});

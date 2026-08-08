@@ -608,18 +608,35 @@
         body[data-skin="soft"] #btn-close-library {
             background: var(--soft-bg); border: none; box-shadow: var(--soft-raised-sm);
         }
-        body[data-skin="soft"] .library-sort-btn {
+        /* Both pill families, deliberately together. .library-src-btn was added later and
+           only .library-sort-btn was listed here, so the Saved/Scanned/Created row kept the
+           dark skin's 55%-white text on a pale panel: 1.22:1, which is not dim but gone. Naming
+           both means the next one to be added is a visible omission rather than a silent one. */
+        body[data-skin="soft"] :is(.library-sort-btn, .library-src-btn) {
             background: var(--soft-bg); border: none;
             box-shadow: var(--soft-raised-sm); color: var(--soft-ink-soft);
         }
-        body[data-skin="soft"] .library-sort-btn.active {
-            box-shadow: var(--soft-inset); color: var(--accent);
+        body[data-skin="soft"] :is(.library-sort-btn, .library-src-btn).active {
+            box-shadow: var(--soft-inset); color: var(--accent-readable, var(--accent));
         }
+
+        /* Soft has no dark surfaces at all, so every accent-coloured piece of text on it needs
+           the darkened variant. Set once on the skin rather than per panel: --accent-readable
+           inherits, so anything using .accent-text inside picks it up, including controls that
+           do not exist yet. */
+        body[data-skin="soft"] { --accent-readable: var(--accent-on-light, var(--accent)); }
 
         body[data-skin="soft"] :is(#settings-panel, #account-panel, #create-panel, #rename-panel) {
             background: var(--soft-bg);
             border: none;
             box-shadow: var(--soft-raised), 0 24px 60px -20px rgba(90, 104, 128, 0.45);
+        }
+
+        /* Two more that inherited colours chosen for a dark background: the sign-in error was a
+           pale red at 2.27:1, and the viewer's "+ Tag" chip a light grey at 2.08:1. */
+        body[data-skin="soft"] #account-guest-error { color: #b42318; }
+        body[data-skin="soft"] .tag-chip-add {
+            color: var(--soft-ink-soft); border-color: var(--soft-shade);
         }
         /* Inner grouping blocks inside Settings/Account are dark slabs in the default skin
            (bg-[#2c2c2e]); here they press into the panel instead of sitting on it. The nested
@@ -762,6 +779,27 @@
             background: rgba(10, 10, 18, 0.9);
             backdrop-filter: blur(34px) saturate(170%);
             -webkit-backdrop-filter: blur(34px) saturate(170%);
+            --accent-readable: var(--accent-on-dark, var(--accent));
+        }
+        /* The viewer is the only place this skin turns a light surface dark, and for a while
+           only the surface was turned: the title kept text-gray-900 and rendered at 1.11:1 on
+           near-black — present in the DOM and invisible on screen — with COPY/SAVE/RENAME at
+           2.61:1 behind it. The text roles are flipped to match the surface they sit on. The
+           white plate behind the code is untouched, as everywhere else. */
+        body[data-skin="aurora"] #item-fullscreen-layer :is(.text-gray-900, .text-black) {
+            color: #f4f5f8;
+        }
+        body[data-skin="aurora"] #item-fullscreen-layer :is(.text-gray-600, .text-gray-700, .text-gray-800) {
+            color: #c3c8d4;
+        }
+        body[data-skin="aurora"] #item-fullscreen-layer :is(.text-gray-500, .text-gray-400) {
+            color: #99a0b0;
+        }
+        body[data-skin="aurora"] #item-fullscreen-layer :is(.bg-gray-100, .bg-black\/5) {
+            background: rgba(255, 255, 255, 0.10);
+        }
+        body[data-skin="aurora"] #item-fullscreen-layer .tag-chip-add {
+            color: #99a0b0; border-color: rgba(255, 255, 255, 0.28);
         }
 
         /* ---------- SKIN: "classic" (polished original) ----------
