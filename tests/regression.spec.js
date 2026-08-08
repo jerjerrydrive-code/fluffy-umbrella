@@ -1541,3 +1541,88 @@ test.describe('History and batch scanning (Phase 3)', () => {
         expect(saved.trayCleared).toBe(0);
     });
 });
+
+test.describe('Starred history and sharing (Phase 3)', () => {
+    test('starring pins an entry above every sort order', async ({ page }) => {
+        // A star means "I want to find this again", which no ordering rule should bury.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => {
+            window.OS_STATE.history = [];
+            window.recordHistory({ data: 'https://zebra.example', source: 'scanned', title: 'Zebra' });
+            window.recordHistory({ data: 'https://apple.example', source: 'scanned', title: 'Apple' });
+            window.recordHistory({ data: 'https://mango.example', source: 'scanned', title: 'Mango' });
+        });
+
+        await page.click('#dock-container [data-id="nav_lib"]');
+        await page.waitForTimeout(500);
+        await page.click('.library-src-btn[data-source="scanned"]');
+        await page.waitForTimeout(400);
+
+        // Star the oldest (last by Recent, last by Name too).
+        const zebraRow = page.locator('#library-list > div').filter({ hasText: 'Zebra' });
+        await zebraRow.locator('.lib-star').click();
+        await page.waitForTimeout(400);
+
+        expect(await page.evaluate(() =>
+            window.OS_STATE.history.find(h => h.title === 'Zebra').starred)).toBe(true);
+
+        const firstTitle = () => page.locator('#library-list h4').first().textContent();
+        expect((await firstTitle()).trim()).toBe('Zebra');   // pinned under Recent
+
+        await page.click('.library-sort-btn[data-sort="name"]');
+        await page.waitForTimeout(400);
+        expect((await firstTitle()).trim()).toBe('Zebra');   // still pinned under Name
+    });
+
+    test('the star does not open the item viewer underneath it', async ({ page }) => {
+        // The row has its own click handler; without stopPropagation, starring also launches
+        // the viewer every single time.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => {
+            window.OS_STATE.history = [];
+            window.recordHistory({ data: 'https://one.example', source: 'scanned', title: 'One' });
+        });
+        await page.click('#dock-container [data-id="nav_lib"]');
+        await page.waitForTimeout(500);
+        await page.click('.library-src-btn[data-source="scanned"]');
+        await page.waitForTimeout(400);
+
+        await page.locator('.lib-star').first().click();
+        await page.waitForTimeout(500);
+        await expect(page.locator('#item-fullscreen-layer')).toHaveClass(/pointer-events-none/);
+        await expect(page.locator('#library-overlay')).not.toHaveClass(/pointer-events-none/);
+    });
+
+    test('share falls back to the clipboard when there is no share sheet', async ({ page, context }) => {
+        await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const copied = await page.evaluate(async () => {
+            delete navigator.share;                       // simulate a desktop browser
+            window.ScannerEngine.currentResult = 'https://shared.example';
+            await window.ScannerEngine.shareResult();
+            return await navigator.clipboard.readText();
+        });
+        expect(copied).toBe('https://shared.example');
+    });
+
+    test('cancelling a share is not reported as a failure', async ({ page }) => {
+        // navigator.share rejects identically on cancel and on error. Treating a cancel as an
+        // error tells someone their deliberate action went wrong.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const toasts = await page.evaluate(async () => {
+            const seen = [];
+            const realToast = window.showToast;
+            window.showToast = (m, t) => { seen.push(`${t || 'success'}: ${m}`); realToast(m, t); };
+            navigator.share = () => Promise.reject(Object.assign(new Error('cancelled'), { name: 'AbortError' }));
+            window.ScannerEngine.currentResult = 'https://cancelled.example';
+            await window.ScannerEngine.shareResult();
+            return seen;
+        });
+        expect(toasts).toEqual([]);
+    });
+});

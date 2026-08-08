@@ -1143,6 +1143,7 @@
             <div class="flex gap-3 mt-4">
                 <button id="btn-scan-discard" class="p-4 bg-gray-100 text-gray-500 rounded-2xl hover:bg-gray-200 active:scale-95 transition-all"><i data-lucide="rotate-ccw" class="w-5 h-5"></i></button>
                 <button id="btn-scan-copy" class="flex-1 py-3.5 bg-gray-100 text-gray-700 rounded-2xl font-bold hover:bg-gray-200 active:scale-95 transition-all text-[15px]">Copy</button>
+                <button id="btn-scan-share" class="p-4 bg-gray-100 text-gray-500 rounded-2xl hover:bg-gray-200 active:scale-95 transition-all"><i data-lucide="share-2" class="w-5 h-5"></i></button>
                 <button id="btn-scan-save" class="flex-[1.5] py-3.5 accent-bg accent-on-accent rounded-2xl font-bold active:scale-95 transition-all shadow-lg text-[15px] flex items-center justify-center gap-1.5"><i data-lucide="save" class="w-4 h-4"></i> Save</button>
             </div>
         </div>
@@ -1206,6 +1207,12 @@
          *    barcode parses as a phone number. Product barcodes (8/12/13 digits) get
          *    lookup buttons rather than one action, since "what IS this" is the real
          *    question and no single provider answers it best.
+         *  - Starred history + Share (Phase 3, completing it). A star pins an entry above
+         *    EVERY sort order — it means "I want to find this again", which no ordering
+         *    rule should be able to bury. The star button stops propagation: the row has
+         *    its own click handler, so without it starring also launches the item viewer
+         *    every time. Share uses Web Share where present and falls back to clipboard;
+         *    an AbortError is a CANCEL, not a failure, and must never toast an error.
          *  - History (OS_STATE.history, window.recordHistory) + batch scanning — Phase 3.
          *    History is SEPARATE from OS_STATE.apps on purpose: the home screen is a space
          *    a person curates, history is an append-only log they never asked to maintain.
@@ -2836,6 +2843,19 @@
             }
         };
 
+        window.toggleHistoryStar = function(id) {
+            try {
+                const h = (window.OS_STATE.history || []).find(x => x.id === id);
+                if (!h) return null;
+                h.starred = !h.starred;
+                saveState();
+                return h.starred;
+            } catch (e) {
+                XanLogger.warn('Star toggle failed', e && e.message);
+                return null;
+            }
+        };
+
         // Exposed for the regression suite, which asserts payload correctness per type by
         // calling build() directly rather than driving 22 forms through the UI.
         window.QUICK_TEMPLATES = QUICK_TEMPLATES;
@@ -3320,6 +3340,7 @@
                     e.target.value = '';   // so picking the same file twice still fires
                     this.scanFromImage(f);
                 });
+                document.getElementById('btn-scan-share').addEventListener('click', () => this.shareResult());
                 document.getElementById('btn-scan-discard').addEventListener('click', () => this.resetScan());
                 document.getElementById('btn-scan-copy').addEventListener('click', () => {
                     if (this.currentResult) {
@@ -3639,6 +3660,29 @@
                 setTimeout(() => {
                     this.sheet.classList.remove('translate-y-full');
                 }, 300);
+            }
+
+            // Web Share where the platform has it, clipboard everywhere else. share() rejects on
+            // user cancel exactly as it does on failure, so a cancel must not surface as an error
+            // — that would tell someone their deliberate action went wrong.
+            async shareResult() {
+                const text = this.currentResult;
+                if (!text) return;
+                if (navigator.share) {
+                    try {
+                        await navigator.share({ title: 'Scanned code', text });
+                        return;
+                    } catch (e) {
+                        if (e && e.name === 'AbortError') return;
+                        XanLogger.warn('Share failed, falling back to clipboard', e && e.message);
+                    }
+                }
+                try {
+                    await navigator.clipboard.writeText(text);
+                    window.showToast('Copied — no share sheet on this device');
+                } catch (e) {
+                    window.showToast('Could not share or copy', 'error');
+                }
             }
 
             // Batch mode. Normal scanning stops the camera on the first hit and shows one
@@ -4520,11 +4564,14 @@
                     );
                 }
 
+                // Starred entries pin to the top regardless of sort. A star means "I want to find
+                // this again", which no ordering rule should be able to bury.
+                const byStar = (a, b) => (b.starred ? 1 : 0) - (a.starred ? 1 : 0);
                 const byName = (a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
-                if (this.sort === 'name') items.sort(byName);
-                else if (this.sort === 'format') items.sort((a, b) =>
+                if (this.sort === 'name') items.sort((a, b) => byStar(a, b) || byName(a, b));
+                else if (this.sort === 'format') items.sort((a, b) => byStar(a, b) ||
                     (FORMAT_NAMES[a.bcid] || a.bcid || '').localeCompare(FORMAT_NAMES[b.bcid] || b.bcid || '') || byName(a, b));
-                else items.sort((a, b) => this.timeOf(b) - this.timeOf(a));
+                else items.sort((a, b) => byStar(a, b) || this.timeOf(b) - this.timeOf(a));
 
                 return items;
             }
@@ -4588,6 +4635,7 @@
                                 <span class="lib-meta text-white/35 text-[10px] font-semibold">${this.rowMeta(app)}</span>
                             </div>
                         </div>
+                        ${app.fromHistory ? `<button class="lib-star tap-extend relative p-1.5 shrink-0" aria-label="Star"><i data-lucide="star" class="w-[18px] h-[18px] ${app.starred ? 'fill-current text-amber-400' : 'text-white/25'}"></i></button>` : ''}
                         <i data-lucide="chevron-right" class="w-5 h-5 text-white/25 shrink-0"></i>
                     `;
 
@@ -4596,6 +4644,18 @@
                     row.querySelector('h4').textContent = app.title || 'Untitled';
                     row.querySelector('p').textContent = app.data || '';
                     row.querySelector('span').textContent = FORMAT_NAMES[app.bcid] || app.bcid || 'code';
+
+                    const star = row.querySelector('.lib-star');
+                    if (star) {
+                        star.addEventListener('click', (e) => {
+                            // Without stopPropagation the row's own handler also fires and the
+                            // item viewer opens every time you star something.
+                            e.stopPropagation();
+                            window.toggleHistoryStar(app.id);
+                            haptic(10);
+                            this.renderList();
+                        });
+                    }
 
                     row.addEventListener('click', () => {
                         this.close();
