@@ -367,6 +367,17 @@ const LAYERS = [
                                       window.Renderer.render(); } },
 ];
 
+/* Six skins exist and only the default was ever audited, which is a large blind spot for an app
+   whose whole selling point is that it restyles itself. Sizes matter too: a control that clears
+   44px on a 412px-wide phone can fall under it at 360, and a layout that fits 892px tall can
+   overflow at 640. */
+const SKINS_TO_AUDIT = ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic'];
+const SIZES = [
+    { name: '412x892', width: 412, height: 892 },   // the common Android portrait
+    { name: '360x640', width: 360, height: 640 },   // small, and still very much in use
+    { name: '430x932', width: 430, height: 932 },   // large phone
+];
+
 async function geometry(page, layer, viewport) {
     await page.evaluate(layer.open);
     await page.waitForTimeout(800);
@@ -435,6 +446,53 @@ async function geometry(page, layer, viewport) {
                 out.push(`clipped text: ${id} needs ${el.scrollWidth}px, has ${el.clientWidth}px — "${(el.textContent || '').trim().slice(0, 30)}"`);
             }
         }
+
+        // Contrast. The theming work made every chrome surface follow the accent, so text that
+        // was fine against a fixed grey is not automatically fine any more. WCAG AA is 4.5:1 for
+        // normal text and 3:1 for large; anything under 3 is unreadable by any standard, which
+        // is the line drawn here so the report stays about defects rather than taste.
+        const lum = (c) => {
+            const m = /rgba?\(([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(c);
+            if (!m) return null;
+            const [r, g, b] = m.slice(1, 4).map(v => {
+                const x = +v / 255;
+                return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+            });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        // Walk up for the first opaque background actually painted behind the text — and give up
+        // the moment an ancestor paints a background-IMAGE, because a gradient or photo has no
+        // single colour to compare against and guessing one produces confident nonsense.
+        //
+        // That is not hypothetical: the wallpaper is a gradient on `body`, whose
+        // background-COLOR is plain black. Walking past it reported every icon label on the Soft
+        // skin as 1.67:1 unreadable, when the labels are dark ink on a light gradient and
+        // perfectly legible. Nine false findings from one missing check.
+        const behind = (el) => {
+            for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+                const cs = getComputedStyle(n);
+                if (cs.backgroundImage && cs.backgroundImage !== 'none') return null;
+                const bg = cs.backgroundColor;
+                const a = /rgba\([^)]*,\s*([\d.]+)\)$/.exec(bg);
+                if (bg && bg !== 'transparent' && (!a || +a[1] > 0.85)) return bg;
+            }
+            return null;
+        };
+        for (const el of document.querySelectorAll('h1,h2,h3,h4,p,span,button,label,a')) {
+            if (!visible(el) || el.children.length) continue;
+            const text = (el.textContent || '').trim();
+            if (text.length < 2) continue;
+            const cs = getComputedStyle(el);
+            const bg = behind(el);
+            if (!bg) continue;                       // over a blur or an image: not measurable here
+            const lf = lum(cs.color), lb = lum(bg);
+            if (lf === null || lb === null) continue;
+            const ratio = (Math.max(lf, lb) + 0.05) / (Math.min(lf, lb) + 0.05);
+            if (ratio < 3) {
+                const id = el.id || el.className.toString().split(' ').slice(0, 2).join('.') || el.tagName;
+                out.push(`contrast ${ratio.toFixed(2)}:1 — ${id} "${text.slice(0, 24)}"`);
+            }
+        }
         return out;
     }, viewport);
 }
@@ -479,23 +537,39 @@ for (const scene of scenes) {
     report.push({ scene: scene.name, findings, info, errors, sheet, animationCount });
 }
 
-/* Geometry at rest, once per layer. */
+/* Geometry at rest, swept over every skin and a range of screen sizes. Two sweeps rather than
+   the full cross product: skins are audited at the common size, sizes at the default skin. The
+   combinations that matter are covered without paying for 6x3x8 page loads. */
 const geo = [];
 if (!ONLY) {
-    process.stdout.write('\n--- geometry at rest ---\n');
-    for (const layer of LAYERS) {
-        const page = await boot(browser);
-        const found = await geometry(page, layer, VIEWPORT);
-        await page.screenshot({ path: path.join(OUT, `_rest-${layer.name}.png`) });
-        await page.close();
-        process.stdout.write(`\n${layer.name}\n`);
-        if (!found.length) process.stdout.write('   ✓ clean\n');
-        // Repeats of the same shape are one problem, not twenty.
-        const seen = new Map();
-        found.forEach(f => seen.set(f, (seen.get(f) || 0) + 1));
-        [...seen].forEach(([f, n]) => process.stdout.write(`   ✗ ${f}${n > 1 ? ` (x${n})` : ''}\n`));
-        geo.push({ layer: layer.name, findings: found });
-    }
+    const runSweep = async (label, combos) => {
+        process.stdout.write(`\n--- geometry at rest: ${label} ---\n`);
+        for (const { tag, skin, size } of combos) {
+            const found = [];
+            for (const layer of LAYERS) {
+                const page = await browser.newPage({ viewport: size, deviceScaleFactor: 2 });
+                await page.goto(BASE);
+                await page.waitForFunction(() => window.Renderer && window.OS_STATE, null, { timeout: 15000 });
+                if (skin !== 'dock') {
+                    await page.evaluate((s) => window.SkinManager.setSkin(s), skin);
+                    await page.waitForTimeout(900);
+                }
+                await page.waitForTimeout(500);
+                (await geometry(page, layer, size)).forEach(f => found.push(`[${layer.name}] ${f}`));
+                await page.close();
+            }
+            process.stdout.write(`\n${tag}\n`);
+            if (!found.length) process.stdout.write('   ✓ clean\n');
+            const seen = new Map();
+            found.forEach(f => seen.set(f, (seen.get(f) || 0) + 1));
+            [...seen].forEach(([f, n]) => process.stdout.write(`   ✗ ${f}${n > 1 ? ` (x${n})` : ''}\n`));
+            geo.push({ combo: tag, findings: found });
+        }
+    };
+
+    await runSweep('skins', SKINS_TO_AUDIT.map(s => ({ tag: `skin ${s}`, skin: s, size: VIEWPORT })));
+    await runSweep('sizes', SIZES.map(z => ({ tag: `size ${z.name}`, skin: 'dock',
+                                              size: { width: z.width, height: z.height } })));
 }
 
 fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ motion: report, geometry: geo }, null, 2));
