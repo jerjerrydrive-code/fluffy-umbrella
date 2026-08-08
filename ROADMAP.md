@@ -24,11 +24,11 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 73 passing in ~90s):
+Built and covered by the regression suite (`npm test`, 77 passing in ~85s):
 
 | Area | State |
 |---|---|
-| Home screen | Paged icon grid, floating dock, physics drag-reorder, swipe-down search, edit mode |
+| Home screen | Paged icon grid, **named pages**, floating dock, physics drag-reorder, swipe-down search, edit mode |
 | Codes | **22 Quick Add types in 4 categories**, **11-format browser**, **per-code colours with a scannability validator**, item viewer |
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, **scan-from-image**, **batch mode**, **12-type payload parser**, share |
 | Library | **Saved / Scanned / Created** switch, starred favourites, **multi-select bulk delete/export**, filter + sort |
@@ -142,7 +142,8 @@ payloads degrade to plain text with copy/share, never an error.
 
 - **Folders** on the home screen (drag one icon onto another — the physics engine already has the
   hit-testing for it)
-- **Named pages** and page reordering
+- ~~**Named pages**~~ ✅ a chip above the page dots, editable in edit mode; syncs and is
+  backed up. Page reordering still to do
 - **Tags + starred** codes, surfaced as Library filters
 - ~~**Full export / import**~~ ✅ JSON backup of every code, history entry and setting
   (wallpaper included — a local file has no Firestore size cap), plus CSV export. Restore

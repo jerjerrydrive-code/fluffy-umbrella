@@ -795,6 +795,7 @@
              dock height tracks --app-size, so changing grid density moves the dock top and
              any magic number drifts out of date. Stacking them removes the coupling. -->
         <div class="absolute bottom-4 left-0 right-0 z-30 flex flex-col items-center gap-3 pointer-events-none px-4">
+            <button id="page-name-chip" class="hidden pointer-events-auto max-w-[70vw] truncate px-3.5 py-1.5 rounded-full bg-black/35 backdrop-blur-md border border-white/15 text-white text-[12px] font-bold shadow-lg active:scale-95 transition-transform"></button>
             <div class="flex justify-center items-center gap-2.5 pointer-events-none drop-shadow-md" id="pagination-container"></div>
             <nav class="ios-glass rounded-[2.25rem] p-3 pointer-events-auto w-full max-w-[380px]" id="main-dock">
                 <div id="dock-container" class="flex justify-around items-center w-full gap-1 px-1">
@@ -1016,7 +1017,7 @@
 
     <div id="rename-modal" class="modal-spring fixed inset-0 z-[200] bg-black/50 backdrop-blur-md opacity-0 pointer-events-none flex items-center justify-center p-4">
         <div class="bg-white rounded-[2rem] p-6 w-full max-w-sm shadow-2xl transform scale-90 modal-spring" id="rename-panel">
-            <h3 class="text-xl font-bold text-gray-900 mb-4 tracking-tight">Rename Item</h3>
+            <h3 id="rename-heading" class="text-xl font-bold text-gray-900 mb-4 tracking-tight">Rename Item</h3>
             <input type="text" id="rename-input" class="w-full bg-gray-100 border-2 border-transparent focus:border-black rounded-2xl px-5 py-4 text-gray-900 font-semibold outline-none transition-colors duration-300 mb-6" placeholder="Enter new title...">
             <div class="flex gap-3">
                 <button id="btn-cancel-rename" class="flex-1 py-3.5 bg-gray-100 text-gray-700 rounded-2xl font-bold hover:bg-gray-200 active:scale-95 transition-all duration-200">Cancel</button>
@@ -1230,6 +1231,18 @@
          *    barcode parses as a phone number. Product barcodes (8/12/13 digits) get
          *    lookup buttons rather than one action, since "what IS this" is the real
          *    question and no single provider answers it best.
+         *  - Named pages (OS_STATE.pageNames) — Phase 4. A chip above the page dots. It is
+         *    shown unconditionally in EDIT MODE, not only when a page already has a name —
+         *    a rename control you can only see once the thing is named cannot be used to
+         *    name it. Outside edit mode it is a label and tapping does nothing, because a
+         *    label that silently opens an editor is a trap. Clearing the field REMOVES the
+         *    name rather than storing '', or there is no way back to an unnamed page.
+         *    Syncs and is included in backups — page names describe the layout, which the
+         *    cloud payload already carries.
+         *  - InteractionManager.promptFor({heading, value, onSave}) generalises the rename
+         *    modal into a reusable single-field prompt. WATCH THE HANDOFF: openRename and
+         *    closeRename both clear pendingPrompt, or a cancelled generic prompt stays
+         *    armed and fires on the NEXT item rename instead of renaming the item. Tested.
          *  - Bulk operations (Library -> Select) — Phase 4. Multi-select rows, then export
          *    the selection as CSV or delete it. Two safety properties, both tested:
          *      - Selection CLEARS whenever the visible set changes (source switch or
@@ -1479,7 +1492,7 @@
         const DEFAULT_STATE = {
             currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: false,
             gridSize: 'auto', wallpaper: null, skin: 'dock', accent: '#3b82f6',
-            haptics: true, animations: true, history: [],
+            haptics: true, animations: true, history: [], pageNames: [],
             apps: [
                 { id: 'bc_1', title: 'My WiFi', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'WIFI:S:MyNetwork;T:WPA;P:Password;;' },
                 { id: 'bc_2', title: 'Website', type: 'grid', page: 0, order: 1, bcid: 'azteccode', data: 'https://neodrag.dev' },
@@ -1506,6 +1519,7 @@
             if(window.OS_STATE.haptics === undefined) window.OS_STATE.haptics = true;
             if(window.OS_STATE.animations === undefined) window.OS_STATE.animations = true;
             if(!Array.isArray(window.OS_STATE.history)) window.OS_STATE.history = [];
+            if(!Array.isArray(window.OS_STATE.pageNames)) window.OS_STATE.pageNames = [];
             
             window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== 'sys_settings');
             
@@ -1892,11 +1906,26 @@
                     this.pagination.appendChild(dot);
                 }
                 
+                this.updatePageChip(state.currentPage || 0);
                 safeCreateIcons();
                 if (window.DragEngine) window.DragEngine.init(document.querySelectorAll('.sortable-page'));
             }
 
+            // The chip shows a page's name when it has one, and appears unconditionally in edit
+            // mode so an unnamed page is still reachable — a rename control you can only see once
+            // the thing is already named is useless for naming it in the first place.
+            updatePageChip(index) {
+                const chip = document.getElementById('page-name-chip');
+                if (!chip) return;
+                const name = (window.OS_STATE.pageNames || [])[index] || '';
+                const editing = !!window.OS_STATE.isEditMode;
+                chip.textContent = name || (editing ? `Name page ${index + 1}` : '');
+                chip.classList.toggle('hidden', !name && !editing);
+                chip.classList.toggle('opacity-60', !name);
+            }
+
             updatePagination(activeIndex) {
+                this.updatePageChip(activeIndex);
                 const dots = this.pagination.children;
                 for (let i = 0; i < dots.length; i++) {
                     if (i === activeIndex) dots[i].classList.add('active');
@@ -2349,6 +2378,8 @@
 
             openRename(itemData) {
                 if (!itemData) return;
+                this.pendingPrompt = null;   // clear any generic prompt still armed
+                document.getElementById('rename-heading').textContent = 'Rename Item';
                 this.activeItem = itemData;
                 this.renameInput.value = itemData.title;
                 
@@ -2361,22 +2392,50 @@
             }
 
             closeRename() {
+                this.pendingPrompt = null;
                 this.renameLayer.classList.add('opacity-0', 'pointer-events-none');
                 this.renameLayer.classList.remove('opacity-100', 'pointer-events-auto');
                 this.renamePanel.classList.add('scale-90');
                 this.renamePanel.classList.remove('scale-100');
             }
 
+            // Generic single-field prompt, reusing the rename modal's DOM. Page naming needs the
+            // exact same interaction, and a second near-identical modal would be two things to
+            // keep in step for no gain.
+            promptFor({ heading, value, placeholder, onSave }) {
+                this.activeItem = null;
+                this.pendingPrompt = onSave;
+                document.getElementById('rename-heading').textContent = heading;
+                this.renameInput.placeholder = placeholder || '';
+                this.renameInput.value = value || '';
+
+                this.renameLayer.classList.remove('opacity-0', 'pointer-events-none');
+                this.renameLayer.classList.add('opacity-100', 'pointer-events-auto');
+                this.renamePanel.classList.remove('scale-90');
+                this.renamePanel.classList.add('scale-100');
+                setTimeout(() => this.renameInput.focus(), 150);
+            }
+
             saveRename() {
+                const text = this.renameInput.value.trim();
+
+                // Generic prompt path.
+                if (this.pendingPrompt) {
+                    const fn = this.pendingPrompt;
+                    this.pendingPrompt = null;
+                    this.closeRename();
+                    fn(text);
+                    return;
+                }
+
                 if (!this.activeItem) return;
-                const newTitle = this.renameInput.value.trim();
-                if (newTitle && newTitle !== this.activeItem.title) {
+                if (text && text !== this.activeItem.title) {
                     const itemRef = window.OS_STATE.apps.find(a => a.id === this.activeItem.id);
                     if (itemRef) {
-                        itemRef.title = newTitle;
+                        itemRef.title = text;
                         saveState();
-                        window.Renderer.render(); 
-                        if(this.enlargeLayer.classList.contains('opacity-100')) this.enlargeTitle.innerText = newTitle;
+                        window.Renderer.render();
+                        if(this.enlargeLayer.classList.contains('opacity-100')) this.enlargeTitle.innerText = text;
                     }
                 }
                 this.closeRename();
@@ -2925,6 +2984,7 @@
                 exportedAt: new Date().toISOString(),
                 state: {
                     apps: st.apps,
+                    pageNames: st.pageNames || [],
                     history: st.history || [],
                     gridSize: st.gridSize, gridCols: st.gridCols, gridRows: st.gridRows,
                     autoArrange: st.autoArrange, skin: st.skin, accent: st.accent,
@@ -2979,7 +3039,7 @@
             }
 
             // Preferences are restored outright — they describe the device, not its contents.
-            ['gridSize', 'gridCols', 'gridRows', 'autoArrange', 'skin', 'accent', 'haptics', 'animations']
+            ['gridSize', 'gridCols', 'gridRows', 'autoArrange', 'skin', 'accent', 'haptics', 'animations', 'pageNames']
                 .forEach(k => { if (incoming[k] !== undefined) st[k] = incoming[k]; });
             if (incoming.wallpaper) st.wallpaper = incoming.wallpaper;
 
@@ -4504,6 +4564,7 @@
                 if (!data || !Array.isArray(data.apps)) return;
                 this.applyingRemote = true;
                 window.OS_STATE.apps = data.apps;
+                if (Array.isArray(data.pageNames)) window.OS_STATE.pageNames = data.pageNames;
                 if (data.gridSize) window.OS_STATE.gridSize = data.gridSize;
                 if (data.autoArrange !== undefined) window.OS_STATE.autoArrange = data.autoArrange;
                 if (data.skin) { window.OS_STATE.skin = data.skin; if (window.SkinManager) { window.SkinManager.current = data.skin; document.body.setAttribute('data-skin', data.skin); window.SkinManager.render(); } }
@@ -4545,6 +4606,7 @@
                         // by anyone remembering to strip it (same reasoning as wallpaper,
                         // HARD RULE 4 — bulky, device-local, and of no use on another device).
                         apps: window.OS_STATE.apps,
+                        pageNames: window.OS_STATE.pageNames,
                         gridSize: window.OS_STATE.gridSize,
                         autoArrange: window.OS_STATE.autoArrange,
                         skin: window.OS_STATE.skin,
@@ -4996,6 +5058,27 @@
         window.ThemeManager = new OSThemeManager();
         window.Layout = new LayoutManager(window.Renderer);
         window.CloudSync = new OSCloudSyncManager();
+
+        document.getElementById('page-name-chip').addEventListener('click', () => {
+            // Only in edit mode. Outside it the chip is a label, and a label that silently
+            // opens an editor when tapped is a trap rather than a feature.
+            if (!window.OS_STATE.isEditMode) return;
+            const idx = window.OS_STATE.currentPage || 0;
+            window.InteractionManager.promptFor({
+                heading: `Name page ${idx + 1}`,
+                value: (window.OS_STATE.pageNames || [])[idx] || '',
+                placeholder: 'e.g. Work, Travel, Home',
+                onSave: (text) => {
+                    if (!Array.isArray(window.OS_STATE.pageNames)) window.OS_STATE.pageNames = [];
+                    // An empty name CLEARS it rather than storing '' — otherwise there is no
+                    // way back to an unnamed page once you have named one.
+                    window.OS_STATE.pageNames[idx] = text || undefined;
+                    saveState();
+                    haptic(12);
+                    window.Renderer.updatePageChip(idx);
+                }
+            });
+        });
 
         const pager = document.getElementById('workspace-pager');
         pager.addEventListener('scroll', () => {

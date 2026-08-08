@@ -1846,3 +1846,101 @@ test.describe('Bulk operations (Phase 4)', () => {
         expect(await page.evaluate(() => window.OS_STATE.history.length)).toBe(0);
     });
 });
+
+test.describe('Named pages (Phase 4)', () => {
+    test('the chip appears in edit mode so an unnamed page can be named', async ({ page }) => {
+        // A rename control only visible once a thing is already named cannot be used to name it.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await expect(page.locator('#page-name-chip')).toHaveClass(/hidden/);
+
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+        await expect(page.locator('#page-name-chip')).not.toHaveClass(/hidden/);
+        await expect(page.locator('#page-name-chip')).toContainText('Name page 1');
+    });
+
+    test('naming a page persists, shows outside edit mode, and clears when emptied', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(300);
+        await page.click('#page-name-chip');
+        await page.waitForTimeout(300);
+        await page.fill('#rename-input', 'Travel');
+        await page.click('#btn-save-rename');
+        await page.waitForTimeout(400);
+
+        expect(await page.evaluate(() => window.OS_STATE.pageNames[0])).toBe('Travel');
+
+        // Visible outside edit mode once it has a name.
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = false;
+            document.body.classList.remove('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+        await expect(page.locator('#page-name-chip')).not.toHaveClass(/hidden/);
+        await expect(page.locator('#page-name-chip')).toContainText('Travel');
+
+        // Emptying the field must clear the name, not store an empty string — otherwise there is
+        // no way back to an unnamed page.
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(300);
+        await page.click('#page-name-chip');
+        await page.waitForTimeout(300);
+        await page.fill('#rename-input', '');
+        await page.click('#btn-save-rename');
+        await page.waitForTimeout(400);
+        expect(await page.evaluate(() => window.OS_STATE.pageNames[0])).toBeUndefined();
+    });
+
+    test('the chip does nothing outside edit mode', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => {
+            window.OS_STATE.pageNames = ['Work'];
+            window.Renderer.updatePageChip(0);
+        });
+        await page.waitForTimeout(300);
+        await page.click('#page-name-chip');
+        await page.waitForTimeout(400);
+        await expect(page.locator('#rename-modal')).toHaveClass(/pointer-events-none/);
+    });
+
+    test('the generic prompt does not leak into the next item rename', async ({ page }) => {
+        // promptFor and openRename share one modal. If the generic callback is not disarmed,
+        // renaming a code afterwards runs the page-naming handler instead.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        await page.evaluate(() => {
+            window.InteractionManager.promptFor({
+                heading: 'Test', value: '', onSave: () => { window.__leaked = true; }
+            });
+            window.InteractionManager.closeRename();          // cancelled
+            const item = window.OS_STATE.apps.find(a => a.type === 'grid');
+            window.InteractionManager.openRename(item);
+        });
+        await page.fill('#rename-input', 'Renamed Properly');
+        await page.click('#btn-save-rename');
+        await page.waitForTimeout(400);
+
+        expect(await page.evaluate(() => window.__leaked)).toBeUndefined();
+        expect(await page.evaluate(() =>
+            window.OS_STATE.apps.some(a => a.title === 'Renamed Properly'))).toBe(true);
+    });
+});
