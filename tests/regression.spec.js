@@ -2282,6 +2282,27 @@ test.describe('Back navigation (XanNav)', () => {
         expect(await page.evaluate(() => (history.state && history.state.xanDepth) || 0)).toBe(0);
     });
 
+    test('closing one layer and opening another in the same tick keeps the new one', async ({ page }) => {
+        // Finishing a scan closes the scanner and opens the editor in one tick. MutationObserver
+        // delivers records in observer-registration order, so the arrival can be seen before the
+        // departure — the stack must not treat the newcomer as collateral of the layer below it.
+        await boot(page);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(250);
+        await page.evaluate(() => { window.SettingsManager.close(); window.LibraryManager.open(); });
+        await page.waitForTimeout(500);
+
+        expect(await isOpen(page, 'library-overlay')).toBe(true);
+        expect(await isOpen(page, 'settings-modal')).toBe(false);
+        expect(await page.evaluate(() => window.XanNav.stack.map(l => l.id))).toEqual(['library-overlay']);
+        expect(await page.evaluate(() => (history.state && history.state.xanDepth) || 0)).toBe(1);
+
+        // And Back still gets you out of the one that is actually open.
+        await page.goBack();
+        await page.waitForTimeout(400);
+        expect(await isOpen(page, 'library-overlay')).toBe(false);
+    });
+
     test('Back leaves edit mode instead of leaving the app', async ({ page }) => {
         await boot(page);
         await page.evaluate(() => {
@@ -2418,5 +2439,181 @@ test.describe('Edit-mode dragging (report: "I have to re-tap the icons")', () =>
         expect(await page.evaluate(() => window.DragEngine.isEngaged)).toBe(true);
         await page.mouse.up();
         await page.waitForTimeout(700);
+    });
+});
+
+test.describe('Theme coverage (report: "so much doesnt even get themes")', () => {
+    // The accent used to reach only things that were already accent-coloured. Everything
+    // structural was a fixed grey, so picking any of the 1352 reachable accents changed a few
+    // controls and left the app looking the same.
+    const surfaceOf = (page, sel, prop = 'backgroundColor') =>
+        page.evaluate(([s, p]) => getComputedStyle(document.querySelector(s))[p], [sel, prop]);
+
+    test('chrome repaints when the accent changes, on every major surface', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => { window.SettingsManager.open(); window.LibraryManager.open(); });
+        await page.waitForTimeout(400);
+
+        const surfaces = ['#settings-panel', '#library-overlay', '#folder-overlay', '#main-dock',
+                          '#settings-modal', '#account-modal', '#create-panel', '#item-fullscreen-layer'];
+        const read = async () => {
+            const out = {};
+            for (const s of surfaces) out[s] = await surfaceOf(page, s);
+            return out;
+        };
+
+        await page.evaluate(() => window.ThemeManager.applyAccent('#1F5C6B', false));
+        await page.waitForTimeout(200);
+        const teal = await read();
+
+        await page.evaluate(() => window.ThemeManager.applyAccent('#F2B33F', false));
+        await page.waitForTimeout(200);
+        const amber = await read();
+
+        for (const s of surfaces) {
+            expect(teal[s], `${s} has no background at all`).not.toBe('rgba(0, 0, 0, 0)');
+            expect(amber[s], `${s} does not respond to the accent`).not.toBe(teal[s]);
+        }
+    });
+
+    test('the white plate behind a code is never tinted, on any accent', async ({ page }) => {
+        // Scannability is functional, not decorative: a tinted plate cuts the contrast a 1D
+        // reader needs. Every accent-driven surface rule must stop at the code.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => {
+            const item = window.OS_STATE.apps.find(a => a.type === 'grid');
+            window.InteractionManager.openEnlarge(item);
+        });
+        await page.waitForTimeout(600);
+
+        for (const accent of ['#1F5C6B', '#F2B33F', '#E97A7A', '#000000', '#FFFFFF']) {
+            await page.evaluate((a) => window.ThemeManager.applyAccent(a, false), accent);
+            await page.waitForTimeout(120);
+            expect(await surfaceOf(page, '.fullscreen-canvas-panel'),
+                   `plate tinted by accent ${accent}`).toBe('rgb(255, 255, 255)');
+        }
+    });
+
+    test('accent text stays readable on tinted chrome across the whole palette', async ({ page }) => {
+        // Tinting the chrome toward the accent made accent-coloured TEXT on that chrome much
+        // harder to read — a dark teal accent on teal-tinted panels fell under 2:1. Every one of
+        // the 1352 reachable accents has to clear 4.5:1 on both the dark and the light surface.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const worst = await page.evaluate(() => {
+            const { ratio, mixHex } = window.accentMath;
+            const tm = window.ThemeManager;
+            const row = document.getElementById('theme-swatch-row');
+            const accents = [...new Set([...row.children]
+                .filter(el => el._quad).flatMap(el => el._quad))];
+            let dark = { r: Infinity }, light = { r: Infinity };
+            for (const hex of accents) {
+                const onDark = ratio(tm.readableOn(hex, mixHex('#1c1c1e', hex, 0.08)),
+                                     mixHex('#1c1c1e', hex, 0.08));
+                const onLight = ratio(tm.readableOn(hex, mixHex('#ffffff', hex, 0.05)),
+                                      mixHex('#ffffff', hex, 0.05));
+                if (onDark < dark.r) dark = { r: onDark, hex };
+                if (onLight < light.r) light = { r: onLight, hex };
+            }
+            return { dark, light, count: accents.length };
+        });
+
+        expect(worst.count).toBeGreaterThan(1000);
+        expect(worst.dark.r, `worst accent on dark chrome: ${worst.dark.hex}`).toBeGreaterThanOrEqual(4.5);
+        expect(worst.light.r, `worst accent on light chrome: ${worst.light.hex}`).toBeGreaterThanOrEqual(4.5);
+    });
+
+    test('an accent that already passes is left exactly as the user picked it', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const unchanged = await page.evaluate(() => {
+            const { mixHex } = window.accentMath;
+            const hex = '#F2B33F';   // bright amber, comfortably readable on dark chrome
+            return window.ThemeManager.readableOn(hex, mixHex('#1c1c1e', hex, 0.08));
+        });
+        expect(unchanged.toUpperCase()).toBe('#F2B33F');
+    });
+});
+
+test.describe('Palette browsing (report: "im missing so many themes")', () => {
+    test('tapping a band selects that colour instead of one of the four at random', async ({ page }) => {
+        // The swatch shows four colours; tapping one should give you that one. Picking at
+        // random from the four meant getting the shade you were looking at was a matter of
+        // tapping until it came up.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(400);
+
+        const swatch = page.locator('#theme-swatch-row button.accent-swatch').nth(3);
+        const quad = await swatch.evaluate(el => el._quad);
+        const box = await swatch.boundingBox();
+
+        for (let band = 0; band < 4; band++) {
+            // Aim at the middle of each band in turn.
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height * (band + 0.5) / 4);
+            await page.mouse.down();
+            await page.mouse.up();
+            await page.waitForTimeout(120);
+            expect(await page.evaluate(() => window.OS_STATE.accent.toUpperCase()))
+                .toBe(quad[band].toUpperCase());
+        }
+    });
+
+    test('a tap with no coordinates still picks something rather than throwing', async ({ page }) => {
+        // Synthetic events and keyboard activation carry no clientY, so there is no band to
+        // read. That path has to keep working.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const swatch = page.locator('#theme-swatch-row button.accent-swatch').nth(2);
+        await swatch.dispatchEvent('pointerdown');
+        await swatch.dispatchEvent('pointerup');
+        await page.waitForTimeout(200);
+
+        const quad = await swatch.evaluate(el => el._quad);
+        expect(quad.map(c => c.toUpperCase()))
+            .toContain(await page.evaluate(() => window.OS_STATE.accent.toUpperCase()));
+    });
+
+    test('the whole palette can be browsed, not just the first screenful', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(400);
+
+        // The count is on the control, so the size of the palette is discoverable.
+        await expect(page.locator('#btn-theme-expand')).toHaveText(/Browse all 338/);
+
+        const strip = await page.locator('#theme-swatch-row').evaluate(el => ({
+            cols: getComputedStyle(el).gridTemplateColumns, wide: el.scrollWidth,
+        }));
+        expect(strip.cols).toBe('none');           // collapsed: one horizontal strip
+
+        await page.locator('#btn-theme-expand').click();
+        await page.waitForTimeout(300);
+
+        const grid = await page.locator('#theme-swatch-row').evaluate(el => ({
+            cols: getComputedStyle(el).gridTemplateColumns.split(' ').length,
+            tall: el.scrollHeight, wide: el.scrollWidth, box: el.clientWidth,
+        }));
+        expect(grid.cols).toBe(6);                  // expanded: wraps into a grid
+        expect(grid.wide).toBeLessThanOrEqual(grid.box + 1);   // no sideways scrolling left
+        expect(grid.tall).toBeGreaterThan(1000);    // and all 338 are in there to scroll through
+        await expect(page.locator('#btn-theme-expand')).toHaveText('Show less');
+    });
+
+    test('expanded swatches are big enough for their bands to be tappable', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(400);
+        await page.locator('#btn-theme-expand').click();
+        await page.waitForTimeout(300);
+
+        const box = await page.locator('#theme-swatch-row button.accent-swatch').first().boundingBox();
+        expect(box.height / 4).toBeGreaterThanOrEqual(9);
     });
 });

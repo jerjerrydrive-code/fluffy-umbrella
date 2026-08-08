@@ -50,12 +50,110 @@
            whole app by changing one CSS variable. See OSThemeManager for the packed-theme +
            reroll/favorite mechanic. */
         .accent-bg { background-color: var(--accent) !important; }
-        .accent-text { color: var(--accent) !important; }
+        /* Accent text resolves per surface: --accent-readable inherits, so a light panel only
+           has to redefine it once and everything inside picks up the darkened variant. Falls
+           back to the raw accent if OSThemeManager has not run yet. */
+        .accent-text { color: var(--accent-readable, var(--accent)) !important; }
         .accent-border { border-color: var(--accent) !important; }
         .accent-on-accent { color: var(--accent-text) !important; }
         .accent-bg-soft { background-color: color-mix(in srgb, var(--accent) 16%, transparent) !important; }
         .accent-border-soft { border-color: color-mix(in srgb, var(--accent) 35%, transparent) !important; }
         .accent-bg:active { filter: brightness(0.92); }
+
+        /* ================= SURFACE TINTING =================
+           The accent used to reach only things that were already accent-coloured: a handful of
+           buttons, rings and pills. Everything structural — the settings sheet, the account
+           sheet, the Library, the folder view, every backdrop, every divider — was a fixed iOS
+           grey, so picking any of the 1352 reachable accents changed a few small controls and
+           left the app looking identical. Hence "so much doesn't even get themes".
+
+           These derive each chrome surface from the accent, so one variable retints the whole
+           interface with no JavaScript: change --accent and every rule below recomputes.
+
+           The mix percentages are deliberately modest. Text colours on these surfaces are fixed
+           (white on the dark ones, near-black on the light ones), and they have to stay legible
+           against ALL 1352 accents including the near-white and near-black slots in the palette.
+           A tint keeps the surface's luminance where the text expects it; a repaint would not,
+           and there is no way to verify legibility for a value the user has not picked yet.
+
+           One surface is deliberately excluded: the white plate a barcode is drawn on. Those
+           stay pure white everywhere — .fullscreen-canvas-panel, the icon tiles, the Library
+           thumbnails, the folder previews. A tinted plate lowers the contrast a 1D reader needs,
+           and scannability is functional, not decorative (same principle as checkScannability). */
+        :root {
+            --surface-1:       color-mix(in srgb, var(--accent) 8%,  #1c1c1e);
+            --surface-2:       color-mix(in srgb, var(--accent) 10%, #2c2c2e);
+            --surface-raised:  color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.10));
+            --surface-raised-2:color-mix(in srgb, var(--accent) 26%, rgba(255, 255, 255, 0.20));
+            --surface-line:    color-mix(in srgb, var(--accent) 32%, rgba(255, 255, 255, 0.11));
+            --surface-sunken:  color-mix(in srgb, var(--accent) 12%, rgba(0, 0, 0, 0.35));
+            --surface-glass:   color-mix(in srgb, var(--accent) 14%, rgba(20, 20, 20, 0.65));
+            --veil:            color-mix(in srgb, var(--accent) 16%, rgba(0, 0, 0, 0.55));
+            --surface-light:   color-mix(in srgb, var(--accent) 5%,  #ffffff);
+            --surface-light-2: color-mix(in srgb, var(--accent) 9%,  #f3f4f6);
+            --veil-light:      color-mix(in srgb, var(--accent) 9%,  rgba(255, 255, 255, 0.85));
+        }
+
+        :root { --accent-readable: var(--accent-on-dark, var(--accent)); }
+        #create-panel, #rename-panel, #item-fullscreen-layer,
+        body[data-skin="glass"] #library-overlay,
+        body[data-skin="glass"] #item-fullscreen-layer {
+            --accent-readable: var(--accent-on-light, var(--accent));
+        }
+
+        /* Dark panels and sheets. */
+        .bg-\[\#1c1c1e\]      { background-color: var(--surface-1); }
+        .bg-\[\#1c1c1e\]\/80  { background-color: color-mix(in srgb, var(--surface-1) 80%, transparent); }
+        .bg-\[\#1c1c1e\]\/95  { background-color: color-mix(in srgb, var(--surface-1) 95%, transparent); }
+        .bg-\[\#2c2c2e\]      { background-color: var(--surface-2); }
+
+        /* Controls that sit on a dark panel, and the hairlines between them. */
+        .bg-white\/5          { background-color: color-mix(in srgb, var(--accent) 18%, rgba(255,255,255,0.05)); }
+        .bg-white\/10         { background-color: var(--surface-raised); }
+        .bg-white\/20,
+        .bg-white\/25         { background-color: var(--surface-raised-2); }
+        .hover\:bg-white\/20:hover { background-color: var(--surface-raised-2); }
+        .hover\:bg-white\/30:hover { background-color: color-mix(in srgb, var(--accent) 28%, rgba(255,255,255,0.30)); }
+        .border-white\/10     { border-color: var(--surface-line); }
+        .border-white\/15     { border-color: color-mix(in srgb, var(--accent) 32%, rgba(255,255,255,0.15)); }
+        .border-white\/30     { border-color: color-mix(in srgb, var(--accent) 32%, rgba(255,255,255,0.30)); }
+
+        /* Sunken wells and floating controls over the wallpaper. */
+        .bg-black\/20         { background-color: color-mix(in srgb, var(--accent) 12%, rgba(0,0,0,0.20)); }
+        .bg-black\/30         { background-color: color-mix(in srgb, var(--accent) 12%, rgba(0,0,0,0.30)); }
+        .bg-black\/35         { background-color: color-mix(in srgb, var(--accent) 12%, rgba(0,0,0,0.35)); }
+        .bg-black\/40         { background-color: var(--surface-sunken); }
+        .hover\:bg-black\/30:hover { background-color: color-mix(in srgb, var(--accent) 16%, rgba(0,0,0,0.30)); }
+
+        /* Backdrops behind every overlay. */
+        .bg-black\/50, .bg-black\/55, .bg-black\/60 { background-color: var(--veil); }
+
+        /* Light sheets: the code editor, the rename prompt, the fullscreen viewer.
+           Targeted by id so the white plates NESTED inside them are left alone. */
+        #create-panel, #rename-panel { background-color: var(--surface-light); }
+        #item-fullscreen-layer       { background-color: var(--veil-light); }
+        #create-panel .bg-gray-100,
+        #rename-panel .bg-gray-100,
+        #item-fullscreen-layer .bg-gray-100 { background-color: var(--surface-light-2); }
+        #create-panel .hover\:bg-gray-200:hover,
+        #rename-panel .hover\:bg-gray-200:hover,
+        #item-fullscreen-layer .hover\:bg-gray-200:hover {
+            background-color: color-mix(in srgb, var(--accent) 14%, #e5e7eb);
+        }
+        #item-fullscreen-layer .bg-black\/5  { background-color: color-mix(in srgb, var(--accent) 10%, rgba(0,0,0,0.05)); }
+        #item-fullscreen-layer .hover\:bg-black\/10:hover { background-color: color-mix(in srgb, var(--accent) 12%, rgba(0,0,0,0.10)); }
+
+        /* The Scan Card skin's stat table. */
+        .stat-row { border-bottom-color: color-mix(in srgb, var(--accent) 18%, rgba(0,0,0,0.06)); }
+        body[data-skin="scancard"] .fullscreen-stats {
+            background: var(--surface-light-2);
+            border-color: color-mix(in srgb, var(--accent) 12%, #f3f4f6);
+        }
+
+        /* Restated after the tinting rules so nothing above can reach the plate a code is
+           drawn on. Specificity here is equal-or-higher and these come later in the sheet. */
+        .fullscreen-canvas-panel { background-color: #ffffff; }
+
 
         /* Accent swatches. The gradient must be sized to the BORDER box: these buttons carry a
            2px (transparent when inactive) border, and by default a background is *positioned* to
@@ -66,6 +164,26 @@
         .accent-swatch {
             background-origin: border-box;
             background-repeat: no-repeat;
+        }
+
+        /* Expanded palette. 338 themes in a single horizontal strip is roughly 15,000px of
+           sideways scrolling inside a small sheet — technically all there, practically
+           unreachable, which is the other half of "I'm missing so many themes". Expanded, the
+           same swatches wrap into a grid that scrolls vertically like everything else in the
+           sheet, and each one is large enough that its four bands are individually tappable. */
+        #theme-swatch-row.expanded {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 0.55rem;
+            overflow-x: hidden;
+            overflow-y: auto;
+            max-height: 42vh;
+        }
+        #theme-swatch-row.expanded .accent-swatch {
+            width: 100%; height: auto; aspect-ratio: 1 / 1;
+        }
+        #theme-swatch-row.expanded .swatch-divider {
+            grid-column: 1 / -1; width: 100%; height: 1px; margin: 0.15rem 0;
         }
 
         /* Library source + sort pills. Active state is accent-driven per HARD RULE 7. */
@@ -113,10 +231,10 @@
         .pixelated { image-rendering: pixelated; }
 
         .ios-glass {
-            background: rgba(20, 20, 20, 0.65);
+            background: var(--surface-glass);
             backdrop-filter: blur(25px);
             -webkit-backdrop-filter: blur(25px);
-            border: 0.5px solid rgba(255, 255, 255, 0.15);
+            border: 0.5px solid var(--surface-line);
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
         }
 
@@ -906,10 +1024,11 @@
                 </div>
             </div>
             <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
-                <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 flex items-center justify-between">
+                <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 flex items-center justify-between gap-2">
                     <span>Accent Color</span>
-                    <span class="text-gray-500 normal-case font-medium text-[9.5px]">Tap to shuffle · Hold to pin</span>
+                    <button id="btn-theme-expand" class="tap-extend accent-text normal-case font-bold text-[10.5px] tracking-normal active:opacity-60 transition-opacity shrink-0"></button>
                 </div>
+                <p class="text-gray-500 normal-case font-medium text-[9.5px] pl-1 -mt-1.5">Tap a colour to use it · Hold to pin</p>
                 <div id="theme-swatch-row" class="flex gap-2.5 overflow-x-auto hide-scrollbar pb-1"></div>
             </div>
             <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
@@ -4616,6 +4735,19 @@
             }
         }
 
+        // Reuses the WCAG 2.1 luminance and contrast helpers the scannability validator already
+        // defines above — one definition of "contrast" for the whole app. mixHex is the only
+        // new piece: a plain sRGB mix, matching what color-mix(in srgb, ...) does in the
+        // stylesheet, so JS and CSS agree on what a tinted surface actually is.
+        const relLum = relLuminance;
+        const ratio = contrastRatio;
+        const mixHex = (a, b, t) => {
+            const ch = (h, i) => parseInt(h.replace('#', '').substring(i, i + 2), 16);
+            return '#' + [0, 2, 4].map(i =>
+                Math.round(ch(a, i) * (1 - t) + ch(b, i) * t).toString(16).padStart(2, '0')).join('');
+        };
+        window.accentMath = { relLum, ratio, mixHex };
+
         class OSThemeManager {
             constructor() {
                 this.rowEl = document.getElementById('theme-swatch-row');
@@ -4623,6 +4755,7 @@
                 this.current = (window.OS_STATE.accent || '#3b82f6').toUpperCase();
                 this.applyAccent(this.current, false);
                 this.render();
+                this.initExpandToggle();
             }
 
             loadFavorites() {
@@ -4642,6 +4775,26 @@
             // accent only changes which swatch is ringed — that goes through syncActiveRings()
             // instead, which touches two class lists. Calling render() on every tap made the row
             // visibly stutter once the palette grew past the old 48-theme placeholder.
+            // Collapsed by default: the strip is a quick "give me a different colour" control,
+            // and expanding it eats most of the sheet. The label carries the real count so the
+            // size of the palette is discoverable rather than something you find by scrolling.
+            initExpandToggle() {
+                this.expandBtn = document.getElementById('btn-theme-expand');
+                if (!this.expandBtn) return;
+                this.syncExpandLabel();
+                this.expandBtn.addEventListener('click', () => {
+                    this.rowEl.classList.toggle('expanded');
+                    this.syncExpandLabel();
+                    haptic(12);
+                });
+            }
+
+            syncExpandLabel() {
+                if (!this.expandBtn) return;
+                const open = this.rowEl.classList.contains('expanded');
+                this.expandBtn.textContent = open ? 'Show less' : `Browse all ${THEMES.length}`;
+            }
+
             render() {
                 if (!this.rowEl) return;
                 this.rowEl.innerHTML = '';
@@ -4649,7 +4802,7 @@
                 this.favorites.forEach(hex => this.rowEl.appendChild(this.createSwatch(null, hex)));
                 if (this.favorites.length) {
                     const divider = document.createElement('div');
-                    divider.className = 'w-px bg-white/10 shrink-0 my-1';
+                    divider.className = 'swatch-divider w-px bg-white/10 shrink-0 my-1';
                     this.rowEl.appendChild(divider);
                 }
                 THEMES.forEach(quad => this.rowEl.appendChild(this.createSwatch(quad, null)));
@@ -4720,23 +4873,41 @@
                 const cancelPress = () => { if (pressTimer) clearTimeout(pressTimer); };
 
                 btn.addEventListener('pointerdown', startPress);
-                btn.addEventListener('pointerup', () => {
+                btn.addEventListener('pointerup', (e) => {
                     cancelPress();
-                    if (!longPressed) this.selectSwatch(quad, pinnedHex);
+                    if (!longPressed) this.selectSwatch(quad, pinnedHex, e);
                 });
                 btn.addEventListener('pointerleave', cancelPress);
 
                 return btn;
             }
 
-            selectSwatch(quad, pinnedHex) {
+            // A swatch shows four colours as four stacked bands, so tapping one should give you
+            // that colour. It used to pick at random from the four, which meant getting the shade
+            // you were looking at was a matter of tapping until it came up. Randomness is kept
+            // only as the fallback for a tap with no usable coordinates (a synthetic event, or a
+            // keyboard activation), where there is no band to read.
+            bandAt(btn, e) {
+                const h = btn.getBoundingClientRect().height;
+                if (!h || !e || typeof e.clientY !== 'number') return -1;
+                const y = e.clientY - btn.getBoundingClientRect().top;
+                if (y < 0 || y > h) return -1;
+                return Math.min(3, Math.max(0, Math.floor((y / h) * 4)));
+            }
+
+            selectSwatch(quad, pinnedHex, e) {
                 let hex;
                 if (pinnedHex) {
                     hex = pinnedHex;
                 } else {
-                    const candidates = quad.filter(c => c.toUpperCase() !== this.current);
-                    const pool = candidates.length ? candidates : quad;
-                    hex = pool[Math.floor(Math.random() * pool.length)];
+                    const band = e && e.currentTarget ? this.bandAt(e.currentTarget, e) : -1;
+                    if (band >= 0) {
+                        hex = quad[band];
+                    } else {
+                        const candidates = quad.filter(c => c.toUpperCase() !== this.current);
+                        const pool = candidates.length ? candidates : quad;
+                        hex = pool[Math.floor(Math.random() * pool.length)];
+                    }
                 }
                 haptic(10);
                 this.applyAccent(hex, true);
@@ -4759,8 +4930,13 @@
 
             applyAccent(hex, persist) {
                 this.current = hex.toUpperCase();
-                document.documentElement.style.setProperty('--accent', hex);
-                document.documentElement.style.setProperty('--accent-text', this.contrastTextFor(hex));
+                const root = document.documentElement.style;
+                root.setProperty('--accent', hex);
+                root.setProperty('--accent-text', this.contrastTextFor(hex));
+                // Mirrors the --surface-1 / --surface-light mixes in the stylesheet, so the
+                // contrast is measured against the colour the text is really drawn on.
+                root.setProperty('--accent-on-dark',  this.readableOn(hex, mixHex('#1c1c1e', hex, 0.08)));
+                root.setProperty('--accent-on-light', this.readableOn(hex, mixHex('#ffffff', hex, 0.05)));
                 if (persist) {
                     window.OS_STATE.accent = hex;
                     saveState();
@@ -4782,19 +4958,27 @@
             // rather than keep hunting for a text colour; that is Phase 5 work. This picks the
             // best available option in every case, which is strictly better than the guess.
             contrastTextFor(hex) {
-                const lum = (h) => {
-                    const c = h.replace('#', '');
-                    const [r, g, b] = [0, 2, 4].map(i => {
-                        const v = parseInt(c.substring(i, i + 2), 16) / 255;
-                        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-                    });
-                    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                };
-                const ratio = (a, b) => {
-                    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
-                    return (hi + 0.05) / (lo + 0.05);
-                };
                 return ratio('#ffffff', hex) >= ratio('#111827', hex) ? '#ffffff' : '#111827';
+            }
+
+            // The accent as TEXT is a different problem from the accent as a FILL, and it got
+            // sharper once the chrome itself started tinting toward the accent: a dark teal
+            // accent printed on teal-tinted panels dropped under 2:1, which is what made the
+            // Library's active pills and the format badges unreadable on darker themes.
+            //
+            // So keep the hue and move only the lightness, by the smallest amount that clears
+            // 4.5:1 against the surface the text actually sits on — the mixed surface, computed
+            // the same way the CSS mixes it, not the untinted base. Accents that already pass
+            // are returned untouched, so most themes look exactly as picked.
+            readableOn(hex, surface) {
+                if (ratio(hex, surface) >= 4.5) return hex;
+                const toward = relLum(surface) < 0.5 ? '#ffffff' : '#000000';
+                let lo = 0, hi = 1;
+                for (let i = 0; i < 14; i++) {
+                    const mid = (lo + hi) / 2;
+                    if (ratio(mixHex(hex, toward, mid), surface) >= 4.5) hi = mid; else lo = mid;
+                }
+                return mixHex(hex, toward, hi);
             }
         }
 
@@ -5580,8 +5764,14 @@
             _hide(layer) {
                 const idx = this.stack.indexOf(layer);
                 if (idx < 0) return;
-                // Anything stacked on top of a layer that just closed went with it.
-                this.stack.splice(idx).forEach(l => { if (l !== layer) this._close(l); });
+                // Only this layer leaves. An earlier version also closed everything stacked
+                // above it, on the assumption that layers always close from the top down. They
+                // do not: MutationObserver delivers records in observer-registration order, so
+                // "close A, open B" in one tick can report B's arrival before A's departure —
+                // and the cascade then shut B, which is a flow the app really uses (finish a
+                // scan, then open the editor). Whatever is still visible stays on the stack and
+                // simply shifts down a level.
+                this.stack.splice(idx, 1);
                 this._schedule();
             },
 
