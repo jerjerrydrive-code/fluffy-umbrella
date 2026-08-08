@@ -2149,7 +2149,8 @@
                 this.containers = [];
                 this.wasDragging = false; this.isEngaged = false; this.isPageFlipping = false;
                 this.dwellTimer = null; this.dwellTarget = null; this.folderArmed = null;
-                
+                this.settleTimer = null;
+
                 this.onPointerDown = this.onPointerDown.bind(this);
                 this.onPointerMove = this.onPointerMove.bind(this);
                 this.onPointerUp = this.onPointerUp.bind(this);
@@ -2159,23 +2160,27 @@
                 }, { passive: false });
             }
 
+            // Listeners live on the page containers, never on individual icons. Binding each
+            // icon worked only because render() happens to re-bind at the end of every repaint;
+            // any icon that reached the DOM another way — or any future path that mutates the
+            // grid without a full render — got no listener and would jiggle without being
+            // draggable. Delegation cannot drift out of step with the DOM. The containers are
+            // themselves new elements on every render, so there is nothing to unbind.
             init(containers) {
-                this.cleanupListeners();
+                this.detachPointerTracking();
                 this.containers = Array.from(containers);
-                if (window.OS_STATE.isEditMode) {
-                    this.containers.forEach(container => {
-                        Array.from(container.children).forEach(item => item.addEventListener('pointerdown', this.onPointerDown));
-                    });
-                }
+                this.containers.forEach(c => c.addEventListener('pointerdown', this.onPointerDown));
             }
 
-            cleanupListeners() {
+            detachPointerTracking() {
                 document.removeEventListener('pointermove', this.onPointerMove);
                 document.removeEventListener('pointerup', this.onPointerUp);
                 document.removeEventListener('pointercancel', this.onPointerUp);
-                if (this.containers) {
-                    this.containers.forEach(c => Array.from(c.children).forEach(item => item.removeEventListener('pointerdown', this.onPointerDown)));
-                }
+            }
+
+            cleanupListeners() {
+                this.detachPointerTracking();
+                if (this.containers) this.containers.forEach(c => c.removeEventListener('pointerdown', this.onPointerDown));
             }
 
             destroy() {
@@ -2185,9 +2190,16 @@
 
             onPointerDown(e) {
                 if (!window.OS_STATE.isEditMode || e.target.closest('button')) return;
-                const target = e.currentTarget;
-                if (target.classList.contains('empty-slot')) return;
-                
+                const target = e.target.closest('.app-icon-wrapper');
+                if (!target || target.classList.contains('custom-drag-ghost')) return;
+                if (target.parentNode !== e.currentTarget) return;
+
+                // Grabbing a second icon while the previous drop was still settling let that
+                // pending timer fire mid-flight: it wiped the new drag's inline transform and
+                // removed the new ghost, so the icon stuck to the finger and went nowhere. That
+                // is the "I have to re-tap to move another one" symptom. Land the old drop now.
+                if (this.draggedEl) this.settleDrop();
+                                
                 this.startX = e.clientX; this.startY = e.clientY;
                 this.currentX = e.clientX; this.currentY = e.clientY;
                 
@@ -2414,20 +2426,27 @@
                 this.draggedEl.style.transition = 'transform 0.4s var(--spring-snappy)';
                 this.draggedEl.style.transform = `translate3d(${ghostRect.left}px, ${ghostRect.top}px, 0) scale(1)`;
 
-                setTimeout(() => {
-                    if (!this.draggedEl) return;
-                    this.draggedEl.style = '';
-                    const jiggles = this.draggedEl.querySelectorAll('.jiggle-target');
-                    jiggles.forEach(j => j.style.animation = '');
-                    
-                    this.currentContainer.insertBefore(this.draggedEl, this.ghostEl);
-                    this.ghostEl.remove();
-                    
-                    this.syncState();
-                    this.draggedEl = null; this.ghostEl = null;
-                    
-                    setTimeout(() => { this.wasDragging = false; }, 50);
-                }, 400);
+                this.settleTimer = setTimeout(() => this.settleDrop(), 400);
+            }
+
+            // Drops the dragged icon back into the grid at the slot its ghost is holding.
+            // Runs from the settle timer, or immediately when a new drag starts first.
+            // Running it twice is harmless; running it late is what broke the next drag.
+            settleDrop() {
+                clearTimeout(this.settleTimer);
+                this.settleTimer = null;
+                if (!this.draggedEl || !this.ghostEl) return;
+
+                this.draggedEl.style = '';
+                this.draggedEl.querySelectorAll('.jiggle-target').forEach(j => j.style.animation = '');
+
+                this.currentContainer.insertBefore(this.draggedEl, this.ghostEl);
+                this.ghostEl.remove();
+
+                this.syncState();
+                this.draggedEl = null; this.ghostEl = null;
+
+                setTimeout(() => { this.wasDragging = false; }, 50);
             }
         }
 
@@ -5500,6 +5519,126 @@
             }
         }
 
+
+        /* ==================================================================
+           NAVIGATION STACK
+
+           Every overlay here is a fixed layer switched on by adding
+           `opacity-100 pointer-events-auto` and off by removing them. None of it was tied to
+           browser history, so the Android Back button never closed the top layer — it left the
+           app outright. From inside a folder, or the library, or a fullscreen code, Back was a
+           dead end and the only way out was finding the right X. That is the "I get stuck in a
+           lot of pages and can't go back" report, and it applied to all ten layers at once.
+
+           Rather than edit every open and close call site (and miss whichever ones get added
+           later), this watches the class attribute of each registered layer and mirrors what it
+           sees into history. A layer appearing pushes an entry; Back pops it and calls that
+           layer's own close method; closing by button unwinds the matching entries so the two
+           stacks cannot drift apart.
+
+           Two properties make the unwinding safe. Every close method is idempotent — they only
+           strip classes — so a redundant call does nothing. And history reconciliation is
+           deferred to a microtask, so a flow that closes one layer and opens another in the
+           same tick (scan a code, then show the editor) settles to one net change instead of
+           racing a pushState against an in-flight go().
+        ================================================================== */
+        const XanNav = {
+            layers: new Map(),
+            stack: [],        // open layers, bottom to top
+            _suppress: 0,     // popstate events we caused and must not act on
+            _inPop: false,
+            _pending: false,
+
+            // Default test: the class pair every overlay in this file toggles.
+            _visible(layer) {
+                return layer.isOpen ? !!layer.isOpen(layer.el)
+                                    : layer.el.classList.contains('pointer-events-auto');
+            },
+
+            // `ref` is an element id, or the element itself when the class that marks the
+            // state does not live on the layer's own node (edit mode marks <body>).
+            register(id, close, isOpen, ref) {
+                const el = typeof ref === 'object' && ref ? ref : document.getElementById(id);
+                if (!el) { XanLogger.warn(`XanNav: no element #${id} to register`); return; }
+                const layer = { id, el, close, isOpen };
+                this.layers.set(id, layer);
+                new MutationObserver(() => this._sync(layer))
+                    .observe(el, { attributes: true, attributeFilter: ['class'] });
+                if (this._visible(layer)) this._show(layer);
+            },
+
+            _sync(layer) {
+                if (this._visible(layer)) this._show(layer); else this._hide(layer);
+            },
+
+            _show(layer) {
+                if (this.stack.includes(layer)) return;
+                this.stack.push(layer);
+                this._schedule();
+            },
+
+            _hide(layer) {
+                const idx = this.stack.indexOf(layer);
+                if (idx < 0) return;
+                // Anything stacked on top of a layer that just closed went with it.
+                this.stack.splice(idx).forEach(l => { if (l !== layer) this._close(l); });
+                this._schedule();
+            },
+
+            _close(layer) {
+                try { layer.close(); }
+                catch (e) { XanLogger.error(`XanNav: closing ${layer.id} failed`, e); }
+            },
+
+            _schedule() {
+                if (this._pending) return;
+                this._pending = true;
+                queueMicrotask(() => this._reconcile());
+            },
+
+            // Bring history depth in line with how many layers are actually open. Skipped while
+            // a navigation we asked for is still in flight, because history.state is stale until
+            // its popstate lands; the popstate handler re-runs this once the queue drains.
+            _reconcile() {
+                this._pending = false;
+                if (this._inPop || this._suppress > 0) return;
+                const want = this.stack.length;
+                const have = (history.state && history.state.xanDepth) || 0;
+                if (want === have) return;
+                if (want > have) {
+                    for (let d = have + 1; d <= want; d++) history.pushState({ xanDepth: d }, '');
+                } else {
+                    this._suppress += have - want;
+                    history.go(want - have);
+                }
+            },
+
+            _onPop(e) {
+                if (this._suppress > 0) {
+                    this._suppress--;
+                    if (this._suppress === 0) this._schedule();
+                    return;
+                }
+                const depth = (e.state && e.state.xanDepth) || 0;
+                this._inPop = true;
+                while (this.stack.length > depth) this._close(this.stack.pop());
+                this._inPop = false;
+                this._schedule();
+            },
+
+            init() {
+                window.addEventListener('popstate', (e) => this._onPop(e));
+                // Escape is the desktop equivalent of hardware Back. Routing it through history
+                // rather than straight at close() keeps both stacks in step.
+                document.addEventListener('keydown', (e) => {
+                    if (e.key !== 'Escape' || !this.stack.length) return;
+                    e.preventDefault();
+                    history.back();
+                });
+            }
+        };
+        window.XanNav = XanNav;
+
         // --- INIT ---
         window.TimeEngine = new OSTimeEngine();
         window.Renderer = new OSRenderer();
@@ -5517,6 +5656,25 @@
         window.ThemeManager = new OSThemeManager();
         window.Layout = new LayoutManager(window.Renderer);
         window.CloudSync = new OSCloudSyncManager();
+
+        // Registered top of stack last is irrelevant — the stack is built from what actually
+        // opens. What matters is that every dismissable layer is here, including edit mode,
+        // which is a mode rather than an overlay but is just as much a state you need out of.
+        XanNav.init();
+        [
+            ['search-overlay',       () => window.GestureManager.closeSearch()],
+            ['item-fullscreen-layer',() => window.InteractionManager.closeEnlarge()],
+            ['library-overlay',      () => window.LibraryManager.close()],
+            ['folder-overlay',       () => window.FolderManager.close()],
+            ['settings-modal',       () => window.SettingsManager.close()],
+            ['account-modal',        () => window.CloudSync.close()],
+            ['rename-modal',         () => window.InteractionManager.closeRename()],
+            ['create-modal',         () => window.CodeGenerator.close()],
+            ['scanner-modal',        () => window.ScannerEngine.stop()],
+        ].forEach(([id, close]) => XanNav.register(id, close));
+
+        XanNav.register('edit-mode', () => window.exitEditMode(),
+                        () => document.body.classList.contains('edit-mode'), document.body);
 
         [['btn-page-left', -1], ['btn-page-right', 1]].forEach(([id, dir]) => {
             document.getElementById(id).addEventListener('click', () => {
@@ -5583,16 +5741,22 @@
         pager.addEventListener('mouseup', cancelPress);
         pager.addEventListener('mouseleave', cancelPress);
 
+        window.exitEditMode = () => {
+            if (!window.OS_STATE.isEditMode) return;
+            window.OS_STATE.isEditMode = false;
+            document.body.classList.remove('edit-mode');
+            document.querySelectorAll('.jiggle-target').forEach(j => j.style.animation = 'none');
+
+            window.DragEngine.destroy();
+            setTimeout(() => { window.Renderer.render(); }, 400);
+        };
+
         pager.addEventListener('click', (e) => {
-            if (window.OS_STATE.isEditMode && !e.target.closest('.app-icon-wrapper')) {
-                window.OS_STATE.isEditMode = false;
-                document.body.classList.remove('edit-mode');
-                const jiggles = document.querySelectorAll('.jiggle-target');
-                jiggles.forEach(j => j.style.animation = 'none');
-                
-                window.DragEngine.destroy();
-                setTimeout(() => { window.Renderer.render(); }, 400);
-            }
+            // A drag that ends over an empty slot synthesises a click on that slot, and without
+            // this guard that click read as "tapped the background" and ended edit mode. Which
+            // is why moving a second icon meant long-pressing all over again.
+            if (window.DragEngine && (window.DragEngine.isEngaged || window.DragEngine.wasDragging)) return;
+            if (!e.target.closest('.app-icon-wrapper')) window.exitEditMode();
         });
 
         // Lock to portrait so the home-screen layout never has to reflow mid-use.

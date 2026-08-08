@@ -2218,3 +2218,205 @@ test.describe('Page reordering (Phase 4)', () => {
         await expect(page.locator('#btn-page-right')).not.toBeDisabled();
     });
 });
+
+test.describe('Back navigation (XanNav)', () => {
+    // The report was "I get stuck in a lot of pages and cant go back". Nothing in the app was
+    // wired to history, so hardware Back on Android left the PWA instead of closing the layer
+    // on top. Each of these opens a layer the way the UI opens it, then presses Back.
+    const boot = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+    };
+    const isOpen = (page, id) => page.evaluate(
+        (i) => document.getElementById(i).classList.contains('pointer-events-auto'), id);
+
+    for (const [name, id, open] of [
+        ['the Library',      'library-overlay',       () => window.LibraryManager.open()],
+        ['Settings',         'settings-modal',        () => window.SettingsManager.open()],
+        ['the code editor',  'create-modal',          () => window.CodeGenerator.open()],
+        ['search',           'search-overlay',        () => window.GestureManager.openSearch()],
+    ]) {
+        test(`Back closes ${name}`, async ({ page }) => {
+            await boot(page);
+            await page.evaluate(open);
+            await page.waitForTimeout(300);
+            expect(await isOpen(page, id)).toBe(true);
+
+            await page.goBack();
+            await page.waitForTimeout(400);
+            expect(await isOpen(page, id)).toBe(false);
+        });
+    }
+
+    test('Back unwinds nested layers one at a time, innermost first', async ({ page }) => {
+        await boot(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(250);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(250);
+
+        expect(await isOpen(page, 'library-overlay')).toBe(true);
+        expect(await isOpen(page, 'settings-modal')).toBe(true);
+
+        await page.goBack();
+        await page.waitForTimeout(400);
+        // Settings was on top, so only Settings goes.
+        expect(await isOpen(page, 'settings-modal')).toBe(false);
+        expect(await isOpen(page, 'library-overlay')).toBe(true);
+
+        await page.goBack();
+        await page.waitForTimeout(400);
+        expect(await isOpen(page, 'library-overlay')).toBe(false);
+    });
+
+    test('closing by button unwinds history too, so Back does not reopen anything', async ({ page }) => {
+        // The failure this guards: close with the X, then press Back, and the leftover history
+        // entry pops you into a layer you already dismissed — or worse, out of the app.
+        await boot(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(250);
+        await page.locator('#btn-close-library').click();
+        await page.waitForTimeout(400);
+
+        expect(await page.evaluate(() => window.XanNav.stack.length)).toBe(0);
+        expect(await page.evaluate(() => (history.state && history.state.xanDepth) || 0)).toBe(0);
+    });
+
+    test('Back leaves edit mode instead of leaving the app', async ({ page }) => {
+        await boot(page);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+
+        await page.goBack();
+        await page.waitForTimeout(700);
+        expect(await page.evaluate(() => window.OS_STATE.isEditMode)).toBe(false);
+        expect(await page.evaluate(() => document.body.classList.contains('edit-mode'))).toBe(false);
+    });
+
+    test('Escape closes the top layer on desktop', async ({ page }) => {
+        await boot(page);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(300);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(400);
+        expect(await isOpen(page, 'settings-modal')).toBe(false);
+    });
+
+    test('every dismissable layer is registered, so none can become a dead end', async ({ page }) => {
+        await boot(page);
+        const registered = await page.evaluate(() => [...window.XanNav.layers.keys()]);
+        for (const id of ['search-overlay', 'item-fullscreen-layer', 'library-overlay',
+                          'folder-overlay', 'settings-modal', 'account-modal', 'rename-modal',
+                          'create-modal', 'scanner-modal', 'edit-mode']) {
+            expect(registered, `${id} is not reachable by Back`).toContain(id);
+        }
+    });
+});
+
+test.describe('Edit-mode dragging (report: "I have to re-tap the icons")', () => {
+    const enterEditMode = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+    };
+    const centres = (page) => page.evaluate(() =>
+        [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')].slice(0, 3).map(el => {
+            const r = el.getBoundingClientRect();
+            return { id: el.dataset.id, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }));
+
+    test('dropping an icon on an empty slot does not kick you out of edit mode', async ({ page }) => {
+        // This was the actual cause of the re-tapping. Releasing over a free slot synthesised a
+        // click on that slot, the background-tap handler read it as "done rearranging", and edit
+        // mode ended — so every further move needed another long press.
+        await enterEditMode(page);
+        const icons = await centres(page);
+        const empty = await page.evaluate(() => {
+            const s = document.querySelector('#workspace-pager .empty-slot');
+            if (!s) return null;
+            const r = s.getBoundingClientRect();
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+        expect(empty, 'the first page needs a free slot for this test').not.toBeNull();
+
+        await page.mouse.move(icons[0].x, icons[0].y);
+        await page.mouse.down();
+        await page.mouse.move(icons[0].x + 12, icons[0].y + 12, { steps: 3 });
+        await page.mouse.move(empty.x, empty.y, { steps: 10 });
+        await page.mouse.up();
+        await page.waitForTimeout(900);
+
+        expect(await page.evaluate(() => window.OS_STATE.isEditMode)).toBe(true);
+        expect(await page.evaluate(() => document.body.classList.contains('edit-mode'))).toBe(true);
+    });
+
+    test('a second icon can be moved straight after the first, with no tap in between', async ({ page }) => {
+        await enterEditMode(page);
+        const icons = await centres(page);
+
+        // First move.
+        await page.mouse.move(icons[0].x, icons[0].y);
+        await page.mouse.down();
+        await page.mouse.move(icons[0].x + 12, icons[0].y + 12, { steps: 3 });
+        await page.mouse.move(icons[2].x, icons[2].y, { steps: 10 });
+        await page.mouse.up();
+        await page.waitForTimeout(120);   // deliberately inside the 400ms settle window
+
+        // Second move begins before the first has finished animating home. The settle timer
+        // used to fire mid-flight here and strip the new drag's transform.
+        await page.mouse.move(icons[1].x, icons[1].y);
+        await page.mouse.down();
+        await page.mouse.move(icons[1].x + 12, icons[1].y + 12, { steps: 3 });
+        const engaged = await page.evaluate(() => window.DragEngine.isEngaged);
+        await page.mouse.move(icons[0].x, icons[0].y, { steps: 10 });
+        await page.mouse.up();
+        await page.waitForTimeout(900);
+
+        expect(engaged, 'the second drag never engaged').toBe(true);
+        expect(await page.evaluate(() => window.OS_STATE.isEditMode)).toBe(true);
+        // No icon may be left detached from the grid by an interrupted settle.
+        expect(await page.evaluate(() =>
+            [...document.querySelectorAll('.app-icon-wrapper')]
+                .filter(el => el.style.position === 'fixed').length)).toBe(0);
+        expect(await page.evaluate(() =>
+            document.querySelectorAll('.custom-drag-ghost').length)).toBe(0);
+    });
+
+    test('an icon that reaches the grid without a render is still draggable', async ({ page }) => {
+        // Listeners used to be attached to each icon element inside init(). That stayed correct
+        // only because render() calls init() as its last step — an icon arriving in the grid by
+        // any other route got none, and would jiggle without being pickable. Delegation removes
+        // the dependency on that ordering. Here the icon is cloned straight into the page, with
+        // no render, which is the case per-icon binding could not cover.
+        await enterEditMode(page);
+        await page.evaluate(() => {
+            const page0 = document.querySelector('#workspace-pager .sortable-page');
+            const slot = page0.querySelector('.empty-slot');
+            const clone = page0.querySelector('.app-icon-wrapper').cloneNode(true);
+            clone.dataset.id = 'nav-test-clone';
+            slot.replaceWith(clone);
+        });
+        await page.waitForTimeout(200);
+        const icons = await page.evaluate(() => {
+            const el = document.querySelector('[data-id="nav-test-clone"]');
+            const r = el.getBoundingClientRect();
+            return [{ x: r.left + r.width / 2, y: r.top + r.height / 2 }];
+        });
+
+        await page.mouse.move(icons[0].x, icons[0].y);
+        await page.mouse.down();
+        await page.mouse.move(icons[0].x + 12, icons[0].y + 12, { steps: 3 });
+        expect(await page.evaluate(() => window.DragEngine.isEngaged)).toBe(true);
+        await page.mouse.up();
+        await page.waitForTimeout(700);
+    });
+});
