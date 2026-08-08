@@ -848,6 +848,14 @@
 
         .morph-pulse { transform: scale(0.93) translateY(15px); filter: blur(12px) brightness(0.7); }
 
+        /* The morph is deliberately a blur-and-settle rather than a crossfade, but it was
+           holding the whole screen illegible for 608ms of an 880ms sequence — measured, not
+           guessed, by scripts/motion-audit.mjs. Changing a theme should not take the interface
+           away for over half a second. The shape of the effect is unchanged; only the dead time
+           in the middle is gone. The workspace's resting 0.4s transition is left alone because
+           the search overlay leans on it, so the shorter duration is scoped to the morph. */
+        body.skin-morphing #workspace-container { transition-duration: 0.22s; }
+
         /* ---------- Tap targets: Apple HIG 44x44pt minimum ----------
            Audited with a script that measures every rendered interactive element; the offenders
            were the two modal close buttons (36 and 40 square), the segmented grid buttons and
@@ -950,9 +958,9 @@
         <div class="flex gap-3 items-center transform -translate-y-16 transition-transform duration-500 var(--spring-snappy)" id="search-bar-container">
             <div class="flex-1 bg-[#1c1c1e]/80 backdrop-blur-3xl border border-white/10 rounded-[1.25rem] flex items-center px-4 py-3.5 shadow-2xl relative">
                 <i data-lucide="search" class="w-5 h-5 text-gray-400 mr-2.5"></i>
-                <input type="text" id="search-input" class="bg-transparent text-white w-full outline-none placeholder:text-gray-400 font-medium text-[17px]" placeholder="Search Codes & Apps">
+                <input type="text" id="search-input" class="bg-transparent text-white w-full h-11 outline-none placeholder:text-gray-400 font-medium text-[17px]" placeholder="Search Codes & Apps">
             </div>
-            <button id="btn-cancel-search" class="accent-text font-medium text-[17px] active:opacity-60 transition-opacity whitespace-nowrap pr-2">Cancel</button>
+            <button id="btn-cancel-search" class="tap-extend accent-text font-medium text-[17px] active:opacity-60 transition-opacity whitespace-nowrap pr-2">Cancel</button>
         </div>
         <div id="search-results" class="mt-8 flex-1 overflow-y-auto hide-scrollbar pb-10 px-2 flex flex-col gap-3"></div>
     </div>
@@ -1179,14 +1187,14 @@
             <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6 sm:hidden"></div>
             <div class="flex justify-between items-center mb-5">
                 <h3 class="text-2xl font-bold text-gray-900 tracking-tight">Create Code</h3>
-                <button id="btn-close-create" class="p-2 bg-gray-100 rounded-full hover:bg-gray-200 active:scale-90 transition-all duration-300">
+                <button id="btn-close-create" class="tap44 flex items-center justify-center p-2 bg-gray-100 rounded-full hover:bg-gray-200 active:scale-90 transition-all duration-300">
                     <i data-lucide="x" class="w-5 h-5 text-gray-700"></i>
                 </button>
             </div>
 
             <div class="flex gap-1.5 bg-gray-100 p-1.5 rounded-2xl mb-5">
-                <button class="create-tab-btn flex-1 py-2.5 rounded-xl text-sm font-bold transition-all duration-200" data-mode="templates">Quick Add</button>
-                <button class="create-tab-btn flex-1 py-2.5 rounded-xl text-sm font-bold transition-all duration-200" data-mode="custom">Custom</button>
+                <button class="create-tab-btn tap-extend flex-1 py-2.5 rounded-xl text-sm font-bold transition-all duration-200" data-mode="templates">Quick Add</button>
+                <button class="create-tab-btn tap-extend flex-1 py-2.5 rounded-xl text-sm font-bold transition-all duration-200" data-mode="custom">Custom</button>
             </div>
 
             <div id="create-templates-view" class="flex flex-col gap-4">
@@ -2473,6 +2481,21 @@
             }
 
             updateFolderDwell(slot) {
+                // Resting on an icon and the reorder swap fight each other, and the swap was
+                // winning. The same pointermove that starts the dwell also swaps the hovered
+                // icon into the ghost's old place — so by the next move the finger is over the
+                // GHOST, not the icon, the dwell was cleared, and the merge never armed. Whether
+                // it worked came down to where the last move event happened to land, which is
+                // why folder creation was unreliable by hand and the test for it failed about
+                // one run in five.
+                //
+                // Being over the ghost means being exactly where you already were: the ghost
+                // occupies the gap your own drag opened. So it is not a change of target, and
+                // the running dwell is left alone. The timer still holds a reference to the
+                // original icon, and resolveFolderDrop works from its data-id, so the merge
+                // lands on the item that was actually paused over even though it has moved.
+                if (slot && slot === this.ghostEl && this.dwellTarget) return;
+
                 const isIcon = slot && slot.classList.contains('app-icon-wrapper') &&
                                slot !== this.draggedEl && slot !== this.ghostEl;
 
@@ -2632,7 +2655,7 @@
 
                 const add = document.createElement('button');
                 add.id = 'btn-add-tag';
-                add.className = 'tag-chip tag-chip-add';
+                add.className = 'tag-chip tag-chip-add tap-extend';
                 add.innerHTML = `<i data-lucide="plus" class="w-3 h-3"></i><span>Tag</span>`;
                 add.addEventListener('click', () => {
                     this.promptFor({
@@ -5035,14 +5058,19 @@
                 const workspace = document.getElementById('workspace-container');
                 document.body.classList.add('skin-morphing');
                 workspace.classList.add('morph-pulse');
+                // Swap under cover of the blur — 150ms in it is ~75% deep, which is plenty to
+                // hide the change — then start easing straight back out rather than sitting at
+                // full blur waiting. Lands around 560ms instead of 880ms.
                 setTimeout(() => {
                     document.body.setAttribute('data-skin', id);
                     if (window.InteractionManager) window.InteractionManager.refreshEnlargeSkin();
-                }, 220);
+                }, 150);
                 setTimeout(() => {
                     workspace.classList.remove('morph-pulse');
+                }, 260);
+                setTimeout(() => {
                     document.body.classList.remove('skin-morphing');
-                }, 480);
+                }, 500);
 
                 this.render();
             }

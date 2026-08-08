@@ -2656,3 +2656,163 @@ test.describe('Sign-in failures explain themselves', () => {
         expect(text).not.toContain('Firebase: ');
     });
 });
+
+test.describe('Motion budgets (found by scripts/motion-audit.mjs)', () => {
+    // The suite asserts end states, so nothing here was visible to it until the motion audit
+    // stepped the animation and JS clocks together and produced a filmstrip to look at. These
+    // pin what that found, so it cannot quietly come back.
+
+    test('changing skin does not take the interface away for half a second', async ({ page }) => {
+        // The morph is deliberately a blur-and-settle rather than a crossfade. It was holding
+        // the whole screen illegible for 608ms of an 880ms sequence — long enough to read as
+        // the app going away rather than as a transition.
+        //
+        // Measured by stepping the clock, not by sampling in real time. A rAF sampler gives a
+        // number that moves with whatever else the machine is doing: the first version of this
+        // test passed alone and failed alongside two other tests on a second worker. Freezing
+        // the clock and advancing it by hand makes the result depend only on the app. Both
+        // clocks have to move together — the skin swap and the pulse removal are setTimeout,
+        // while the blur itself is a CSS transition on the browser's own timeline — so the
+        // fake clock drives the timers and getAnimations() drives the transition.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const T0 = new Date('2030-01-01T09:00:00Z');
+        await page.clock.install({ time: T0 });
+        await page.clock.pauseAt(T0);
+
+        await page.evaluate(() => {
+            window.__seen = new Map();
+            window.__step = (t) => {
+                for (const a of document.getAnimations()) {
+                    if (!window.__seen.has(a)) { window.__seen.set(a, t); try { a.pause(); } catch (e) {} }
+                    try { a.currentTime = Math.max(0, t - window.__seen.get(a)); } catch (e) {}
+                }
+                const m = /blur\(([\d.]+)px\)/.exec(
+                    getComputedStyle(document.getElementById('workspace-container')).filter);
+                return m ? +m[1] : 0;
+            };
+            window.SkinManager.setSkin('glass');
+        });
+
+        let first = null, last = null, elapsed = 0;
+        for (let t = 0; t <= 1200; t += 20) {
+            if (t > elapsed) { await page.clock.runFor(t - elapsed); elapsed = t; }
+            const blur = await page.evaluate((ms) => window.__step(ms), t);
+            if (blur >= 4) { if (first === null) first = t; last = t; }
+        }
+        const span = first === null ? 0 : last - first;
+
+        expect(span, 'screen unreadable for too long during the skin morph').toBeLessThan(500);
+        expect(span, 'the morph effect has been removed entirely').toBeGreaterThan(80);
+    });
+
+    test('every overlay settles rather than animating indefinitely', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        for (const [name, open] of [
+            ['settings', () => window.SettingsManager.open()],
+            ['library',  () => window.LibraryManager.open()],
+            ['editor',   () => window.CodeGenerator.open()],
+        ]) {
+            const settled = await page.evaluate(async (fn) => {
+                const el = document.querySelector('#settings-panel, #library-overlay, #create-panel');
+                eval(`(${fn})()`);
+                await new Promise(r => setTimeout(r, 900));
+                const a = getComputedStyle(el).transform, o = getComputedStyle(el).opacity;
+                await new Promise(r => setTimeout(r, 200));
+                return a === getComputedStyle(el).transform && o === getComputedStyle(el).opacity;
+            }, open.toString());
+            expect(settled, `${name} was still moving 900ms after opening`).toBe(true);
+        }
+    });
+
+    test('the tap targets the audit found stay at 44px', async ({ page }) => {
+        // These live in layers the older accessibility test never opened, which is why they sat
+        // undersized: the editor's close button and mode tabs, the viewer's tag button, and the
+        // search field and its Cancel.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        // Wait for the box to stop changing rather than for a fixed delay. These panels animate
+        // scale-90 to scale-100, so a measurement taken mid-transition reports 90% of the real
+        // size — 40px reads as 36 and the test fails only when the machine is busy enough to be
+        // slow, which is the worst kind of failure to debug.
+        const stableBox = async (loc) => {
+            let last = null;
+            for (let i = 0; i < 40; i++) {
+                const box = await loc.boundingBox();
+                if (box && last && Math.abs(box.height - last.height) < 0.5
+                         && Math.abs(box.width - last.width) < 0.5) return box;
+                last = box;
+                await page.waitForTimeout(50);
+            }
+            return last;
+        };
+
+        const check = async (openFn, ids) => {
+            await page.evaluate(openFn);
+            for (const id of ids) {
+                const loc = page.locator(id).first();
+                await loc.waitFor({ state: 'visible' });
+                const box = await stableBox(loc);
+                const extended = await loc.evaluate(el =>
+                    el.classList.contains('tap-extend') || el.classList.contains('tap44'));
+                const h = extended ? Math.max(box.height, 44) : box.height;
+                expect(h, `${id} is ${Math.round(box.height)}px tall`).toBeGreaterThanOrEqual(44);
+            }
+        };
+
+        await check(() => window.CodeGenerator.open(), ['#btn-close-create', '.create-tab-btn']);
+        await page.evaluate(() => window.CodeGenerator.close());
+        await check(() => window.GestureManager.openSearch(), ['#search-input', '#btn-cancel-search']);
+        await page.evaluate(() => window.GestureManager.closeSearch());
+        await check(() => window.InteractionManager.openEnlarge(
+                            window.OS_STATE.apps.find(a => a.type === 'grid')), ['#btn-add-tag']);
+    });
+});
+
+test('Folders: a merge survives the reorder swapping the target out from under the pointer', async ({ page }) => {
+    // The pointermove that starts the dwell also swaps the hovered icon into the ghost's old
+    // place, so by the next move the finger is over the ghost rather than the icon. The dwell
+    // used to be cleared by that, and whether a folder happened came down to where the final
+    // move event landed — unreliable by hand, and about one failure in five for the test above.
+    // This drives the losing case deliberately: hover the target, then keep moving on the spot
+    // so more pointermoves arrive after the swap has taken the icon away.
+    await page.goto('/index.html');
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => {
+        window.OS_STATE.isEditMode = true;
+        document.body.classList.add('edit-mode');
+        window.Renderer.render();
+    });
+    await page.waitForTimeout(500);
+
+    const boxes = await page.evaluate(() =>
+        [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')].slice(0, 2).map(el => {
+            const r = el.getBoundingClientRect();
+            return { id: el.dataset.id, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }));
+
+    await page.mouse.move(boxes[1].x, boxes[1].y);
+    await page.mouse.down();
+    await page.mouse.move(boxes[1].x + 12, boxes[1].y + 12, { steps: 3 });
+    await page.mouse.move(boxes[0].x, boxes[0].y, { steps: 12 });
+
+    // Jitter on the spot across the whole dwell window. Every one of these lands on the ghost
+    // once the swap has happened, which is precisely what used to cancel the merge.
+    for (let i = 0; i < 10; i++) {
+        await page.mouse.move(boxes[0].x + (i % 2 ? 1 : -1), boxes[0].y);
+        await page.waitForTimeout(80);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+
+    const r = await page.evaluate(() => ({
+        folders: window.OS_STATE.apps.filter(a => a.type === 'folder').length,
+        filed: window.OS_STATE.apps.filter(a => a.folderId).length,
+    }));
+    expect(r.folders, 'the merge was cancelled by the reorder swap').toBe(1);
+    expect(r.filed).toBe(2);
+});

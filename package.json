@@ -7,7 +7,8 @@
     "test": "playwright test",
     "test:headed": "playwright test --headed",
     "serve": "node scripts/dev-server.mjs",
-    "build:css": "tailwindcss -c tailwind.config.js -i vendor/tailwind.src.css -o vendor/tailwind.css --minify"
+    "build:css": "tailwindcss -c tailwind.config.js -i vendor/tailwind.src.css -o vendor/tailwind.css --minify",
+    "audit:motion": "node scripts/motion-audit.mjs"
   },
   "repository": {
     "type": "git",
