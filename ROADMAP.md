@@ -24,12 +24,12 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 47 passing in ~46s):
+Built and covered by the regression suite (`npm test`, 51 passing in ~57s):
 
 | Area | State |
 |---|---|
 | Home screen | Paged icon grid, floating dock, physics drag-reorder, swipe-down search, edit mode |
-| Codes | **22 Quick Add types in 4 categories**, **11-format browser with validation**, item viewer (enlarge / copy / save PNG / rename) |
+| Codes | **22 Quick Add types in 4 categories**, **11-format browser**, **per-code colours with a scannability validator**, item viewer |
 | Scanner | Multi-camera, autofocus, zoom, torch, 4K→1080p fallback, smart payload parsing |
 | Library | Browse-all view: filter + sort by Recent / Name / Format |
 | Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin, WCAG-measured accent text |
@@ -86,14 +86,13 @@ by default and let every skin opt in — do not fork the structure.
 
 ---
 
-## Phase 2 — The Create Engine 🔨 IN PROGRESS
+## Phase 2 — The Create Engine ✅ COMPLETE
 **Months 2–3 · Oct–Nov 2026**
 
 ~~Today: 7 Quick Add templates.~~ **Done: 22 types across four categories**, on a declarative
 registry — each entry carries its fields and a `build()`, so adding a type is one object rather
 than an arm in two parallel switch statements. ~~the format browser~~ is done too — 11 symbologies with plain-language blurbs, searchable
-across them, plus per-format input validation that closes a silent render failure. Remaining in
-this phase: **code styling**.
+across them, plus per-format input validation that closes a silent render failure. **Phase 2 is done.**
 
 - **Socials:** Instagram, WhatsApp, X, Facebook, YouTube, TikTok, LinkedIn, Telegram, Snapchat, Pinterest
 - **Personal:** Email, Phone, SMS, vCard/MeCard, Calendar event, Location/Geo
@@ -103,10 +102,15 @@ this phase: **code styling**.
   search that matches those blurbs. Every one is verified to encode in bwip-js by test, and each
   1D format's real input rules are enforced before save
 
-Plus **code styling** — the feature that makes the theme engine pay off twice: foreground /
-background colour pickers (drawing on the same 338-theme palette), corner-dot styling, and
-centre logo embedding, with a **live contrast/scannability validator** that blocks colour pairs a
-real scanner won't read.
+~~**Code styling**~~ ✅ foreground/background pickers drawing on the recovered 338-theme palette,
+with a live **scannability validator**. It judges two things, and the second is what a
+contrast-only check gets wrong: inverted white-on-black scores a perfect 21:1 and still fails on
+most 1D readers, so the same pair is a hard fail on EAN-13 and a warning on QR. `warn` still
+saves; only `fail` blocks. All rendering moved to one `renderCode` path so colours apply in every
+surface.
+
+Deferred to a later pass: corner-dot styling and centre-logo embedding. Both are cosmetic;
+the scannability engine they'd need is now in place.
 
 **Definition of done:** every type produces a payload verified to decode correctly by a round-trip
 test (generate → decode → compare). Aztec stays the default everywhere (HARD RULE 6).

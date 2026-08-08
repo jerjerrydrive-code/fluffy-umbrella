@@ -1051,6 +1051,25 @@
                     <p id="format-warning" class="hidden text-[11px] font-semibold text-red-500 mt-2 ml-1 leading-relaxed"></p>
                 </div>
                 <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Style</label>
+                    <div class="border border-gray-200 rounded-2xl p-4 flex flex-col gap-3 shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <span class="text-[11px] font-bold text-gray-500 uppercase tracking-wider w-16 shrink-0">Code</span>
+                            <div id="style-fg-row" class="flex gap-2 overflow-x-auto hide-scrollbar flex-1"></div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-[11px] font-bold text-gray-500 uppercase tracking-wider w-16 shrink-0">Behind</span>
+                            <div id="style-bg-row" class="flex gap-2 overflow-x-auto hide-scrollbar flex-1"></div>
+                        </div>
+                        <div class="flex items-center gap-3 pt-1 border-t border-gray-100">
+                            <div class="w-14 h-14 rounded-xl border border-gray-200 flex items-center justify-center shrink-0 overflow-hidden">
+                                <canvas id="style-preview" class="max-w-full max-h-full pixelated"></canvas>
+                            </div>
+                            <p id="style-verdict" class="text-[11px] font-semibold leading-relaxed"></p>
+                        </div>
+                    </div>
+                </div>
+                <div>
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">Data</label>
                     <textarea id="create-input-data" rows="3" class="w-full bg-gray-50 border border-gray-200 focus:border-black focus:bg-white rounded-2xl px-5 py-4 text-gray-900 font-mono text-sm outline-none transition-all duration-300 shadow-sm resize-none" placeholder=""></textarea>
                 </div>
@@ -1155,6 +1174,24 @@
          *    <select> is now a hidden input of the same id, so saveFromCustomForm and the
          *    scanner prefill kept working untouched — the browser is layered ON that
          *    contract, not a replacement for it.
+         *  - Code styling + scannability (window.checkScannability, window.renderCode):
+         *    per-code fg/bg colours, drawn from the recovered palette so a code can match
+         *    the accent the user picked. Two rules, and the SECOND is the one a naive
+         *    implementation misses:
+         *      (a) CONTRAST — scanners threshold reflectance, so text-legibility AA
+         *          (4.5:1) is nowhere near enough. 7:1 is the floor for reliable
+         *          decoding; below 4.5:1 it simply fails.
+         *      (b) POLARITY — nearly all scanners expect DARK data on LIGHT. Inverted
+         *          white-on-black scores a PERFECT 21:1 and still breaks most 1D laser
+         *          and CCD readers. So the same 21:1 pair is a hard fail on EAN-13 and
+         *          only a warning on QR, where camera decoders usually cope. A
+         *          contrast-only validator waves this straight through.
+         *    'warn' still saves (readable, just not ideal); only 'fail' blocks.
+         *    ALL code rendering now goes through window.renderCode — the home grid,
+         *    search, library and fullscreen viewer each had their own hardcoded
+         *    black-on-white option object, so colours would otherwise have applied in
+         *    some surfaces and not others. Add new render sites there, not inline.
+         *    fg/bg are stored only when non-default, so old items stay clean.
          *  - Format validation (window.validateForFormat): each 1D symbology's real input
          *    rules, enforced on input AND again on save. This closes a silent failure —
          *    bwip-js THROWS on data that does not fit (letters in an EAN-13, an odd digit
@@ -1524,8 +1561,7 @@
 
                     if (app.type === 'grid' && app.bcid) {
                         setTimeout(() => {
-                            try { bwipjs.toCanvas(`search-can-${app.id}`, { bcid: app.bcid, text: app.data, scale: 2, backgroundcolor: 'ffffff', barcolor: '000000', textcolor: '000000', padding: 0 }); } 
-                            catch(e) {}
+                            window.renderCode(`search-can-${app.id}`, app, { scale: 2 });
                         }, 10);
                     }
                 });
@@ -1674,8 +1710,7 @@
 
                 if (itemData.type === 'grid' && itemData.bcid) {
                     setTimeout(() => {
-                        try { bwipjs.toCanvas(`can-${itemData.id}`, { bcid: itemData.bcid, text: itemData.data, scale: 3, backgroundcolor: 'ffffff', barcolor: '000000', textcolor: '000000', padding: 0 }); } 
-                        catch (e) { XanLogger.error("Canvas Error:", e) }
+                        window.renderCode(`can-${itemData.id}`, itemData, { scale: 3 });
                     }, 10);
                 }
                 
@@ -2121,10 +2156,7 @@
                 this.populateEnlargeExtras(itemData);
 
                 try {
-                    bwipjs.toCanvas('fullscreen-canvas', {
-                        bcid: itemData.bcid, text: itemData.data, scale: 5, padding: 3,
-                        backgroundcolor: 'ffffff', barcolor: '000000', textcolor: '000000'
-                    });
+                    window.renderCode('fullscreen-canvas', itemData, { scale: 5, padding: 3 });
                 } catch(e) { XanLogger.error(e) }
 
                 this.enlargeLayer.classList.remove('opacity-0', 'pointer-events-none', 'scale-[0.97]', 'rounded-[3rem]');
@@ -2511,6 +2543,78 @@
             return f.validate(data);
         };
 
+        // ---------------------------------------------------------------------------------
+        //  CODE COLOUR + SCANNABILITY
+        //  Codes may be recoloured, but a code that cannot be read is not a code. These are the
+        //  rules a scanner actually imposes, which are stricter and different from text contrast:
+        //
+        //  1. CONTRAST. Scanners threshold reflectance, so a low-contrast pair is unreadable long
+        //     before it looks bad to a human. Text-legibility AA (4.5:1) is nowhere near enough
+        //     here — 7:1 is the floor for reliable decoding, and below 4.5:1 it will simply fail.
+        //  2. POLARITY. Nearly all scanners expect DARK data on a LIGHT background. Inverting it
+        //     breaks most 1D laser and CCD readers outright; modern 2D camera decoders usually
+        //     cope, so an inverted 2D code is a warning while an inverted 1D one is a hard fail.
+        //     This is the rule a naive "just check contrast" validator misses.
+        // ---------------------------------------------------------------------------------
+        const CODE_DEFAULT_FG = '000000';
+        const CODE_DEFAULT_BG = 'FFFFFF';
+
+        const relLuminance = (hex) => {
+            const h = String(hex).replace('#', '');
+            const [r, g, b] = [0, 2, 4].map(i => {
+                const v = parseInt(h.substring(i, i + 2), 16) / 255;
+                return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+            });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        const contrastRatio = (a, b) => {
+            const [hi, lo] = [relLuminance(a), relLuminance(b)].sort((x, y) => y - x);
+            return (hi + 0.05) / (lo + 0.05);
+        };
+
+        window.checkScannability = function(fg, bg, bcid) {
+            const ratio = contrastRatio(fg, bg);
+            const inverted = relLuminance(fg) > relLuminance(bg);
+            const is1D = (CODE_FORMATS.find(f => f.bcid === bcid) || {}).kind === '1D';
+
+            if (inverted && is1D) {
+                return { level: 'fail', ratio,
+                    message: 'Light bars on a dark background will not scan on most 1D readers. Swap the colours.' };
+            }
+            if (ratio < 4.5) {
+                return { level: 'fail', ratio,
+                    message: `Not enough contrast to scan (${ratio.toFixed(1)}:1). Aim for 7:1 or more.` };
+            }
+            if (inverted) {
+                return { level: 'warn', ratio,
+                    message: 'Inverted codes read on most phone cameras but fail on some scanners.' };
+            }
+            if (ratio < 7) {
+                return { level: 'warn', ratio,
+                    message: `Contrast is low (${ratio.toFixed(1)}:1). Readable, but 7:1 or more is safer.` };
+            }
+            return { level: 'ok', ratio, message: `Good contrast (${ratio.toFixed(1)}:1).` };
+        };
+
+        // Single render path for every code in the app — home grid, search, library and the
+        // fullscreen viewer all went through their own hardcoded black-on-white option object,
+        // so per-code colours would otherwise have applied in some places and not others.
+        window.renderCode = function(target, item, extra = {}) {
+            const fg = (item.fg || CODE_DEFAULT_FG).replace('#', '');
+            const bg = (item.bg || CODE_DEFAULT_BG).replace('#', '');
+            try {
+                bwipjs.toCanvas(target, Object.assign({
+                    bcid: item.bcid, text: item.data,
+                    backgroundcolor: bg, barcolor: fg, textcolor: fg,
+                    scale: 3, padding: 0
+                }, extra));
+                return true;
+            } catch (e) {
+                XanLogger.error('Code render failed', e);
+                return false;
+            }
+        };
+
         // Exposed for the regression suite, which asserts payload correctness per type by
         // calling build() directly rather than driving 22 forms through the UI.
         window.QUICK_TEMPLATES = QUICK_TEMPLATES;
@@ -2533,6 +2637,12 @@
                 this.formatSearch = document.getElementById('format-search');
                 this.formatOptions = document.getElementById('format-options');
                 this.formatWarning = document.getElementById('format-warning');
+                this.fgRow = document.getElementById('style-fg-row');
+                this.bgRow = document.getElementById('style-bg-row');
+                this.stylePreview = document.getElementById('style-preview');
+                this.styleVerdict = document.getElementById('style-verdict');
+                this.fg = CODE_DEFAULT_FG;
+                this.bg = CODE_DEFAULT_BG;
                 this.activeCategory = 'popular';
                 this.templateFormContainer = document.getElementById('template-form-container');
                 this.tabButtons = document.querySelectorAll('.create-tab-btn');
@@ -2550,6 +2660,7 @@
 
                 this.renderFormatOptions();
                 this.syncFormatButton();
+                this.renderStyleRows();
                 this.renderCategoryRow();
                 this.renderTemplateGrid();
             }
@@ -2763,9 +2874,13 @@
             selectFormat(bcid) {
                 this.inputType.value = bcid;
                 haptic(8);
+                this.fg = CODE_DEFAULT_FG;
+                this.bg = CODE_DEFAULT_BG;
                 this.syncFormatButton();
                 this.toggleFormatPanel(false);
                 this.validateCustom();
+                this.renderStyleRows();
+                this.updateStylePreview();
             }
 
             // Live check against the chosen symbology's real constraints. Returns true when the
@@ -2778,6 +2893,60 @@
                 return !err;
             }
 
+            // Swatches are drawn from the recovered palette rather than a fresh hardcoded list —
+            // 338 themes x 4 colours is already the app's colour vocabulary, and reusing it means
+            // a code can be styled to match the accent the user actually picked. Black and white
+            // are prepended because they are the correct default and the safest choice.
+            styleSwatches(which) {
+                const fromPalette = THEMES.slice(0, 14).map(q => q[3].replace('#', ''));
+                return which === 'fg'
+                    ? [CODE_DEFAULT_FG, '1F2933', ...fromPalette]
+                    : [CODE_DEFAULT_BG, 'F2F2F7', ...fromPalette];
+            }
+
+            renderStyleRows() {
+                [['fg', this.fgRow], ['bg', this.bgRow]].forEach(([which, row]) => {
+                    if (!row) return;
+                    row.innerHTML = '';
+                    this.styleSwatches(which).forEach(hex => {
+                        const active = hex.toUpperCase() === (which === 'fg' ? this.fg : this.bg).toUpperCase();
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.dataset.hex = hex;
+                        btn.className = 'w-8 h-8 rounded-full shrink-0 border-2 transition-transform active:scale-90 ' +
+                            (active ? 'border-gray-900' : 'border-gray-200');
+                        btn.style.backgroundColor = '#' + hex;
+                        btn.addEventListener('click', () => {
+                            if (which === 'fg') this.fg = hex; else this.bg = hex;
+                            haptic(8);
+                            this.renderStyleRows();
+                            this.updateStylePreview();
+                        });
+                        row.appendChild(btn);
+                    });
+                });
+                this.updateStylePreview();
+            }
+
+            updateStylePreview() {
+                if (!this.styleVerdict) return;
+                const bcid = this.inputType.value;
+                const verdict = window.checkScannability(this.fg, this.bg, bcid);
+
+                this.styleVerdict.textContent = verdict.message;
+                this.styleVerdict.className = 'text-[11px] font-semibold leading-relaxed ' + (
+                    verdict.level === 'fail' ? 'text-red-500'
+                    : verdict.level === 'warn' ? 'text-amber-600' : 'text-emerald-600');
+
+                // Preview with data that is valid for the CURRENT format, so switching to EAN-13
+                // does not blank the preview just because the sample text is not numeric.
+                const f = CODE_FORMATS.find(x => x.bcid === bcid);
+                const sample = (f && f.validate) ? (f.bcid === 'code39' || f.bcid === 'code93' ? 'SAMPLE'
+                    : f.bcid === 'ean8' ? '1234567' : f.bcid === 'upca' ? '12345678901'
+                    : f.bcid === 'interleaved2of5' ? '12345678' : '123456789012') : 'PREVIEW';
+                window.renderCode(this.stylePreview, { bcid, data: sample, fg: this.fg, bg: this.bg }, { scale: 2 });
+            }
+
             saveFromCustomForm() {
                 const data = this.inputData.value.trim();
                 const err = window.validateForFormat(this.inputType.value, data);
@@ -2787,16 +2956,25 @@
                     this.validateCustom();
                     return window.showToast(err, 'error');
                 }
-                this.saveCode(this.inputTitle.value.trim(), data, this.inputType.value);
+                // A 'warn' pair still saves — it is readable, just not ideal. Only 'fail' blocks,
+                // because saving a code nothing can scan is saving nothing.
+                const style = window.checkScannability(this.fg, this.bg, this.inputType.value);
+                if (style.level === 'fail') return window.showToast(style.message, 'error');
+
+                this.saveCode(this.inputTitle.value.trim(), data, this.inputType.value,
+                              { fg: this.fg, bg: this.bg });
             }
 
             open(prefillData = null, prefillFormat = null) {
                 this.inputTitle.value = '';
                 this.inputData.value = prefillData || '';
                 this.inputType.value = prefillFormat || 'azteccode';
+                this.fg = CODE_DEFAULT_FG;
+                this.bg = CODE_DEFAULT_BG;
                 this.syncFormatButton();
                 this.toggleFormatPanel(false);
                 this.validateCustom();
+                this.renderStyleRows();
 
                 this.closeTemplateForm();
                 this.setMode(prefillData ? 'custom' : 'templates');
@@ -2818,7 +2996,7 @@
                 this.panel.classList.remove('translate-y-0', 'scale-100');
             }
 
-            saveCode(title, data, bcid) {
+            saveCode(title, data, bcid, style = null) {
                 if (!title || !data) {
                     window.showToast('Please fill all fields', 'error');
                     return;
@@ -2854,6 +3032,10 @@
                     order: targetOrder,
                     bcid: bcid,
                     data: data,
+                    // Only stored when non-default, so existing items and template codes stay
+                    // clean and renderCode's fallbacks handle them.
+                    ...(style && style.fg && style.fg.toUpperCase() !== CODE_DEFAULT_FG ? { fg: style.fg } : {}),
+                    ...(style && style.bg && style.bg.toUpperCase() !== CODE_DEFAULT_BG ? { bg: style.bg } : {}),
                     // Explicit creation time so the Library's "Recent" sort doesn't have to
                     // reverse-engineer it out of the id. Older items predate this field and fall
                     // back to the id's timestamp — see OSLibraryManager.timeOf().
@@ -4036,10 +4218,7 @@
                     // Same guarded render as the home grid — a corrupt payload logs and leaves an
                     // empty tile instead of taking the whole list down.
                     try {
-                        bwipjs.toCanvas(`lib-can-${app.id}`, {
-                            bcid: app.bcid, text: app.data, scale: 3,
-                            backgroundcolor: 'ffffff', barcolor: '000000', textcolor: '000000', padding: 0
-                        });
+                        window.renderCode(`lib-can-${app.id}`, app, { scale: 3 });
                     } catch (e) { XanLogger.error('Library canvas error:', e); }
                 });
 

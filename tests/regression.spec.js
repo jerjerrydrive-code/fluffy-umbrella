@@ -1153,3 +1153,113 @@ test.describe('Format browser and encodability (Phase 2)', () => {
         await expect(page.locator('#format-options')).toContainText('No formats match');
     });
 });
+
+test.describe('Code styling and scannability (Phase 2)', () => {
+    test('polarity is judged separately from contrast', async ({ page }) => {
+        // The rule a contrast-only validator gets wrong. White-on-black scores 21:1 — perfect by
+        // any contrast measure — but nearly all scanners expect dark data on a light background.
+        // Inverting breaks most 1D laser/CCD readers outright while modern 2D camera decoders
+        // usually cope, so the same 21:1 pair must FAIL on EAN-13 and merely WARN on QR.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const v = await page.evaluate(() => ({
+            invQR: window.checkScannability('FFFFFF', '000000', 'qrcode'),
+            invEAN: window.checkScannability('FFFFFF', '000000', 'ean13'),
+            blackOnWhite: window.checkScannability('000000', 'FFFFFF', 'qrcode'),
+            greyOnGrey: window.checkScannability('888888', '999999', 'qrcode'),
+            midContrast: window.checkScannability('6B7280', 'FFFFFF', 'qrcode')
+        }));
+
+        expect(v.invQR.ratio).toBeCloseTo(21, 0);
+        expect(v.invEAN.ratio).toBeCloseTo(21, 0);
+        expect(v.invQR.level).toBe('warn');   // same ratio...
+        expect(v.invEAN.level).toBe('fail');  // ...opposite verdict
+        expect(v.invEAN.message).toMatch(/1D|swap/i);
+
+        expect(v.blackOnWhite.level).toBe('ok');
+        expect(v.greyOnGrey.level).toBe('fail');
+        expect(v.midContrast.level).toBe('warn'); // passes text AA, not good enough to scan
+    });
+
+    test('an unscannable pair is blocked at save; a merely imperfect one is not', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const before = await page.evaluate(() => window.OS_STATE.apps.length);
+
+        await page.evaluate(() => window.CodeGenerator.open());
+        await page.waitForTimeout(300);
+        await page.click('.create-tab-btn[data-mode="custom"]');
+        await page.fill('#create-input-title', 'Styled');
+        await page.fill('#create-input-data', 'hello world');
+        await page.waitForTimeout(300);
+
+        // fail: no usable contrast
+        await page.evaluate(() => {
+            window.CodeGenerator.fg = '888888';
+            window.CodeGenerator.bg = '999999';
+            window.CodeGenerator.renderStyleRows();
+        });
+        await page.click('#btn-save-create');
+        await page.waitForTimeout(400);
+        expect(await page.evaluate(() => window.OS_STATE.apps.length)).toBe(before);
+
+        // warn: readable but not ideal — must still save
+        await page.evaluate(() => {
+            window.CodeGenerator.fg = '6B7280';
+            window.CodeGenerator.bg = 'FFFFFF';
+            window.CodeGenerator.renderStyleRows();
+        });
+        await page.click('#btn-save-create');
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() => window.OS_STATE.apps.length)).toBe(before + 1);
+
+        const created = await page.evaluate(() => {
+            const items = window.OS_STATE.apps.filter(a => a.type === 'grid');
+            return items[items.length - 1];
+        });
+        expect(created.fg).toBe('6B7280');
+        expect(created.bg).toBeUndefined(); // default bg is not stored
+    });
+
+    test('custom colours reach every place a code is drawn', async ({ page }) => {
+        // Home grid, search, library and the fullscreen viewer each had their own hardcoded
+        // black-on-white option object. They now share one renderCode path, so a styled code
+        // cannot render correctly in one surface and plain in another.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const painted = await page.evaluate(async () => {
+            window.OS_STATE.apps.push({
+                id: 'bc_styled', title: 'Styled', type: 'grid', page: 0, order: 21,
+                bcid: 'qrcode', data: 'styled-code', fg: 'B0195F', bg: 'FFF7E6'
+            });
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 400));
+
+            const cv = document.getElementById('can-bc_styled');
+            if (!cv || !cv.width) return { drawn: false };
+            const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+            const seen = new Set();
+            for (let i = 0; i < d.length; i += 4) seen.add(`${d[i]},${d[i+1]},${d[i+2]}`);
+            return { drawn: true, hasFg: seen.has('176,25,95'), hasBg: seen.has('255,247,230') };
+        });
+
+        expect(painted.drawn).toBe(true);
+        expect(painted.hasFg, 'foreground colour missing from the rendered tile').toBe(true);
+        expect(painted.hasBg, 'background colour missing from the rendered tile').toBe(true);
+    });
+
+    test('a code with no stored colours still renders black on white', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const painted = await page.evaluate(() => {
+            const cv = document.querySelector('.app-icon-wrapper canvas');
+            const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+            const seen = new Set();
+            for (let i = 0; i < d.length; i += 4) seen.add(`${d[i]},${d[i+1]},${d[i+2]}`);
+            return { black: seen.has('0,0,0'), white: seen.has('255,255,255') };
+        });
+        expect(painted.black && painted.white).toBe(true);
+    });
+});
