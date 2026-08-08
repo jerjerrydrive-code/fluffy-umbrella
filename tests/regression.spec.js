@@ -1626,3 +1626,107 @@ test.describe('Starred history and sharing (Phase 3)', () => {
         expect(toasts).toEqual([]);
     });
 });
+
+test.describe('Backup and restore (Phase 4)', () => {
+    test('a backup round-trips onto a fresh device with nothing lost', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const backup = await page.evaluate(() => {
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type !== 'grid');
+            window.OS_STATE.apps.push(
+                { id: 'bc_a', title: 'Alpha', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'alpha-payload' },
+                { id: 'bc_b', title: 'Beta', type: 'grid', page: 1, order: 0, bcid: 'azteccode', data: 'beta-payload' });
+            window.OS_STATE.history = [];
+            window.recordHistory({ data: 'https://logged.example', source: 'scanned' });
+            window.OS_STATE.skin = 'aurora';
+            window.OS_STATE.accent = '#E0432F';
+            return JSON.stringify(window.buildBackup());
+        });
+
+        // Simulate a fresh install, then restore.
+        const restored = await page.evaluate((json) => {
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type !== 'grid');
+            window.OS_STATE.history = [];
+            window.OS_STATE.skin = 'dock';
+            window.OS_STATE.accent = '#3b82f6';
+
+            const res = window.applyBackup(json);
+            return {
+                res,
+                codes: window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.data).sort(),
+                history: window.OS_STATE.history.length,
+                skin: window.OS_STATE.skin,
+                accent: window.OS_STATE.accent
+            };
+        }, backup);
+
+        expect(restored.res.ok).toBe(true);
+        expect(restored.res.added).toBe(2);
+        expect(restored.codes).toEqual(['alpha-payload', 'beta-payload']);
+        expect(restored.history).toBe(1);
+        expect(restored.skin).toBe('aurora');      // preferences restored too
+        expect(restored.accent).toBe('#E0432F');
+    });
+
+    test('restoring never deletes what is already on the device', async ({ page }) => {
+        // The single most important property here. A destructive restore is a one-tap way to
+        // lose everything, and a confirmation dialog is not a substitute for not doing it.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const out = await page.evaluate(() => {
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type !== 'grid');
+            window.OS_STATE.apps.push({ id: 'bc_keep', title: 'Keep Me', type: 'grid', page: 0, order: 0,
+                                        bcid: 'qrcode', data: 'existing-payload' });
+            const backup = {
+                format: 'xancode-os-backup', version: 1,
+                state: { apps: [
+                    { id: 'x', title: 'From Backup', type: 'grid', page: 0, order: 1, bcid: 'qrcode', data: 'backup-payload' },
+                    { id: 'y', title: 'Duplicate', type: 'grid', page: 0, order: 2, bcid: 'qrcode', data: 'existing-payload' }
+                ] }
+            };
+            const res = window.applyBackup(backup);
+            return { res, payloads: window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.data).sort() };
+        });
+
+        expect(out.res.ok).toBe(true);
+        expect(out.res.added).toBe(1);                              // the duplicate was skipped
+        expect(out.payloads).toEqual(['backup-payload', 'existing-payload']);
+    });
+
+    test('a bad file fails cleanly with the state untouched', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const out = await page.evaluate(() => {
+            const before = window.OS_STATE.apps.length;
+            const results = {
+                notJson: window.applyBackup('this is not json'),
+                wrongFormat: window.applyBackup(JSON.stringify({ format: 'something-else' })),
+                noApps: window.applyBackup(JSON.stringify({ format: 'xancode-os-backup', version: 1, state: {} })),
+                tooNew: window.applyBackup(JSON.stringify({ format: 'xancode-os-backup', version: 99, state: { apps: [] } }))
+            };
+            return { results, unchanged: window.OS_STATE.apps.length === before };
+        });
+
+        for (const [name, r] of Object.entries(out.results)) {
+            expect(r.ok, `${name} should have been rejected`).toBe(false);
+            expect(r.error, `${name} needs an explanation`).toBeTruthy();
+        }
+        expect(out.unchanged).toBe(true);
+    });
+
+    test('CSV export escapes payloads that contain commas and quotes', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const csv = await page.evaluate(() => {
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type !== 'grid');
+            window.OS_STATE.apps.push({ id: 'bc_c', title: 'Tricky, "quoted"', type: 'grid', page: 0,
+                                        order: 0, bcid: 'qrcode', data: 'a,b,"c"' });
+            return window.buildCsv();
+        });
+        expect(csv.split('\n')[0]).toBe('title,data,format,page');
+        expect(csv).toContain('"Tricky, ""quoted"""');
+        expect(csv).toContain('"a,b,""c"""');
+    });
+});

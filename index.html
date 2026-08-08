@@ -887,6 +887,22 @@
                 </button>
             </div>
             <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
+                <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Your Data</div>
+                <input type="file" id="backup-import-input" accept="application/json,.json" class="hidden">
+                <div class="flex gap-2">
+                    <button id="btn-export-backup" class="flex-1 py-3 bg-white/10 hover:bg-white/20 active:scale-[0.98] rounded-xl flex items-center justify-center gap-2 text-white font-medium text-sm transition-all">
+                        <i data-lucide="download" class="w-[18px] h-[18px]"></i> Back up
+                    </button>
+                    <button id="btn-import-backup" class="flex-1 py-3 bg-white/10 hover:bg-white/20 active:scale-[0.98] rounded-xl flex items-center justify-center gap-2 text-white font-medium text-sm transition-all">
+                        <i data-lucide="upload" class="w-[18px] h-[18px]"></i> Restore
+                    </button>
+                </div>
+                <button id="btn-export-csv" class="w-full py-3 bg-white/5 hover:bg-white/10 active:scale-[0.98] rounded-xl flex items-center justify-center gap-2 text-gray-300 font-medium text-sm transition-all">
+                    <i data-lucide="table" class="w-[18px] h-[18px]"></i> Export codes as CSV
+                </button>
+                <p class="text-[10px] text-gray-500 px-1 leading-relaxed">Restoring only ever adds — it never deletes codes already on this device.</p>
+            </div>
+            <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
                 <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Feedback &amp; Motion</div>
                 <div class="flex items-center justify-between pl-1 cursor-pointer" onclick="document.getElementById('haptics-toggle').click()">
                     <div class="flex flex-col">
@@ -1207,6 +1223,18 @@
          *    barcode parses as a phone number. Product barcodes (8/12/13 digits) get
          *    lookup buttons rather than one action, since "what IS this" is the real
          *    question and no single provider answers it best.
+         *  - Backup / restore (window.buildBackup, applyBackup, buildCsv) — Phase 4 start.
+         *    Settings -> Your Data. The point is trust: everything out in one tap, back in
+         *    on a fresh install with nothing lost. Three rules make that safe:
+         *      1. IMPORT NEVER DELETES. Codes merge, deduped by payload; existing entries
+         *         win. A destructive restore is a one-tap way to lose everything, and a
+         *         confirmation dialog is not a substitute for simply not doing it.
+         *      2. VALIDATE FIRST. A wrong, corrupt or newer-version file fails cleanly
+         *         with state untouched — never half-applied.
+         *      3. The wallpaper IS included, unlike the cloud payload. HARD RULE 4 excludes
+         *         it from Firestore for the 1MiB doc cap; a local file has no such limit and
+         *         a backup without it is not a backup. If restoring then blows the
+         *         localStorage quota, the wallpaper is dropped rather than the codes.
          *  - Starred history + Share (Phase 3, completing it). A star pins an entry above
          *    EVERY sort order — it means "I want to find this again", which no ordering
          *    rule should be able to bury. The star button stops propagation: the row has
@@ -2856,6 +2884,114 @@
             }
         };
 
+        // ---------------------------------------------------------------------------------
+        //  BACKUP / RESTORE
+        //  The point of this feature is trust: someone should be able to get everything out in
+        //  one tap and put it back on a fresh install with nothing lost. That only holds if the
+        //  import side is conservative, so the rules are:
+        //
+        //  1. IMPORT NEVER DELETES. Codes are MERGED, deduped by payload — restoring a backup on
+        //     a device that already has codes must not throw away whatever is already there.
+        //     A destructive restore is a one-tap way to lose everything, and "are you sure?" is
+        //     not a substitute for simply not doing it.
+        //  2. VALIDATE BEFORE TOUCHING ANYTHING. A wrong or corrupt file must fail cleanly with
+        //     the state untouched, never half-applied.
+        //  3. The wallpaper IS included here, unlike the cloud payload. HARD RULE 4 excludes it
+        //     from Firestore because of the 1MiB document cap; a local file has no such limit,
+        //     and a backup missing the user's wallpaper is not a backup.
+        // ---------------------------------------------------------------------------------
+        const BACKUP_VERSION = 1;
+
+        window.buildBackup = function() {
+            const st = window.OS_STATE;
+            return {
+                format: 'xancode-os-backup',
+                version: BACKUP_VERSION,
+                exportedAt: new Date().toISOString(),
+                state: {
+                    apps: st.apps,
+                    history: st.history || [],
+                    gridSize: st.gridSize, gridCols: st.gridCols, gridRows: st.gridRows,
+                    autoArrange: st.autoArrange, skin: st.skin, accent: st.accent,
+                    haptics: st.haptics, animations: st.animations,
+                    wallpaper: st.wallpaper || null
+                }
+            };
+        };
+
+        // Returns { ok, added, error }. Never throws, never partially applies.
+        window.applyBackup = function(raw) {
+            let parsed;
+            try {
+                parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            } catch (e) {
+                return { ok: false, added: 0, error: 'That file is not valid JSON.' };
+            }
+            if (!parsed || parsed.format !== 'xancode-os-backup') {
+                return { ok: false, added: 0, error: 'That is not a XanCode OS backup file.' };
+            }
+            if (!parsed.state || !Array.isArray(parsed.state.apps)) {
+                return { ok: false, added: 0, error: 'That backup is missing its code list.' };
+            }
+            if (Number(parsed.version) > BACKUP_VERSION) {
+                return { ok: false, added: 0,
+                    error: 'That backup was made by a newer version of the app.' };
+            }
+
+            const st = window.OS_STATE;
+            const incoming = parsed.state;
+
+            // Merge codes, deduped by payload. Existing entries win, so a restore can only ever
+            // add — it cannot rewrite something already on this device.
+            const seen = new Set(st.apps.filter(a => a.type === 'grid').map(a => a.data));
+            let added = 0;
+            incoming.apps.filter(a => a && a.type === 'grid' && a.data).forEach(a => {
+                if (seen.has(a.data)) return;
+                seen.add(a.data);
+                st.apps.push(Object.assign({}, a, { id: 'bc_' + Date.now().toString(36) + '_' + (added++) }));
+            });
+
+            // Merge history the same way, newest first, still capped.
+            if (Array.isArray(incoming.history)) {
+                const known = new Set((st.history || []).map(h => h.data + '|' + h.source));
+                incoming.history.forEach(h => {
+                    if (!h || !h.data || known.has(h.data + '|' + h.source)) return;
+                    known.add(h.data + '|' + h.source);
+                    st.history.push(h);
+                });
+                st.history.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+                if (st.history.length > HISTORY_LIMIT) st.history.length = HISTORY_LIMIT;
+            }
+
+            // Preferences are restored outright — they describe the device, not its contents.
+            ['gridSize', 'gridCols', 'gridRows', 'autoArrange', 'skin', 'accent', 'haptics', 'animations']
+                .forEach(k => { if (incoming[k] !== undefined) st[k] = incoming[k]; });
+            if (incoming.wallpaper) st.wallpaper = incoming.wallpaper;
+
+            try {
+                saveState();
+            } catch (e) {
+                // A wallpaper can push the payload past the localStorage quota. Dropping it is
+                // far better than losing the codes that were just restored.
+                st.wallpaper = null;
+                try { saveState(); } catch (e2) {
+                    return { ok: false, added, error: 'Not enough storage to save that backup.' };
+                }
+                return { ok: true, added, error: 'Restored, but the wallpaper was too large to keep.' };
+            }
+            return { ok: true, added, error: null };
+        };
+
+        // Codes as CSV, for anyone who wants their data somewhere other than this app.
+        window.buildCsv = function() {
+            const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+            const rows = [['title', 'data', 'format', 'page'].join(',')];
+            window.OS_STATE.apps.filter(a => a.type === 'grid').forEach(a => {
+                rows.push([esc(a.title), esc(a.data), esc(a.bcid), esc((a.page || 0) + 1)].join(','));
+            });
+            return rows.join('\n');
+        };
+
         // Exposed for the regression suite, which asserts payload correctness per type by
         // calling build() directly rather than driving 22 forms through the UI.
         window.QUICK_TEMPLATES = QUICK_TEMPLATES;
@@ -3844,6 +3980,16 @@
                     haptic(10);
                 });
 
+                document.getElementById('btn-export-backup').addEventListener('click', () => this.exportBackup());
+                document.getElementById('btn-export-csv').addEventListener('click', () => this.exportCsv());
+                const importInput = document.getElementById('backup-import-input');
+                document.getElementById('btn-import-backup').addEventListener('click', () => importInput.click());
+                importInput.addEventListener('change', (e) => {
+                    const f = e.target.files[0];
+                    e.target.value = '';
+                    this.importBackup(f);
+                });
+
                 this.wallpaperInput.addEventListener('change', (e) => this.handleWallpaperUpload(e));
                 this.resetWallpaperBtn.addEventListener('click', () => this.resetWallpaper());
 
@@ -3863,6 +4009,62 @@
                 this.modal.classList.remove('opacity-100', 'pointer-events-auto');
                 this.panel.classList.add('scale-90');
                 this.panel.classList.remove('scale-100');
+            }
+
+            download(filename, text, mime) {
+                const url = URL.createObjectURL(new Blob([text], { type: mime }));
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                // Revoked on a delay: revoking immediately can cancel the download on some
+                // browsers before they have finished reading the blob.
+                setTimeout(() => URL.revokeObjectURL(url), 5000);
+            }
+
+            stamp() { return new Date().toISOString().slice(0, 10); }
+
+            exportBackup() {
+                this.download(`xancode-backup-${this.stamp()}.json`,
+                    JSON.stringify(window.buildBackup(), null, 2), 'application/json');
+                haptic(12);
+                window.showToast('Backup downloaded');
+            }
+
+            exportCsv() {
+                this.download(`xancode-codes-${this.stamp()}.csv`, window.buildCsv(), 'text/csv');
+                haptic(12);
+                window.showToast('CSV downloaded');
+            }
+
+            async importBackup(file) {
+                if (!file) return;
+                let text;
+                try {
+                    text = await file.text();
+                } catch (e) {
+                    return window.showToast('Could not read that file.', 'error');
+                }
+                const res = window.applyBackup(text);
+                if (!res.ok) return window.showToast(res.error, 'error');
+
+                window.Renderer.render();
+                if (window.Layout) window.Layout.calculateGrid();
+                if (window.SkinManager) {
+                    window.SkinManager.current = window.OS_STATE.skin;
+                    document.body.setAttribute('data-skin', window.OS_STATE.skin);
+                    window.SkinManager.render();
+                }
+                if (window.ThemeManager) {
+                    window.ThemeManager.applyAccent(window.OS_STATE.accent, false);
+                    window.ThemeManager.render();
+                }
+                window.applyMotionPreference();
+                this.syncGridButtonsUI();
+                haptic(20);
+                window.showToast(res.error || `Restored — ${res.added} new ${res.added === 1 ? 'code' : 'codes'}`);
             }
 
             syncGridButtonsUI() {

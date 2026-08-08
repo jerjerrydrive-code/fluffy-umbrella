@@ -24,7 +24,7 @@ Keep these in rotation when building skins and picking palettes:
 
 ## Where things stand today (Aug 2026)
 
-Built and covered by the regression suite (`npm test`, 64 passing in ~70s):
+Built and covered by the regression suite (`npm test`, 68 passing in ~72s):
 
 | Area | State |
 |---|---|
@@ -34,7 +34,7 @@ Built and covered by the regression suite (`npm test`, 64 passing in ~70s):
 | Library | **Saved / Scanned / Created** switch, **starred favourites**, filter + sort |
 | Theming | 338-theme recovered palette, 1352 reachable accents, reroll + pin, WCAG-measured accent text |
 | Skins | **6** — `dock`, `scancard`, `glass`, `soft`, `aurora`, `classic`, all over one DOM via `OSSkinManager` |
-| Settings | Grid density, auto-arrange, wallpaper, accent, skin, **Vibration & Animations switches** |
+| Settings | Grid density, auto-arrange, wallpaper, accent, skin, Vibration & Animations, **backup / restore / CSV** |
 | Platform | Installable PWA, **fully self-contained** (no CDN needed to render), Firebase cloud sync (strictly optional) |
 
 The foundation is done. Everything below is building **on** it — never forking it (HARD RULE 5).
@@ -137,14 +137,17 @@ payloads degrade to plain text with copy/share, never an error.
 
 ---
 
-## Phase 4 — Organisation & Data Ownership
+## Phase 4 — Organisation & Data Ownership 🔨 IN PROGRESS
 **Months 4–5 · Dec 2026–Jan 2027**
 
 - **Folders** on the home screen (drag one icon onto another — the physics engine already has the
   hit-testing for it)
 - **Named pages** and page reordering
 - **Tags + starred** codes, surfaced as Library filters
-- **Full export / import**: JSON backup of every code and setting, plus CSV export
+- ~~**Full export / import**~~ ✅ JSON backup of every code, history entry and setting
+  (wallpaper included — a local file has no Firestore size cap), plus CSV export. Restore
+  **only ever adds**: codes merge deduped by payload, so it can never delete what is already
+  on the device. Bad files fail cleanly with state untouched
 - **Bulk operations**: multi-select in the Library → move / tag / delete / export
 - **Widgets**: a "most-used code" quick-access surface
 
