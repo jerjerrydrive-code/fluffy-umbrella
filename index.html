@@ -5110,7 +5110,16 @@
                     this.fb = { app, auth, db, ...authMod, ...fsMod };
 
                     await authMod.setPersistence(auth, authMod.browserLocalPersistence);
-                    try { await authMod.getRedirectResult(auth); } catch (e) {}
+                    // A failed redirect is reported HERE, on the way back, not at the call that
+                    // started it. Swallowing it left you on the home screen still signed out with
+                    // nothing said about why — which is how an unauthorised-domain error looked
+                    // like the sign-in button simply not working. Held until the Account sheet is
+                    // opened, since that is where the message belongs.
+                    try { await authMod.getRedirectResult(auth); }
+                    catch (e) {
+                        this.pendingAuthError = this.describeAuthError(e);
+                        XanLogger.warn('Sign-in redirect returned an error', e);
+                    }
                     authMod.onAuthStateChanged(auth, (user) => this.handleAuthChange(user));
                     if (!auth.currentUser) await authMod.signInAnonymously(auth);
 
@@ -5244,6 +5253,7 @@
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
                 this.panel.classList.remove('scale-90');
                 this.panel.classList.add('scale-100');
+                this.flushPendingAuthError();
             }
 
             close() {
@@ -5251,6 +5261,29 @@
                 this.modal.classList.remove('opacity-100', 'pointer-events-auto');
                 this.panel.classList.add('scale-90');
                 this.panel.classList.remove('scale-100');
+            }
+
+            // Firebase error codes are not an error message. "Error (auth/unauthorized-domain)"
+            // tells you nothing about what to do, and it is the one failure here that is neither
+            // transient nor the user's fault at the app end: the site's domain has to be listed
+            // in the Firebase project before Google sign-in will run on it at all.
+            describeAuthError(e) {
+                const code = (e && e.code) || '';
+                if (code === 'auth/unauthorized-domain') {
+                    return `Google sign-in isn't enabled for ${location.hostname} yet. `
+                         + 'Add that domain in the Firebase console under '
+                         + 'Authentication → Settings → Authorized domains. '
+                         + 'Everything else works without signing in — your codes stay on this device.';
+                }
+                if (code === 'auth/operation-not-allowed') {
+                    return 'Google sign-in is switched off for this Firebase project. '
+                         + 'Turn it on under Authentication → Sign-in method.';
+                }
+                if (code === 'auth/network-request-failed') {
+                    return 'Could not reach the sign-in service. Check your connection and try again.';
+                }
+                if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return '';
+                return 'Sign-in failed: ' + String((e && e.message) || '').replace('Firebase: ', '');
             }
 
             async signInGoogle() {
@@ -5262,20 +5295,36 @@
                     await signInWithPopup(auth, provider);
                     this.close();
                 } catch (e) {
+                    // Falling back to a redirect only helps when the POPUP was the problem. An
+                    // unauthorised domain fails the redirect too, and worse: it bounces you to a
+                    // Firebase-hosted page reading "The requested action is invalid" with no way
+                    // back. Diagnose that here instead of sending you there.
+                    if (e && e.code === 'auth/unauthorized-domain') {
+                        this.showGuestError(this.describeAuthError(e));
+                        return;
+                    }
                     const msg = (e && e.message || '').toLowerCase();
                     if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user' || msg.includes('popup')) {
                         try { await signInWithRedirect(auth, provider); }
-                        catch (err) { this.showGuestError('Sign-in failed. Please try again.'); }
+                        catch (err) { this.showGuestError(this.describeAuthError(err)); }
                     } else {
-                        this.showGuestError('Sign-in error: ' + (e.message || '').replace('Firebase: ', ''));
+                        this.showGuestError(this.describeAuthError(e));
                     }
                 }
             }
 
             showGuestError(text) {
                 if (!this.guestError) return;
+                if (!text) { this.guestError.classList.add('hidden'); return; }
                 this.guestError.textContent = text;
                 this.guestError.classList.remove('hidden');
+            }
+
+            // Reported once, then cleared: a stale error on every subsequent open would be noise.
+            flushPendingAuthError() {
+                if (!this.pendingAuthError) return;
+                this.showGuestError(this.pendingAuthError);
+                this.pendingAuthError = null;
             }
 
             async signOutAndReset() {

@@ -2617,3 +2617,42 @@ test.describe('Palette browsing (report: "im missing so many themes")', () => {
         expect(box.height / 4).toBeGreaterThanOrEqual(9);
     });
 });
+
+test.describe('Sign-in failures explain themselves', () => {
+    // The live site showed "Sign-in error: Error (auth/unauthorized-domain)" — a code, not a
+    // message. It is also the one failure here that is neither transient nor fixable in the
+    // app: the domain has to be listed in the Firebase project first.
+    const describe = (page, code) => page.evaluate(
+        (c) => window.CloudSync.describeAuthError({ code: c, message: 'Firebase: something (' + c + ').' }), code);
+
+    test('an unauthorised domain says what to do, and names the domain', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const text = await describe(page, 'auth/unauthorized-domain');
+        expect(text).toContain('localhost');            // the host actually being served
+        expect(text).toContain('Authorized domains');   // where to fix it
+        expect(text).not.toContain('auth/unauthorized-domain');
+        // And it says the app still works, because it does.
+        expect(text).toMatch(/without signing in/i);
+    });
+
+    test('a cancelled popup is silent rather than an error', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        expect(await describe(page, 'auth/popup-closed-by-user')).toBe('');
+
+        // An empty message hides the banner instead of showing a blank red line.
+        await page.evaluate(() => { window.CloudSync.showGuestError('something'); });
+        await page.evaluate(() => { window.CloudSync.showGuestError(''); });
+        expect(await page.evaluate(() =>
+            document.getElementById('account-guest-error').classList.contains('hidden'))).toBe(true);
+    });
+
+    test('an unknown code still produces a sentence, not a bare code', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const text = await describe(page, 'auth/some-new-thing');
+        expect(text.startsWith('Sign-in failed:')).toBe(true);
+        expect(text).not.toContain('Firebase: ');
+    });
+});
