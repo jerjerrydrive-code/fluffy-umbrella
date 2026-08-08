@@ -716,6 +716,18 @@
             box-shadow: 0 0 0 3px var(--accent), 0 10px 26px -6px rgba(0,0,0,0.5);
         }
 
+        .tag-chip {
+            display: inline-flex; align-items: center; gap: 0.35rem;
+            padding: 0.3rem 0.7rem; border-radius: 999px;
+            font-size: 11.5px; font-weight: 700; letter-spacing: 0.01em;
+            background: color-mix(in srgb, var(--accent) 14%, transparent);
+            color: var(--accent);
+            border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+            transition: transform 0.15s var(--spring-snappy);
+        }
+        .tag-chip:active { transform: scale(0.92); }
+        .tag-chip-add { background: transparent; color: #9ca3af; border-style: dashed; border-color: #d1d5db; }
+
         .morph-pulse { transform: scale(0.93) translateY(15px); filter: blur(12px) brightness(0.7); }
 
         /* ---------- Tap targets: Apple HIG 44x44pt minimum ----------
@@ -802,6 +814,10 @@
              dock height tracks --app-size, so changing grid density moves the dock top and
              any magic number drifts out of date. Stacking them removes the coupling. -->
         <div class="absolute bottom-4 left-0 right-0 z-30 flex flex-col items-center gap-3 pointer-events-none px-4">
+            <div id="page-move-row" class="hidden pointer-events-auto flex items-center gap-2">
+                <button id="btn-page-left" class="tap44 flex items-center justify-center rounded-full bg-black/35 backdrop-blur-md border border-white/15 text-white active:scale-90 transition-transform"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+                <button id="btn-page-right" class="tap44 flex items-center justify-center rounded-full bg-black/35 backdrop-blur-md border border-white/15 text-white active:scale-90 transition-transform"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+            </div>
             <button id="page-name-chip" class="hidden pointer-events-auto max-w-[70vw] truncate px-3.5 py-1.5 rounded-full bg-black/35 backdrop-blur-md border border-white/15 text-white text-[12px] font-bold shadow-lg active:scale-95 transition-transform"></button>
             <div class="flex justify-center items-center gap-2.5 pointer-events-none drop-shadow-md" id="pagination-container"></div>
             <nav class="ios-glass rounded-[2.25rem] p-3 pointer-events-auto w-full max-w-[380px]" id="main-dock">
@@ -1009,6 +1025,7 @@
             </div>
             <div id="fullscreen-badge" class="fullscreen-badge"></div>
             <p id="fullscreen-item-data" class="mt-8 text-gray-500 font-mono text-sm text-center break-all w-full transition-opacity duration-300"></p>
+            <div id="fullscreen-tags" class="flex flex-wrap items-center justify-center gap-2 mt-6 w-full max-w-sm"></div>
             <div id="fullscreen-stats" class="fullscreen-stats"></div>
             <div class="fullscreen-actions flex gap-8 mt-12">
                 <button id="btn-action-copy" class="flex flex-col items-center gap-2 text-gray-600 hover:text-black hover:-translate-y-1 active:scale-90 transition-all duration-300">
@@ -1243,6 +1260,18 @@
          *    barcode parses as a phone number. Product barcodes (8/12/13 digits) get
          *    lookup buttons rather than one action, since "what IS this" is the real
          *    question and no single provider answers it best.
+         *  - Tags (window.addTag / removeTag / allTags) — Phase 4. Free-form labels on a
+         *    code, added from the item viewer. NORMALISED to lowercase+trimmed on the way
+         *    in: "Work", "work" and " work " are one intent, and letting them coexist
+         *    gives three filter chips each showing a third of your codes. Removing the last
+         *    tag deletes the key so untagged items stay clean in backups and sync.
+         *    allTags() orders by USE, not alphabetically — alphabetical buries the tags
+         *    someone actually relies on. Library search matches tags too.
+         *  - Page reordering (window.movePage) — Phase 4. Arrows beside the page chip in
+         *    edit mode. Implemented as a SWAP, not a splice: only the two pages involved
+         *    are touched, so there is no way for a half-applied renumber to strand codes
+         *    on a page that no longer exists. Items inside folders carry no page and are
+         *    skipped — giving them one would quietly pull them back onto the grid.
          *  - Folders (OSFolderManager, window.createFolderFrom / addToFolder /
          *    removeFromFolder / folderChildren) — Phase 4. Drag an icon onto another and
          *    DWELL to merge; a quick pass still reorders. The dwell timer is the whole
@@ -1969,9 +1998,28 @@
             // The chip shows a page's name when it has one, and appears unconditionally in edit
             // mode so an unnamed page is still reachable — a rename control you can only see once
             // the thing is already named is useless for naming it in the first place.
+            updatePageMoveRow(index) {
+                const row = document.getElementById('page-move-row');
+                if (!row) return;
+                const editing = !!window.OS_STATE.isEditMode;
+                row.classList.toggle('hidden', !editing);
+                if (!editing) return;
+
+                const pages = this.pager ? this.pager.children.length : 1;
+                // Disabled rather than hidden at the ends: a control that vanishes makes people
+                // wonder what they did wrong, one that dims explains itself.
+                [['btn-page-left', index <= 0], ['btn-page-right', index >= pages - 1]].forEach(([id, off]) => {
+                    const b = document.getElementById(id);
+                    if (!b) return;
+                    b.disabled = off;
+                    b.classList.toggle('opacity-30', off);
+                });
+            }
+
             updatePageChip(index) {
                 const chip = document.getElementById('page-name-chip');
                 if (!chip) return;
+                this.updatePageMoveRow(index);
                 const name = (window.OS_STATE.pageNames || [])[index] || '';
                 const editing = !!window.OS_STATE.isEditMode;
                 chip.textContent = name || (editing ? `Name page ${index + 1}` : '');
@@ -2425,11 +2473,53 @@
             // Fills the skin-dependent "Scan Card" elements (badge + stat rows). These sit
             // hidden-by-default in the DOM regardless of skin, so switching skins is a pure
             // CSS/attribute change — see OSSkinManager — never a DOM rebuild.
+            renderTags(itemData) {
+                const row = document.getElementById('fullscreen-tags');
+                if (!row) return;
+                row.innerHTML = '';
+
+                (itemData.tags || []).forEach(tag => {
+                    const chip = document.createElement('button');
+                    chip.className = 'tag-chip';
+                    chip.dataset.tag = tag;
+                    chip.innerHTML = `<span></span><i data-lucide="x" class="w-3 h-3 opacity-50"></i>`;
+                    chip.querySelector('span').textContent = tag;
+                    chip.addEventListener('click', () => {
+                        window.removeTag(itemData.id, tag);
+                        haptic(8);
+                        this.renderTags(itemData);
+                    });
+                    row.appendChild(chip);
+                });
+
+                const add = document.createElement('button');
+                add.id = 'btn-add-tag';
+                add.className = 'tag-chip tag-chip-add';
+                add.innerHTML = `<i data-lucide="plus" class="w-3 h-3"></i><span>Tag</span>`;
+                add.addEventListener('click', () => {
+                    this.promptFor({
+                        heading: 'Add a tag',
+                        value: '',
+                        placeholder: 'e.g. work, travel',
+                        onSave: (text) => {
+                            if (window.addTag(itemData.id, text)) {
+                                haptic(10);
+                                this.renderTags(itemData);
+                            }
+                        }
+                    });
+                });
+                row.appendChild(add);
+                safeCreateIcons();
+            }
+
             populateEnlargeExtras(itemData) {
                 const formatLabel = FORMAT_NAMES[itemData.bcid] || itemData.bcid;
 
                 const badge = document.getElementById('fullscreen-badge');
                 if (badge) badge.textContent = formatLabel;
+
+                this.renderTags(itemData);
 
                 const stats = document.getElementById('fullscreen-stats');
                 if (stats) {
@@ -3274,6 +3364,83 @@
             }
             saveState();
             return { dissolved: false };
+        };
+
+        // ---------------------------------------------------------------------------------
+        //  TAGS
+        //  Free-form labels on a code. Normalised to lowercase and trimmed on the way in, because
+        //  "Work", "work" and " work " are the same intent and letting them coexist gives you
+        //  three filter chips that each show a third of your codes.
+        // ---------------------------------------------------------------------------------
+        const normaliseTag = (t) => String(t || '').trim().toLowerCase().slice(0, 24);
+
+        window.addTag = function(itemId, tag) {
+            const t = normaliseTag(tag);
+            if (!t) return false;
+            const item = window.OS_STATE.apps.find(a => a.id === itemId);
+            if (!item) return false;
+            if (!Array.isArray(item.tags)) item.tags = [];
+            if (item.tags.includes(t)) return false;
+            item.tags.push(t);
+            saveState();
+            return true;
+        };
+
+        window.removeTag = function(itemId, tag) {
+            const t = normaliseTag(tag);
+            const item = window.OS_STATE.apps.find(a => a.id === itemId);
+            if (!item || !Array.isArray(item.tags)) return false;
+            const before = item.tags.length;
+            item.tags = item.tags.filter(x => x !== t);
+            // Drop the key entirely when empty, so untagged items stay clean in backups and sync.
+            if (!item.tags.length) delete item.tags;
+            saveState();
+            return item.tags ? item.tags.length !== before : before > 0;
+        };
+
+        // Every tag in use, most-used first — a filter list ordered alphabetically buries the
+        // tags someone actually relies on.
+        window.allTags = function() {
+            const counts = new Map();
+            window.OS_STATE.apps.forEach(a => (a.tags || []).forEach(t =>
+                counts.set(t, (counts.get(t) || 0) + 1)));
+            return [...counts.entries()]
+                .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                .map(([tag, count]) => ({ tag, count }));
+        };
+
+        // ---------------------------------------------------------------------------------
+        //  PAGE REORDERING
+        //  Moving a page means rewriting the page index on every item that lives on either of the
+        //  two pages, and swapping their names. Doing it as a swap rather than a splice keeps it
+        //  reversible and cheap: no item on any other page is touched, so there is no chance of a
+        //  half-applied renumber leaving codes stranded on a page that no longer exists.
+        // ---------------------------------------------------------------------------------
+        window.movePage = function(from, to) {
+            const st = window.OS_STATE;
+            const pageCount = Math.max(2, st.apps.reduce((m, a) =>
+                a.page !== undefined && a.page > m ? a.page : m, 0) + 1);
+            if (from === to || from < 0 || to < 0 || from >= pageCount || to >= pageCount) return false;
+
+            st.apps.forEach(a => {
+                if (a.page === undefined) return;          // items inside folders have no page
+                if (a.page === from) a.page = to;
+                else if (a.page === to) a.page = from;
+            });
+
+            if (!Array.isArray(st.pageNames)) st.pageNames = [];
+            const names = st.pageNames;
+            // Pad so a swap involving an unnamed page past the end still lands correctly.
+            while (names.length <= Math.max(from, to)) names.push(undefined);
+            const tmp = names[from];
+            names[from] = names[to];
+            names[to] = tmp;
+            // Trailing undefineds serve no purpose and make the array look wrong in a backup.
+            while (names.length && names[names.length - 1] === undefined) names.pop();
+
+            st.currentPage = to;
+            saveState();
+            return true;
         };
 
         // Exposed for the regression suite, which asserts payload correctness per type by
@@ -5129,6 +5296,7 @@
                         (a.title || '').toLowerCase().includes(q) ||
                         (a.data || '').toLowerCase().includes(q) ||
                         (a.bcid || '').toLowerCase().includes(q) ||
+                        (a.tags || []).some(t => t.includes(q)) ||
                         (FORMAT_NAMES[a.bcid] || '').toLowerCase().includes(q)
                     );
                 }
@@ -5349,6 +5517,20 @@
         window.ThemeManager = new OSThemeManager();
         window.Layout = new LayoutManager(window.Renderer);
         window.CloudSync = new OSCloudSyncManager();
+
+        [['btn-page-left', -1], ['btn-page-right', 1]].forEach(([id, dir]) => {
+            document.getElementById(id).addEventListener('click', () => {
+                if (!window.OS_STATE.isEditMode) return;
+                const from = window.OS_STATE.currentPage || 0;
+                if (!window.movePage(from, from + dir)) return;
+                haptic(14);
+                window.Renderer.render();
+                // Follow the page you just moved, so the thing being rearranged stays
+                // under your eye instead of sliding away from it.
+                const pager = document.getElementById('workspace-pager');
+                pager.scrollTo({ left: (from + dir) * pager.clientWidth, behavior: 'smooth' });
+            });
+        });
 
         document.getElementById('page-name-chip').addEventListener('click', () => {
             // Only in edit mode. Outside it the chip is a label, and a label that silently

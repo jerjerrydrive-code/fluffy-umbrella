@@ -2073,3 +2073,148 @@ test.describe('Folders (Phase 4)', () => {
             window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(0);
     });
 });
+
+test.describe('Tags (Phase 4)', () => {
+    test('tags normalise so one label does not become three', async ({ page }) => {
+        // "Work", "work" and " work " are the same intent. Letting them coexist gives three
+        // filter chips each showing a third of your codes.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => {
+            const id = window.OS_STATE.apps.find(a => a.type === 'grid').id;
+            const results = [
+                window.addTag(id, 'Work'),
+                window.addTag(id, ' work '),   // same tag
+                window.addTag(id, 'WORK'),     // same again
+                window.addTag(id, 'travel'),
+                window.addTag(id, '   ')       // nothing at all
+            ];
+            const item = window.OS_STATE.apps.find(a => a.id === id);
+            return { results, tags: item.tags };
+        });
+        expect(r.results).toEqual([true, false, false, true, false]);
+        expect(r.tags).toEqual(['work', 'travel']);
+    });
+
+    test('removing the last tag drops the key entirely', async ({ page }) => {
+        // Keeps untagged items clean in backups and the sync payload.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => {
+            const id = window.OS_STATE.apps.find(a => a.type === 'grid').id;
+            window.addTag(id, 'solo');
+            window.removeTag(id, 'solo');
+            return 'tags' in window.OS_STATE.apps.find(a => a.id === id);
+        });
+        expect(r).toBe(false);
+    });
+
+    test('allTags orders by use, not alphabetically', async ({ page }) => {
+        // An alphabetical filter list buries the tags someone actually relies on.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => {
+            const ids = window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.id);
+            ids.forEach(id => window.addTag(id, 'zebra'));   // on everything
+            window.addTag(ids[0], 'alpha');                  // on one
+            return window.allTags();
+        });
+        expect(r[0].tag).toBe('zebra');
+        expect(r[0].count).toBeGreaterThan(r[r.length - 1].count);
+    });
+
+    test('tags are addable in the viewer and searchable in the Library', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        await page.evaluate(() => {
+            const item = window.OS_STATE.apps.find(a => a.type === 'grid');
+            window.InteractionManager.openEnlarge(item);
+        });
+        await page.waitForTimeout(500);
+        await page.click('#btn-add-tag');
+        await page.waitForTimeout(300);
+        await page.fill('#rename-input', 'Holiday');
+        await page.click('#btn-save-rename');
+        await page.waitForTimeout(400);
+
+        await expect(page.locator('#fullscreen-tags')).toContainText('holiday');
+        await page.evaluate(() => window.InteractionManager.closeEnlarge());
+        await page.waitForTimeout(400);
+
+        // Findable by tag even though the tag is in neither the title nor the payload.
+        await page.click('#dock-container [data-id="nav_lib"]');
+        await page.waitForTimeout(500);
+        await page.fill('#library-search', 'holiday');
+        await page.waitForTimeout(400);
+        await expect(page.locator('#library-list > div')).toHaveCount(1);
+    });
+});
+
+test.describe('Page reordering (Phase 4)', () => {
+    test('moving a page swaps its codes and its name', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => {
+            window.OS_STATE.pageNames = ['First', 'Second'];
+            const before = window.OS_STATE.apps.filter(a => a.type === 'grid')
+                .map(a => ({ id: a.id, page: a.page }));
+            const ok = window.movePage(0, 1);
+            const after = window.OS_STATE.apps.filter(a => a.type === 'grid')
+                .map(a => ({ id: a.id, page: a.page }));
+            return { ok, before, after, names: window.OS_STATE.pageNames };
+        });
+
+        expect(r.ok).toBe(true);
+        expect(r.names).toEqual(['Second', 'First']);
+        // Every code that was on page 0 is now on 1 and vice versa.
+        r.before.forEach(b => {
+            const a = r.after.find(x => x.id === b.id);
+            expect(a.page).toBe(b.page === 0 ? 1 : 0);
+        });
+    });
+
+    test('out-of-range moves are refused rather than corrupting pages', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => {
+            const snapshot = JSON.stringify(window.OS_STATE.apps.map(a => a.page));
+            const results = [window.movePage(0, -1), window.movePage(0, 99), window.movePage(1, 1)];
+            return { results, unchanged: JSON.stringify(window.OS_STATE.apps.map(a => a.page)) === snapshot };
+        });
+        expect(r.results).toEqual([false, false, false]);
+        expect(r.unchanged).toBe(true);
+    });
+
+    test('items inside folders are not given a page by a reorder', async ({ page }) => {
+        // Folder members carry no page. A renumber that assigned them one would quietly pull
+        // them back onto the grid.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => {
+            const ids = window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.id);
+            window.createFolderFrom(ids[1], ids[0]);
+            window.movePage(0, 1);
+            return window.OS_STATE.apps.filter(a => a.folderId).map(a => a.page);
+        });
+        expect(r.every(p => p === undefined)).toBe(true);
+    });
+
+    test('the move arrows appear only in edit mode and disable at the ends', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await expect(page.locator('#page-move-row')).toHaveClass(/hidden/);
+
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(500);
+        await expect(page.locator('#page-move-row')).not.toHaveClass(/hidden/);
+        // On page 0, left is disabled and dimmed rather than hidden.
+        await expect(page.locator('#btn-page-left')).toBeDisabled();
+        await expect(page.locator('#btn-page-left')).toHaveClass(/opacity-30/);
+        await expect(page.locator('#btn-page-right')).not.toBeDisabled();
+    });
+});
