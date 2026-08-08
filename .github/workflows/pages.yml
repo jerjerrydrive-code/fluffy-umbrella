@@ -21,7 +21,12 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [claude/recover-github-code-aimrux]
+    # The default branch first — that is what the repository actually publishes now that the
+    # work has been merged into it. The working branch stays listed so a deploy can still be
+    # previewed from in-progress work before it lands.
+    branches:
+      - claude/barcode-scanner-recovery-g6w069
+      - claude/recover-github-code-aimrux
   workflow_dispatch:
 
 permissions:
