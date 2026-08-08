@@ -19,14 +19,14 @@
 # from the /<repo-name>/ subpath Pages serves from, with no build step and no base-href rewriting.
 name: Deploy to GitHub Pages
 
+# MANUAL ONLY, deliberately. Pages is configured in "Deploy from a branch" mode, which already
+# publishes the default branch on every push — the app is entirely static, so that mode fits it
+# and needs no workflow at all. Running this on push as well would have two publishers competing:
+# deploy-pages fails outright when the source is a branch rather than Actions.
+#
+# Kept rather than deleted because it is the ready-made path if the source is ever switched to
+# "GitHub Actions" — at which point restore the push trigger and delete this note.
 on:
-  push:
-    # The default branch first — that is what the repository actually publishes now that the
-    # work has been merged into it. The working branch stays listed so a deploy can still be
-    # previewed from in-progress work before it lands.
-    branches:
-      - claude/barcode-scanner-recovery-g6w069
-      - claude/recover-github-code-aimrux
   workflow_dispatch:
 
 permissions:
