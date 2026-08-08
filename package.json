@@ -2,11 +2,12 @@
   "name": "xancode-os",
   "private": true,
   "version": "1.0.0",
-  "description": "XanCode OS — premium iOS-style home screen for scanning, generating, and organizing barcodes and QR codes. Single-file PWA (index.html); this package.json exists only to run its Playwright regression suite.",
+  "description": "XanCode OS - premium iOS-style home screen for scanning, generating and organizing barcodes and QR codes. Self-contained single-file PWA: index.html plus vendored assets under ./vendor, no CDN and no build step required to run it. This package.json exists to run the Playwright regression suite and to rebuild vendor/tailwind.css.",
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",
-    "serve": "node scripts/dev-server.mjs"
+    "serve": "node scripts/dev-server.mjs",
+    "build:css": "tailwindcss -c tailwind.config.js -i vendor/tailwind.src.css -o vendor/tailwind.css --minify"
   },
   "repository": {
     "type": "git",
@@ -14,6 +15,7 @@
   },
   "license": "UNLICENSED",
   "devDependencies": {
-    "@playwright/test": "^1.56.1"
+    "@playwright/test": "^1.56.1",
+    "tailwindcss": "^3.4.19"
   }
 }

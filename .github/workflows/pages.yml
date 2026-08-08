@@ -1,0 +1,70 @@
+# Publishes the app to GitHub Pages so it can be opened on a phone and installed as a PWA.
+#
+# ONE-TIME SETUP, which genuinely cannot be automated:
+#   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
+#
+# Both automatic routes were tried and neither works. Without the setting,
+# actions/configure-pages fails "Get Pages site failed ... Not Found". Adding `enablement: true`
+# so the action creates the site itself fails "Create Pages site failed. Resource not accessible
+# by integration" — the workflow's GITHUB_TOKEN is not permitted to enable Pages on a repository
+# no matter what permissions the workflow requests. Enabling it needs a human with admin rights.
+#
+# So this workflow CHECKS first and skips quietly when Pages is off. That matters: before the
+# check existed, every push put a red X on the commit for a setting nobody had chosen to turn on,
+# which trains you to ignore failures that might one day be real. Once the dropdown is set, this
+# deploys on every push with no further intervention.
+#
+# The whole repo root is uploaded as-is. That works because the app is self-contained: index.html
+# plus ./vendor, ./icons, manifest.json and sw.js, with every path relative — so it runs correctly
+# from the /<repo-name>/ subpath Pages serves from, with no build step and no base-href rewriting.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [claude/recover-github-code-aimrux]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check
+        name: Is Pages enabled for this repository?
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pages")
+          if [ "$code" = "200" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Pages is enabled — deploying."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Pages not enabled::Skipping deploy. Turn it on at Settings -> Pages -> Source: \"GitHub Actions\", then re-run this workflow. Nothing is wrong with the build."
+          fi
+
+      - if: steps.check.outputs.enabled == 'true'
+        uses: actions/configure-pages@v5
+
+      - if: steps.check.outputs.enabled == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - id: deployment
+        if: steps.check.outputs.enabled == 'true'
+        uses: actions/deploy-pages@v4
