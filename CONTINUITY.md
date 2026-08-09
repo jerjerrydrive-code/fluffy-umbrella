@@ -175,9 +175,24 @@ coverage, CI.
 Not done: widgets (native-only, belongs with the Capacitor wrapper), Phase 5
 (accessibility/i18n/performance), Phase 6 (Capacitor native wrapper). See `ROADMAP.md`.
 
-Camera scanning has never been exercised in this environment — headless Chromium has no camera.
-It is verified by round-trip instead: bwip-js encodes → PNG → html5-qrcode decodes → text
-identical. Say that plainly rather than implying the camera path was tested.
+Camera scanning **is** now exercised end to end. Chromium will play a file back as if it were a
+webcam (`--use-file-for-fake-video-capture`), so `scripts/fake-camera.mjs` builds a Y4M from the
+app's own bwip-js and `tests/camera*.spec.js` drives the real path: permission, getUserMedia,
+video element, frame grabber, decode callback, result sheet, save. Two symbologies, QR and
+Code 128, with different payloads — deliberately, so a vacuous assertion would show up as both
+specs reporting the same thing.
+
+Two things that bit while building it, both worth not rediscovering:
+
+- **Do not `import` a `.mjs` helper from a spec.** Playwright transforms it to CommonJS while
+  Node loads it as ESM and the two disagree — `exports is not defined in ES module scope`, before
+  any test runs. Shell out with `execFileSync` instead.
+- **`launchOptions` must be file-level.** Playwright rejects it inside a `describe`, which is why
+  the 1D case is its own spec rather than a second block.
+- **Do not assert on `video.videoWidth`.** It comes from stream metadata and can still read 0
+  when the decode lands on an early frame, which it does here because the fake camera shows a
+  large, clean code. Sample the media *track* instead: its settings exist as soon as the stream
+  does, and a `live` track is what proves a real capture device was opened.
 
 ---
 
