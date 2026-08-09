@@ -109,6 +109,14 @@ git stash pop
 Stash `index.html` only. Stashing everything reverts the test too, and it then "passes" by not
 existing.
 
+**Failing is not enough — it has to fail for the reason you think.** A batch test asserted "each
+code is logged exactly once", which looked like a guard against double-logging and was not:
+`recordHistory` de-duplicates per `(data, source)`, so a same-source duplicate is impossible by
+construction and the count can never exceed one. Injecting a deliberate second identical log
+left it green. The bug it was supposed to catch was the CROSS-source duplicate — one entry as
+`scanned` and another as `created` — which only counting across all sources will see. When a
+test guards a specific past bug, reintroduce that bug and watch it fail.
+
 ### The audit is evidence, not a verdict
 It has accused the app **four times** when the tool was what was wrong:
 

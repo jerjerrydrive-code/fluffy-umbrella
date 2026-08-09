@@ -50,22 +50,36 @@ function rgbaToI420(rgba, w, h) {
     return { y, u, v };
 }
 
-function writeY4M(file, planes, w, h, frames) {
+// Each entry is held for `frames` frames before the next appears. One code is a still; several
+// make a sequence, which is what batch mode needs — it accumulates DISTINCT codes, so a single
+// repeated still can only ever produce one item no matter how long it plays.
+function writeY4M(file, segments, w, h, frames) {
     const parts = [Buffer.from(`YUV4MPEG2 W${w} H${h} F25:1 Ip A1:1 C420mpeg2\n`, 'ascii')];
-    // The same still repeated. The decoder needs several frames to lock on, and a moving image
-    // would test the fake-capture device rather than the scanner.
-    for (let i = 0; i < frames; i++) {
-        parts.push(Buffer.from('FRAME\n', 'ascii'), planes.y, planes.u, planes.v);
+    for (const planes of segments) {
+        // Repeated rather than interpolated: the decoder needs several frames to lock on, and a
+        // moving image would be testing the fake-capture device rather than the scanner.
+        for (let i = 0; i < frames; i++) {
+            parts.push(Buffer.from('FRAME\n', 'ascii'), planes.y, planes.u, planes.v);
+        }
     }
-    fs.writeFileSync(file, Buffer.concat(parts));
+    // Written to a unique temp file and renamed into place. Playwright runs specs in parallel
+    // and two workers reach for the same video at once — a plain write means one can read a
+    // half-finished file and get a decode failure that looks like a scanner bug. rename is
+    // atomic within a filesystem, so a reader sees either no file or a complete one.
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, Buffer.concat(parts));
+    fs.renameSync(tmp, file);
 }
 
 /**
  * Renders `text` as `bcid` using the app's own bwip-js, centred on white at w×h, and writes a
  * Y4M to `outFile`. Returns the path.
  */
-export async function buildFakeCameraVideo({ text, bcid = 'qrcode', outFile,
+export async function buildFakeCameraVideo({ text, bcid = 'qrcode', codes, outFile,
                                              w = 640, h = 480, frames = 60 } = {}) {
+    // `codes` is the general form: [{ text, bcid }, ...] shown one after another. A bare
+    // text/bcid pair is the single-code shorthand.
+    const sequence = codes && codes.length ? codes : [{ text, bcid }];
     if (fs.existsSync(outFile)) return outFile;
     fs.mkdirSync(path.dirname(outFile), { recursive: true });
 
@@ -77,7 +91,7 @@ export async function buildFakeCameraVideo({ text, bcid = 'qrcode', outFile,
         await page.goto('http://localhost:4173/index.html');
         await page.waitForFunction(() => typeof window.bwipjs !== 'undefined', null, { timeout: 20000 });
 
-        const rgba = await page.evaluate(async ({ text, bcid, w, h }) => {
+        const rgbaFor = ({ text, bcid }) => page.evaluate(async ({ text, bcid, w, h }) => {
             const off = document.createElement('canvas');
             // Generous quiet zone and a big module size: a code that fills the frame edge to
             // edge is harder to decode than one with white around it, and the point here is to
@@ -102,7 +116,12 @@ export async function buildFakeCameraVideo({ text, bcid = 'qrcode', outFile,
             return Array.from(ctx.getImageData(0, 0, w, h).data);
         }, { text, bcid, w, h });
 
-        writeY4M(outFile, rgbaToI420(Uint8ClampedArray.from(rgba), w, h), w, h, frames);
+        const segments = [];
+        for (const code of sequence) {
+            const rgba = await rgbaFor(code);
+            segments.push(rgbaToI420(Uint8ClampedArray.from(rgba), w, h));
+        }
+        writeY4M(outFile, segments, w, h, frames);
         await page.close();
     } finally {
         await browser.close();
@@ -123,9 +142,12 @@ export const fakeCameraArgs = (y4m) => [
 // CommonJS-compatible transform.
 if (import.meta.url === `file://${process.argv[1]}`) {
     (async () => {
-        const [out = 'fake-camera.y4m', text = 'https://example.com/scan-test', bcid = 'qrcode']
-            = process.argv.slice(2);
-        await buildFakeCameraVideo({ text, bcid, outFile: out });
-        console.log(`${out}: ${fs.statSync(out).size} bytes (${bcid})`);
+        // node scripts/fake-camera.mjs OUT TEXT BCID [TEXT2 BCID2 ...]
+        const [out = 'fake-camera.y4m', ...rest] = process.argv.slice(2);
+        const pairs = rest.length ? rest : ['https://example.com/scan-test', 'qrcode'];
+        const codes = [];
+        for (let i = 0; i < pairs.length; i += 2) codes.push({ text: pairs[i], bcid: pairs[i + 1] || 'qrcode' });
+        await buildFakeCameraVideo({ codes, outFile: out });
+        console.log(`${out}: ${fs.statSync(out).size} bytes (${codes.map(c => c.bcid).join(', ')})`);
     })();
 }

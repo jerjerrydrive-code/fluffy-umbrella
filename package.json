@@ -9,7 +9,7 @@
     "serve": "node scripts/dev-server.mjs",
     "build:css": "tailwindcss -c tailwind.config.js -i vendor/tailwind.src.css -o vendor/tailwind.css --minify",
     "audit:motion": "node scripts/motion-audit.mjs",
-    "test:camera": "playwright test tests/camera.spec.js tests/camera-1d.spec.js",
+    "test:camera": "playwright test tests/camera.spec.js tests/camera-1d.spec.js tests/camera-batch.spec.js",
     "test:offline": "playwright test tests/pwa.spec.js"
   },
   "repository": {
