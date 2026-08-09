@@ -3220,8 +3220,16 @@ test.describe('No dead ends in the dock', () => {
             return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
         }, id);
         await page.mouse.click(box.x, box.y);
-        await page.waitForTimeout(900);
     };
+    // Waits for the state to be what it should be, rather than for a fixed number of
+    // milliseconds and a hope. A 1540-execution soak turned up a single failure in this
+    // describe that could not be reproduced in 65 further runs, so its cause is unproven —
+    // but fixed timeouts around an asynchronous history.back() are a plausible source and are
+    // worth removing whether or not they were the one.
+    const settled = (page) => page.waitForFunction(
+        () => window.XanNav.stack.length === ((history.state && history.state.xanDepth) || 0)
+              && window.XanNav._suppress === 0,
+        null, { timeout: 10000 });
 
     test('every dock button opens something, and none says "coming soon"', async ({ page }) => {
         await boot(page);
@@ -3239,11 +3247,13 @@ test.describe('No dead ends in the dock', () => {
         };
         for (const [id, sel] of Object.entries(opens)) {
             await tapDock(page, id);
-            expect(await page.evaluate((s) => document.querySelector(s)
-                     .classList.contains('pointer-events-auto'), sel),
-                   `${id} did not open ${sel}`).toBe(true);
+            await expect(page.locator(sel), `${id} did not open ${sel}`)
+                .toHaveClass(/pointer-events-auto/, { timeout: 8000 });
+            await settled(page);
             await page.evaluate(() => history.back());
-            await page.waitForTimeout(600);
+            await expect(page.locator(sel), `${sel} did not close on Back`)
+                .not.toHaveClass(/pointer-events-auto/, { timeout: 8000 });
+            await settled(page);
         }
         expect(toasts.filter(t => /coming soon/i.test(t)),
                'a dock button is still a placeholder').toEqual([]);
@@ -3425,5 +3435,184 @@ test.describe('Nothing blocks a frame, and nothing claims success it did not hav
         const last = toasts[toasts.length - 1];
         expect(last.m, `a failed copy reported: "${last.m}"`).toMatch(/could not copy/i);
         expect(last.t).toBe('error');
+    });
+});
+
+
+test.describe('The navigation stack never drifts out of step with history', () => {
+    // XanNav's whole correctness rests on one invariant: the number of open layers equals the
+    // history depth it has pushed. If those disagree, a phantom entry is left behind — you press
+    // Back, nothing happens, and you press again. Nothing asserted it until now.
+    const state = (page) => page.evaluate(() => ({
+        stack: window.XanNav.stack.map(l => l.id),
+        depth: (history.state && history.state.xanDepth) || 0,
+        suppress: window.XanNav._suppress,
+    }));
+    const settled = (page) => page.waitForFunction(
+        () => window.XanNav.stack.length === ((history.state && history.state.xanDepth) || 0)
+              && window.XanNav._suppress === 0,
+        null, { timeout: 10000 });
+
+    test('every way of closing a layer leaves the two in agreement', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+
+        const closers = [
+            ['the X button',     async () => page.click('#btn-close-library')],
+            ['Back',             async () => page.evaluate(() => history.back())],
+            ['Escape',           async () => page.keyboard.press('Escape')],
+            ['close() directly', async () => page.evaluate(() => window.LibraryManager.close())],
+        ];
+
+        for (const [label, close] of closers) {
+            await page.evaluate(() => window.LibraryManager.open());
+            await settled(page);
+            expect((await state(page)).depth, `${label}: depth wrong while open`).toBe(1);
+
+            await close();
+            await settled(page);
+            const s = await state(page);
+            expect(s.stack, `${label}: a layer was left on the stack`).toEqual([]);
+            expect(s.depth, `${label}: left a phantom history entry`).toBe(0);
+        }
+    });
+
+    test('repeated opening and closing does not accumulate entries', async ({ page }) => {
+        // A leak of one entry per cycle is invisible once and unusable after twenty.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+
+        for (let i = 0; i < 10; i++) {
+            await page.evaluate(() => window.LibraryManager.open());
+            await settled(page);
+            await (i % 2 ? page.evaluate(() => history.back()) : page.click('#btn-close-library'));
+            await settled(page);
+        }
+        const s = await state(page);
+        expect(s.depth, `history grew to ${s.depth} after ten open/close cycles`).toBe(0);
+        expect(s.stack).toEqual([]);
+    });
+
+    test('nesting three deep unwinds one at a time, in order', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+
+        await page.evaluate(() => window.LibraryManager.open());
+        await settled(page);
+        await page.evaluate(() => window.SettingsManager.open());
+        await settled(page);
+        await page.evaluate(() => window.CloudSync.open());
+        await settled(page);
+        expect((await state(page)).stack)
+            .toEqual(['library-overlay', 'settings-modal', 'account-modal']);
+
+        for (const expected of [['library-overlay', 'settings-modal'], ['library-overlay'], []]) {
+            await page.evaluate(() => history.back());
+            await settled(page);
+            expect((await state(page)).stack).toEqual(expected);
+        }
+        expect((await state(page)).depth).toBe(0);
+    });
+});
+
+test.describe('Scanned text is never treated as markup', () => {
+    // A QR code's content is attacker-controlled by definition — anyone can print one, and the
+    // app puts what it read into a title. Three places interpolated that straight into
+    // innerHTML: the home-screen icon label, the search results, and the toast. Scanning a code
+    // whose text was `<img src=x onerror=...>` ran that handler, with access to every code in
+    // localStorage. Verified as script EXECUTION, not merely markup appearing.
+    //
+    // The Library rows and the batch tray already did this correctly, which is what makes it
+    // worth a standing test: the rule existed and three sinks missed it.
+    const EVIL = '<img src=x onerror="window.__XSS=(window.__XSS||0)+1">';
+
+    const attempt = async (page, setup) => {
+        await page.evaluate(() => { window.__XSS = 0; });
+        await page.evaluate(setup, EVIL);
+        await page.waitForTimeout(400);
+        return page.evaluate(() => ({
+            executed: window.__XSS || 0,
+            injected: document.querySelectorAll('img[src="x"]').length,
+        }));
+    };
+
+    const boot = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForFunction(() => window.Renderer && window.OS_STATE, null, { timeout: 20000 });
+        await page.waitForTimeout(1000);
+    };
+
+    test('a hostile title on the home screen does not run', async ({ page }) => {
+        await boot(page);
+        const r = await attempt(page, (evil) => {
+            window.OS_STATE.apps.push({ id: 'xss_1', title: evil, type: 'grid',
+                                        page: 0, order: 9, bcid: 'qrcode', data: 'a' });
+            window.Renderer.render();
+        });
+        expect(r.executed, 'script from a scanned title executed').toBe(0);
+        expect(r.injected, 'a scanned title was parsed as markup').toBe(0);
+    });
+
+    test('hostile text in search results does not run', async ({ page }) => {
+        await boot(page);
+        const r = await attempt(page, (evil) => {
+            window.OS_STATE.apps.push({ id: 'xss_2', title: evil, type: 'grid',
+                                        page: 0, order: 10, bcid: 'qrcode', data: evil });
+            window.Renderer.render();
+            window.GestureManager.openSearch();
+            const input = document.getElementById('search-input');
+            input.value = 'img';
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(r.executed).toBe(0);
+        expect(r.injected).toBe(0);
+    });
+
+    test('a hostile search query does not run in the empty-state message', async ({ page }) => {
+        await boot(page);
+        const r = await attempt(page, (evil) => {
+            window.GestureManager.openSearch();
+            const input = document.getElementById('search-input');
+            input.value = evil;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(r.executed).toBe(0);
+        expect(r.injected).toBe(0);
+    });
+
+    test('a hostile toast message does not run', async ({ page }) => {
+        // Several callers pass a code's title straight into showToast.
+        await boot(page);
+        const r = await attempt(page, (evil) => window.showToast(evil));
+        expect(r.executed).toBe(0);
+        expect(r.injected).toBe(0);
+    });
+
+    test('the Library and batch tray stay safe too', async ({ page }) => {
+        await boot(page);
+        const r = await attempt(page, (evil) => {
+            window.OS_STATE.apps.push({ id: 'xss_3', title: evil, type: 'grid',
+                                        page: 0, order: 11, bcid: 'qrcode', data: evil });
+            window.recordHistory({ data: evil, bcid: 'qrcode', source: 'scanned' });
+            window.Renderer.render();
+            window.LibraryManager.open();
+            window.LibraryManager.flushThumbs();
+        });
+        expect(r.executed).toBe(0);
+        expect(r.injected).toBe(0);
+    });
+
+    test('ordinary titles containing angle brackets still read correctly', async ({ page }) => {
+        // Escaping must not turn into mangling: a title with < or & is legitimate text and has
+        // to appear as the user typed it.
+        await boot(page);
+        const shown = await page.evaluate(() => {
+            window.OS_STATE.apps.push({ id: 'xss_4', title: 'Plain <Title> & co', type: 'grid',
+                                        page: 0, order: 12, bcid: 'qrcode', data: 'd' });
+            window.Renderer.render();
+            const label = document.querySelector('[data-id="xss_4"] .app-label');
+            return label && label.textContent;
+        });
+        expect(shown).toBe('Plain <Title> & co');
     });
 });
