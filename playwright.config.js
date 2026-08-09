@@ -22,6 +22,10 @@ export default defineConfig({
     use: {
         baseURL: 'http://localhost:4173',
         trace: 'retain-on-failure',
+        // This ships to phones. Without it the page reports no touch support, TouchEvent is
+        // unavailable, and any test that drives a finger silently becomes a mouse test — which
+        // is how a long-press bug that only exists under touch got a passing test.
+        hasTouch: true,
     },
     webServer: {
         command: 'node scripts/dev-server.mjs',

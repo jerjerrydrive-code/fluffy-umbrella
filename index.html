@@ -1732,9 +1732,13 @@
                 
                 { id: 'nav_home', title: 'Home', icon: 'grid', type: 'dock', order: 0 },
                 { id: 'nav_gen', title: 'Create', icon: 'plus-circle', type: 'dock', order: 1 },
-                { id: 'nav_wifi', title: 'WiFi', icon: 'wifi', type: 'dock', order: 2, badge: '2' },
+                // No hardcoded badges. A '2' on WiFi and a '!' on Scan were carried over from
+                // the original mock-up: fixed strings that counted nothing, never changed, and
+                // told you a notification was waiting when none was. The Library badge below is
+                // computed from how many codes you actually have, so it means what it looks like.
+                { id: 'nav_wifi', title: 'WiFi', icon: 'wifi', type: 'dock', order: 2 },
                 { id: 'nav_lib', title: 'Library', icon: 'layout-list', type: 'dock', order: 3 },
-                { id: 'nav_scan', title: 'Scan', icon: 'scan-line', type: 'dock', order: 4, badge: '!' }
+                { id: 'nav_scan', title: 'Scan', icon: 'scan-line', type: 'dock', order: 4 }
             ]
         };
 
@@ -1798,19 +1802,52 @@
             toast.className = 'fixed top-16 left-1/2 -translate-x-1/2 bg-[#1c1c1e]/95 text-white px-6 py-3 rounded-full shadow-2xl backdrop-blur-md z-[400] transition-all duration-300 transform -translate-y-4 opacity-0 font-semibold text-sm flex items-center gap-2 border border-white/10';
             const icon = type === 'error' ? 'alert-circle' : 'check-circle-2';
             const iconColor = type === 'error' ? 'text-red-400' : 'text-green-400';
-            toast.innerHTML = `<i data-lucide="${icon}" class="w-4 h-4 ${iconColor}"></i> ${message}`;
+            toast.innerHTML = `${toastIcon(icon, iconColor)} ${message}`;
             document.body.appendChild(toast);
-            safeCreateIcons();
-            
-            requestAnimationFrame(() => {
-                toast.style.transitionTimingFunction = "var(--spring-snappy)";
-                toast.classList.remove('-translate-y-4', 'opacity-0');
-            });
+
+            // Force the starting style to be computed before changing it. A transition needs a
+            // resolved "from" value, and a freshly appended element has none until the browser
+            // does a style pass — a single requestAnimationFrame is not a guarantee of that, and
+            // the icon sweep above makes it likelier to be missed. The motion audit caught the
+            // toast's opacity jumping half its range in one frame at ~96ms: it snapped part-way
+            // in rather than fading. Intermittently, which is exactly what a race looks like.
+            // Reading offsetHeight forces the pass, which is deterministic where the rAF was a
+            // hope that usually held.
+            void toast.offsetHeight;
+            toast.style.transitionTimingFunction = "var(--spring-snappy)";
+            toast.classList.remove('-translate-y-4', 'opacity-0');
             setTimeout(() => {
                 toast.style.transitionTimingFunction = "ease";
                 toast.classList.add('-translate-y-4', 'opacity-0');
                 setTimeout(() => toast.remove(), 400);
             }, 2500);
+        }
+
+        // A toast needs one icon. It used to get it by calling lucide's whole-document sweep,
+        // which re-renders every icon on the page — 59 of them — to draw that one. Measured at
+        // 26.9ms of blocking work inside showToast, which is more than a frame: the toast's own
+        // fade-in then lost its first frame and snapped part-way in instead of animating. Caught
+        // by the motion audit as an opacity jump, intermittently, because a dropped frame is a
+        // race rather than a certainty.
+        //
+        // There are exactly two toast icons, so each is rendered once and its markup kept. Every
+        // toast after the first costs a string concatenation.
+        const TOAST_ICON_CACHE = {};
+        function toastIcon(name, colorClass) {
+            if (!TOAST_ICON_CACHE[name]) {
+                const holder = document.createElement('div');
+                holder.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
+                holder.innerHTML = `<i data-lucide="${name}"></i>`;
+                document.body.appendChild(holder);
+                safeCreateIcons();
+                const svg = holder.querySelector('svg');
+                // Falls back to no icon rather than to a raw <i>, which would render as nothing
+                // visible anyway and leave a stray element behind.
+                TOAST_ICON_CACHE[name] = svg ? svg.outerHTML : '';
+                holder.remove();
+            }
+            if (!TOAST_ICON_CACHE[name]) return '';
+            return TOAST_ICON_CACHE[name].replace('<svg ', `<svg class="w-4 h-4 ${colorClass}" `);
         }
 
         function safeCreateIcons() {
@@ -1905,6 +1942,11 @@
                             setTimeout(() => window.ScannerEngine.start(), 350);
                         } else if (app.id === 'nav_lib') {
                             setTimeout(() => window.LibraryManager.open(), 350);
+                        } else if (app.id === 'nav_wifi') {
+                            setTimeout(() => {
+                                window.CodeGenerator.open();
+                                window.CodeGenerator.openTemplateForm('wifi');
+                            }, 350);
                         }
                     });
 
@@ -2024,6 +2066,14 @@
                     </button>
                 `;
 
+                // Derived, never stored. A badge that lives in state goes stale the moment the
+                // thing it counts changes; computing it at render means it cannot disagree with
+                // what is on the screen.
+                if (itemData.id === 'nav_lib') {
+                    const saved = window.OS_STATE.apps.filter(a => a.type === 'grid').length;
+                    itemData = Object.assign({}, itemData, { badge: saved > 0 ? String(saved) : null });
+                }
+
                 let notifBadge = itemData.badge ? `
                     <div class="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-bold min-w-[20px] h-5 px-1 flex items-center justify-center rounded-full border-2 border-transparent shadow-md z-10 jiggle-target pointer-events-none transition-opacity" style="box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
                         ${itemData.badge}
@@ -2066,6 +2116,15 @@
                         if (window.ScannerEngine) window.ScannerEngine.start();
                     } else if (itemData.id === 'nav_lib') {
                         if (window.LibraryManager) window.LibraryManager.open();
+                    } else if (itemData.id === 'nav_wifi') {
+                        // Was falling through to "WiFi coming soon" — a dead button sitting in
+                        // the dock, exactly like the Library one before it. Sharing a network is
+                        // the single most common reason to make a QR code, which is why it earns
+                        // a dock slot; it opens the WiFi form directly rather than the picker.
+                        if (window.CodeGenerator) {
+                            window.CodeGenerator.open();
+                            window.CodeGenerator.openTemplateForm('wifi');
+                        }
                     } else {
                         window.showToast(`${itemData.title} coming soon.`);
                     }
@@ -2380,8 +2439,10 @@
                                 
                 this.startX = e.clientX; this.startY = e.clientY;
                 this.currentX = e.clientX; this.currentY = e.clientY;
-                
+                this.pressedAt = performance.now();
+
                 this.wasDragging = false; this.isEngaged = false; this.isPageFlipping = false;
+                this.swipedAway = false;
                 this.dwellTimer = null; this.dwellTarget = null; this.folderArmed = null;
                 
                 this.targetEl = target;
@@ -2418,23 +2479,66 @@
                 this.draggedEl.style.left = `0px`;
                 this.draggedEl.style.top = `0px`;
                 this.draggedEl.style.margin = `0px`;
-                this.draggedEl.style.transform = `translate3d(${this.currentX - this.offsetX}px, ${this.currentY - this.offsetY}px, 0) scale(1.15)`;
+                this.draggedEl.style.transform = this.heldTransform(this.currentX, this.currentY);
                 this.draggedEl.style.pointerEvents = 'none';
                 
                 haptic(15);
+            }
+
+            // Where the held icon is drawn. Follows the finger exactly until that would carry it
+            // off the screen, then holds at the edge with a sliver still showing. Something you
+            // are holding should never become invisible — that is how an icon "disappears" and
+            // reappears somewhere you did not put it.
+            heldTransform(px, py) {
+                const w = this.draggedEl.offsetWidth || 0, h = this.draggedEl.offsetHeight || 0;
+                const keep = 0.55;   // fraction that must stay on screen
+                const x = Math.max(-w * (1 - keep),
+                          Math.min(px - this.offsetX, window.innerWidth - w * keep));
+                const y = Math.max(-h * (1 - keep),
+                          Math.min(py - this.offsetY, window.innerHeight - h * keep));
+                return `translate3d(${x}px, ${y}px, 0) scale(1.15)`;
             }
 
             onPointerMove(e) {
                 this.currentX = e.clientX; this.currentY = e.clientY;
                 
                 if (!this.isEngaged) {
-                    const distance = Math.hypot(e.clientX - this.startX, e.clientY - this.startY);
-                    if (distance > 5) this.engageDrag();
-                    else return;
+                    if (this.swipedAway) return;
+
+                    const dx = e.clientX - this.startX, dy = e.clientY - this.startY;
+                    const distance = Math.hypot(dx, dy);
+
+                    // Turning pages in edit mode is a swipe, and on a full page every swipe
+                    // starts on an icon — there is nowhere else to put your thumb. Engaging after
+                    // 5px in any direction meant that swipe grabbed the icon instead, and since
+                    // nothing constrained where a held icon could go, it was dragged clean off
+                    // the side of the screen: the icon vanished from page one and turned up
+                    // somewhere unexpected on page two.
+                    //
+                    // A quick, clearly horizontal movement is therefore a page turn, and the
+                    // drag is abandoned so the pager scrolls natively. Hold for a moment first
+                    // and it is a drag, whichever way you then move — which is how picking an
+                    // icon up is meant to feel, and matches every home screen people already know.
+                    // Deliberately hard to trigger by accident. A page turn is fast, travels a
+                    // long way sideways and barely deviates; a lift is usually diagonal and much
+                    // shorter. An earlier, looser rule (12px and a 1.6 ratio) would have called a
+                    // 14x8 diagonal lift a swipe, which would make picking icons up feel random
+                    // in the other direction. When in doubt, it is a drag — that is recoverable,
+                    // and a wrongly-refused drag is not.
+                    const QUICK_MS = 180, SWIPE_PX = 18, SWIPE_DRIFT = 10;
+                    const quick = (performance.now() - this.pressedAt) < QUICK_MS;
+                    if (quick && Math.abs(dx) >= SWIPE_PX && Math.abs(dy) <= SWIPE_DRIFT) {
+                        this.swipedAway = true;
+                        if (this.targetEl) this.targetEl.classList.remove('drag-ready');
+                        this.detachPointerTracking();
+                        return;
+                    }
+
+                    if (distance > 5) this.engageDrag(); else return;
                 }
 
                 this.wasDragging = true;
-                this.draggedEl.style.transform = `translate3d(${e.clientX - this.offsetX}px, ${e.clientY - this.offsetY}px, 0) scale(1.15)`;
+                this.draggedEl.style.transform = this.heldTransform(e.clientX, e.clientY);
 
                 const pager = document.getElementById('workspace-pager');
                 const clientWidth = pager.clientWidth;
@@ -6078,24 +6182,53 @@
             }
         }, { passive: true });
 
-        let pressTimer;
+        // Long press to enter edit mode.
+        //
+        // This used to cancel on ANY touchmove, with no tolerance at all. A finger resting on
+        // glass for 600ms always drifts a pixel or two, and every one of those fired a move
+        // event and killed the timer — so whether it worked came down to how still you happened
+        // to be holding, which feels exactly like "it only works on certain spots". A slop
+        // radius is what every platform uses for precisely this reason.
+        //
+        // It also required the press to land on an icon, so the empty part of a page could not
+        // start edit mode even though that is the obvious place to press when a page is nearly
+        // empty. Now anywhere on the workspace works, as long as it is not a control.
+        const PRESS_SLOP = 12;
+        let pressTimer = null, pressX = 0, pressY = 0;
+
+        const pointOf = (e) => (e.touches && e.touches[0]) || e;
+
         const startPress = (e) => {
-            if (window.OS_STATE.isEditMode || e.target.closest('button') || !e.target.closest('.app-icon-wrapper')) return;
+            if (window.OS_STATE.isEditMode || e.target.closest('button')) return;
+            const pt = pointOf(e);
+            pressX = pt.clientX; pressY = pt.clientY;
+            clearTimeout(pressTimer);
             pressTimer = setTimeout(() => {
+                pressTimer = null;
                 window.OS_STATE.isEditMode = true;
                 document.body.classList.add('edit-mode');
                 haptic([10, 30, 10]);
-                window.Renderer.render(); 
+                window.Renderer.render();
             }, 600);
         };
-        const cancelPress = () => clearTimeout(pressTimer);
-        
-        pager.addEventListener('touchstart', startPress, { passive: true });
-        pager.addEventListener('mousedown', startPress);
-        pager.addEventListener('touchend', cancelPress);
-        pager.addEventListener('touchmove', cancelPress, { passive: true });
-        pager.addEventListener('mouseup', cancelPress);
-        pager.addEventListener('mouseleave', cancelPress);
+        const cancelPress = () => { clearTimeout(pressTimer); pressTimer = null; };
+        const movePress = (e) => {
+            if (!pressTimer) return;
+            const pt = pointOf(e);
+            if (Math.hypot(pt.clientX - pressX, pt.clientY - pressY) > PRESS_SLOP) cancelPress();
+        };
+
+        // Pointer events rather than a mouse set and a touch set. Two reasons beyond tidiness.
+        // They unify a finger and a cursor, so the behaviour tested on a desktop is the behaviour
+        // shipped to a phone. And the old mouse path cancelled on `mouseleave`, which fires on
+        // the pager spuriously as soon as the pointer moves within an icon — measured, not
+        // guessed — so a press could be killed a few milliseconds after it began.
+        pager.addEventListener('pointerdown', startPress);
+        pager.addEventListener('pointermove', movePress, { passive: true });
+        pager.addEventListener('pointerup', cancelPress);
+        pager.addEventListener('pointercancel', cancelPress);
+        // Scrolling to another page is not a long press, however still the finger was.
+        pager.addEventListener('scroll', cancelPress, { passive: true });
 
         window.exitEditMode = () => {
             if (!window.OS_STATE.isEditMode) return;
