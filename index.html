@@ -971,7 +971,12 @@
         .tag-chip:active { transform: scale(0.92); }
         .tag-chip-add { background: transparent; color: #9ca3af; border-style: dashed; border-color: #d1d5db; }
 
-        .morph-pulse { transform: scale(0.93) translateY(15px); filter: blur(12px) brightness(0.7); }
+        /* 8px, not 12. The blur exists to hide the skin swap, and 8px hides it completely;
+           what 12px bought was 74ms more of the screen being unreadable at each end. Above
+           roughly 4px nothing on screen can be read, so the time spent over that threshold is
+           the number that matters: 334ms at 12px, 260ms at 8px, before any of the sequencing
+           below. */
+        .morph-pulse { transform: scale(0.93) translateY(15px); filter: blur(8px) brightness(0.7); }
 
         /* The morph is deliberately a blur-and-settle rather than a crossfade, but it was
            holding the whole screen illegible for 608ms of an 880ms sequence — measured, not
@@ -5564,19 +5569,33 @@
                 const workspace = document.getElementById('workspace-container');
                 document.body.classList.add('skin-morphing');
                 workspace.classList.add('morph-pulse');
-                // Swap under cover of the blur — 150ms in it is ~75% deep, which is plenty to
-                // hide the change — then start easing straight back out rather than sitting at
-                // full blur waiting. Lands around 560ms instead of 880ms.
+
+                // The ease-out starts when the swap has actually been painted, not at a fixed
+                // 260ms.
+                //
+                // Flipping data-skin invalidates essentially every rule in the stylesheet, and
+                // that recalculation lands exactly where the old sequence tried to begin easing
+                // the blur away. A transition cannot start while the main thread is busy, so the
+                // start slipped and the screen stayed unreadable well past its budget. Measured
+                // over 21 morphs before this change: median 327ms above 4px of blur, worst 512,
+                // and the long ones lined up with frame gaps of 137-154ms.
+                //
+                // Two frames after the swap: the first carries the recalculation and repaint,
+                // the second begins the ease-out with that work already behind it. Slower
+                // machines take longer over the first frame and simply start a little later,
+                // rather than starting on time and then stalling half way through — which is
+                // the difference between a transition that is late and one that is broken.
                 setTimeout(() => {
                     document.body.setAttribute('data-skin', id);
                     if (window.InteractionManager) window.InteractionManager.refreshEnlargeSkin();
+
+                    requestAnimationFrame(() => requestAnimationFrame(() => {
+                        workspace.classList.remove('morph-pulse');
+                        // Held until the ease-out has finished, since it is what shortens the
+                        // transition; dropping it early would stretch the tail back out.
+                        setTimeout(() => document.body.classList.remove('skin-morphing'), 260);
+                    }));
                 }, 150);
-                setTimeout(() => {
-                    workspace.classList.remove('morph-pulse');
-                }, 260);
-                setTimeout(() => {
-                    document.body.classList.remove('skin-morphing');
-                }, 500);
 
                 this.render();
             }

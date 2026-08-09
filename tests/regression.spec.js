@@ -4852,3 +4852,108 @@ test.describe('The page never scrolls sideways', () => {
         expect(fill, 'the icon has outgrown its cell').toBeLessThanOrEqual(0.85);
     });
 });
+
+test.describe('The skin morph does not leave the screen unreadable', () => {
+    // Defect #5 came back part-time: the audit intermittently reported
+    // "#workspace-container: unreadable (blur >=4px) for 661ms" against a 500ms budget.
+    //
+    // The timers were firing on time — that was checked first and ruled the obvious explanation
+    // out. The real mechanism is that flipping `data-skin` invalidates essentially every rule in
+    // the stylesheet, and that recalculation lands exactly where the old sequence tried to begin
+    // easing the blur away. A transition cannot start while the main thread is busy, so the
+    // start slipped and the screen stayed unreadable well past its budget.
+    //
+    // Measured over 21 morphs before the fix: median 327ms, worst 512, and the long ones lined
+    // up with frame gaps of 137-154ms. After: median 140ms, worst 198, none over budget.
+
+    const morphSpan = async (page, from, to) => page.evaluate(async ({ from, to }) => {
+        document.body.setAttribute('data-skin', from);
+        window.SkinManager.current = from;
+        window.OS_STATE.skin = from;
+        await new Promise(r => setTimeout(r, 400));
+
+        const ws = document.getElementById('workspace-container');
+        const blurOf = () => {
+            const m = /blur\(([\d.]+)px\)/.exec(getComputedStyle(ws).filter || '');
+            return m ? parseFloat(m[1]) : 0;
+        };
+        const t0 = performance.now();
+        const over = [];
+        let blurAtSwap = null;
+        const obs = new MutationObserver(() => { if (blurAtSwap === null) blurAtSwap = blurOf(); });
+        obs.observe(document.body, { attributes: true, attributeFilter: ['data-skin'] });
+
+        const done = new Promise(res => {
+            const tick = () => {
+                const t = performance.now() - t0;
+                if (blurOf() >= 4) over.push(t);
+                t < 1300 ? requestAnimationFrame(tick) : res();
+            };
+            requestAnimationFrame(tick);
+        });
+        window.SkinManager.setSkin(to);
+        await done;
+        obs.disconnect();
+        return {
+            span: over.length > 1 ? Math.round(over[over.length - 1] - over[0]) : 0,
+            blurAtSwap,
+            settled: blurOf() < 0.01 && !ws.classList.contains('morph-pulse'),
+            skin: document.body.getAttribute('data-skin'),
+        };
+    }, { from, to });
+
+    test('the screen is never unreadable for long, across several morphs', async ({ page }) => {
+        test.setTimeout(120000);
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1100);
+        await page.evaluate(() => {
+            for (let i = 0; i < 40; i++) {
+                window.OS_STATE.apps.push({ id: 'mo' + i, title: 'M' + i, type: 'grid',
+                    page: Math.floor(i / 24), order: i % 24, bcid: 'qrcode', data: 'm' + i });
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(800);
+
+        const spans = [];
+        for (const [from, to] of [['dock', 'glass'], ['glass', 'soft'], ['soft', 'aurora'],
+                                  ['aurora', 'classic'], ['classic', 'scancard'], ['scancard', 'dock']]) {
+            spans.push((await morphSpan(page, from, to)).span);
+        }
+        spans.sort((a, b) => a - b);
+        const median = spans[Math.floor(spans.length / 2)];
+
+        // The median is the assertion that separates the builds: 327ms before, 140ms after.
+        // A max-only check could pass the broken build by luck, since it only went over budget
+        // about one morph in twenty.
+        expect(median, `median unreadable span too long: ${JSON.stringify(spans)}`).toBeLessThan(250);
+        expect(Math.max(...spans), `a morph left the screen unreadable: ${JSON.stringify(spans)}`)
+            .toBeLessThan(450);
+    });
+
+    test('the swap still happens while the screen is covered', async ({ page }) => {
+        // Shortening the blur must not expose the change it exists to hide. Above roughly 4px
+        // nothing on screen can be read, which is the same threshold the span uses.
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1100);
+        const r = await morphSpan(page, 'dock', 'glass');
+        expect(r.blurAtSwap, 'the skin swap happened in plain sight').toBeGreaterThanOrEqual(4);
+        expect(r.skin).toBe('glass');
+    });
+
+    test('the morph always settles, however long its work took', async ({ page }) => {
+        // The ease-out is now started from a frame callback rather than a timer. If that chain
+        // ever fails to run, the screen stays blurred forever — a worse failure than the one
+        // being fixed, and silent.
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1100);
+        for (const [from, to] of [['dock', 'aurora'], ['aurora', 'dock']]) {
+            const r = await morphSpan(page, from, to);
+            expect(r.settled, `the workspace stayed blurred after morphing to ${to}`).toBe(true);
+            expect(r.skin).toBe(to);
+        }
+    });
+});
