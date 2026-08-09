@@ -4188,3 +4188,207 @@ test.describe('A save that did not happen is never reported as success', () => {
         expect(r.toasts).not.toContain('Wallpaper updated!');
     });
 });
+
+test.describe('The launcher arbitrates its own gestures', () => {
+    // Reported from a phone, after three earlier rounds of threshold tuning had failed:
+    //   "the edit function is hard to find the right spot to activate it. I response via
+    //    vibration feedback anywhere I tap tho but nothing happens ... we continue to fail
+    //    that section and need to work on a full revamp"
+    //
+    // Cause, measured rather than guessed. The grid lived in a native scroll-snap container and
+    // icons were activated by the synthesized `click`:
+    //   · at 16px of horizontal drift the scroller claimed the touch, fired `pointercancel`,
+    //     and no click was ever dispatched — 0/4/8/12px opened a code, 16px+ did nothing;
+    //   · with the scroller disabled the `pointercancel` went away and click STILL did not
+    //     arrive past ~15px, which is Chrome's own tap slop and is not configurable.
+    // Meanwhile haptics and the long-press timer ran on pointer events, which fire regardless:
+    // hence a buzz on every touch and an action on almost none.
+    //
+    // These tests use dispatched touch throughout. A mouse click passes against every broken
+    // build here, because Playwright's click targets an element rather than a coordinate.
+
+    const finger = async (page, type, x, y) => {
+        const cdp = page.__cdp || (page.__cdp = await page.context().newCDPSession(page));
+        await cdp.send('Input.dispatchTouchEvent', {
+            type,
+            touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 8, radiusY: 8, force: 1 }],
+        });
+    };
+    const drag = async (page, x0, y0, x1, y1, steps = 8) => {
+        await finger(page, 'touchStart', x0, y0);
+        for (let i = 1; i <= steps; i++) {
+            await finger(page, 'touchMove', x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps);
+            await page.waitForTimeout(16);
+        }
+        await finger(page, 'touchEnd', x1, y1);
+    };
+    const boot = async (page) => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1100);
+    };
+    const viewerOpen = (page) => page.evaluate(() =>
+        document.getElementById('item-fullscreen-layer').classList.contains('opacity-100'));
+
+    // 20px is past Chrome's ~15px tap slop and past the 16px at which the old build died.
+    // A thumb on a moving bus drifts this much and more.
+    for (const drift of [0, 8, 16, 20]) {
+        test(`a tap that drifts ${drift}px still opens the code`, async ({ page }) => {
+            await boot(page);
+            const b = await page.locator('#workspace-pager .app-icon-wrapper').first().boundingBox();
+            const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+            await drag(page, cx, cy, cx + drift, cy, 5);
+            await page.waitForTimeout(700);
+            expect(await viewerOpen(page),
+                   `a ${drift}px drift stopped the tap registering`).toBe(true);
+        });
+    }
+
+    test('a tap does not open the code and immediately close it again', async ({ page }) => {
+        // Acting on pointerup means the screen has already changed when `click` is dispatched,
+        // so it lands on whatever is NOW under the finger — here the viewer's own backdrop,
+        // whose handler closes it. Click-through, and it reads as "tapping does nothing".
+        await boot(page);
+        const b = await page.locator('#workspace-pager .app-icon-wrapper').first().boundingBox();
+        await drag(page, b.x + b.width / 2, b.y + b.height / 2, b.x + b.width / 2, b.y + b.height / 2, 2);
+        await page.waitForTimeout(900);
+        expect(await viewerOpen(page), 'the viewer opened and shut itself').toBe(true);
+    });
+
+    test('a long press with a finger that drifts still reaches edit mode', async ({ page }) => {
+        // The original report, twice over. A finger always wanders over half a second; the old
+        // 12px tolerance meant it depended on how still you happened to be holding.
+        await boot(page);
+        const b = await page.locator('#workspace-pager .app-icon-wrapper').first().boundingBox();
+        const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+
+        await finger(page, 'touchStart', cx, cy);
+        for (let i = 0; i < 10; i++) {
+            await finger(page, 'touchMove', cx + (i % 3) * 6, cy + (i % 2) * 5);
+            await page.waitForTimeout(55);
+        }
+        const edit = await page.evaluate(() => document.body.classList.contains('edit-mode'));
+        await finger(page, 'touchEnd', cx, cy);
+        expect(edit, 'a drifting long press did not reach edit mode').toBe(true);
+    });
+
+    test('a long press does not also open the rename dialog', async ({ page }) => {
+        // The click the browser synthesizes after the press lands on the icon still under the
+        // finger — and in edit mode that means Rename. Long-press to rearrange, get a rename
+        // box. Found by a probe during the revamp, before release.
+        await boot(page);
+        const b = await page.locator('#workspace-pager .app-icon-wrapper').first().boundingBox();
+        const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+
+        await finger(page, 'touchStart', cx, cy);
+        for (let i = 0; i < 10; i++) {
+            await finger(page, 'touchMove', cx + (i % 3) * 4, cy + (i % 2) * 4);
+            await page.waitForTimeout(55);
+        }
+        await finger(page, 'touchEnd', cx, cy);
+        await page.waitForTimeout(700);
+
+        expect(await page.evaluate(() => document.body.classList.contains('edit-mode'))).toBe(true);
+        expect(await page.evaluate(() =>
+            document.getElementById('rename-modal').classList.contains('opacity-100')),
+            'the long press opened a rename dialog').toBe(false);
+    });
+
+    test('swiping changes page, and swiping back returns', async ({ page }) => {
+        await boot(page);
+        await page.evaluate(() => {
+            for (let i = 0; i < 10; i++) {
+                window.OS_STATE.apps.push({ id: 'pg2_' + i, title: 'P' + i, type: 'grid',
+                    page: 1, order: i, bcid: 'qrcode', data: 'p' + i });
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(700);
+        expect(await page.evaluate(() => document.querySelectorAll('.page-wrapper').length)).toBe(2);
+
+        await drag(page, 320, 400, 120, 400);
+        await page.waitForTimeout(900);
+        expect(await page.evaluate(() => window.OS_STATE.currentPage || 0),
+               'swiping did not change page').toBe(1);
+
+        await drag(page, 100, 400, 300, 400);
+        await page.waitForTimeout(900);
+        expect(await page.evaluate(() => window.OS_STATE.currentPage || 0),
+               'swiping back did not return').toBe(0);
+    });
+
+    test('a deliberate slow drag past a quarter page still turns it', async ({ page }) => {
+        // Snapping to the NEAREST page needs the finger past half the screen, minus the slop
+        // the pan does not count: a 200px swipe on a 390px page moved the grid 175px (45%) and
+        // snapped back. Whether the page turned then rested entirely on whether the flick
+        // cleared the velocity threshold — three failures in eight runs, which is a user being
+        // ignored at the same rate. Distance alone must be enough.
+        await boot(page);
+        await page.evaluate(() => {
+            for (let i = 0; i < 10; i++) {
+                window.OS_STATE.apps.push({ id: 'slow_' + i, title: 'S' + i, type: 'grid',
+                    page: 1, order: i, bcid: 'qrcode', data: 's' + i });
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(700);
+
+        // 30 slow steps: too slow to register as a flick at any plausible timing.
+        await drag(page, 330, 400, 150, 400, 30);
+        await page.waitForTimeout(900);
+        expect(await page.evaluate(() => window.OS_STATE.currentPage || 0),
+               'a slow drag past a quarter page did not turn it').toBe(1);
+    });
+
+    test('a small drag does not turn the page', async ({ page }) => {
+        // The other half of the contract. If any movement committed, the grid would drift
+        // under a thumb that was only trying to tap.
+        await boot(page);
+        await page.evaluate(() => {
+            for (let i = 0; i < 10; i++) {
+                window.OS_STATE.apps.push({ id: 'sm_' + i, title: 'S' + i, type: 'grid',
+                    page: 1, order: i, bcid: 'qrcode', data: 's' + i });
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(700);
+
+        await drag(page, 300, 400, 250, 400, 25);      // 50px, well under a quarter page
+        await page.waitForTimeout(900);
+        expect(await page.evaluate(() => window.OS_STATE.currentPage || 0),
+               'a 50px drag turned the page').toBe(0);
+    });
+
+    test('leaving edit mode does not leave the launcher unresponsive', async ({ page }) => {
+        // PhysicsDragEngine.destroy() never cleared targetEl, so anything asking "is a drag in
+        // progress" got yes forever afterwards. With the arbiter reading that flag, one trip
+        // through edit mode killed every tap and every swipe until reload. Caught by a probe.
+        await boot(page);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(500);
+        await page.evaluate(() => window.exitEditMode());
+        await page.waitForTimeout(800);
+
+        expect(await page.evaluate(() => !!(window.DragEngine.targetEl || window.DragEngine.isEngaged)),
+               'the drag engine still claims a drag is in progress').toBe(false);
+
+        const b = await page.locator('#workspace-pager .app-icon-wrapper').first().boundingBox();
+        await drag(page, b.x + b.width / 2, b.y + b.height / 2, b.x + b.width / 2 + 10, b.y + b.height / 2, 3);
+        await page.waitForTimeout(700);
+        expect(await viewerOpen(page), 'the launcher stopped responding after edit mode').toBe(true);
+    });
+
+    test('the launcher surfaces never hand a gesture to the browser', async ({ page }) => {
+        await boot(page);
+        const ta = await page.evaluate(() => ({
+            pager: getComputedStyle(document.getElementById('workspace-pager')).touchAction,
+            dock: getComputedStyle(document.getElementById('main-dock')).touchAction,
+        }));
+        expect(ta.pager, 'the grid can still be claimed by the browser scroller').toBe('none');
+        expect(ta.dock, 'the dock can still be claimed by the browser').toBe('none');
+    });
+});
