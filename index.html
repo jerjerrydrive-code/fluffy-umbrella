@@ -299,10 +299,21 @@
 
         .edit-only {
             opacity: 0; transform: scale(0.2); pointer-events: none;
-            transition: transform 0.4s var(--spring-snappy), opacity 0.3s ease;
+            /* visibility, not opacity alone: an opacity-0 button is still a TAB STOP. Every
+               icon carries one of these ("remove this code"), so outside edit mode tabbing
+               across the home screen walked through one invisible delete button per icon —
+               forty-three of them on a full screen — with nothing drawn to say where you were.
+               Same defect as the closed layers above, one level down.
+               The 0.4s delay is the length of the shrink-away, so the exit still animates. */
+            visibility: hidden;
+            transition: transform 0.4s var(--spring-snappy), opacity 0.3s ease,
+                        visibility 0s linear 0.4s;
             transform-origin: center;
         }
-        body.edit-mode .edit-only { opacity: 1; transform: scale(1); pointer-events: auto; }
+        body.edit-mode .edit-only {
+            opacity: 1; transform: scale(1); pointer-events: auto; visibility: visible;
+            transition: transform 0.4s var(--spring-snappy), opacity 0.3s ease, visibility 0s;
+        }
 
         @keyframes jiggle { 
             0% { transform: translate3d(0,0,0) rotate(-1.5deg); } 
@@ -6214,10 +6225,38 @@
                 this.layers.set(id, layer);
                 new MutationObserver(() => this._sync(layer))
                     .observe(el, { attributes: true, attributeFilter: ['class'] });
+                this._setInert(layer);
                 if (this._visible(layer)) this._show(layer);
             },
 
+            // A closed layer has to be closed to the KEYBOARD too, not just to the finger.
+            //
+            // The CSS rule on `.modal-spring.pointer-events-none` stops taps reaching a hidden
+            // layer, but pointer-events has nothing to say about focus or the accessibility
+            // tree. Measured from the home screen: five presses of Tab walked into the closed
+            // search overlay, then the closed Library, then the closed Settings sheet — which
+            // alone holds 357 focusable controls, because every theme swatch is a button. A
+            // keyboard, switch-control or screen-reader user fell into roughly 390 invisible
+            // controls, with nothing to say where they were or how to get out. That is the same
+            // "I get stuck and can't go back" report this whole object exists to answer,
+            // arriving through a different input device.
+            //
+            // `inert` is the one thing that covers all three at once: no hit-testing, no tab
+            // stop, and removed from the accessibility tree. It belongs here rather than at the
+            // nine open and close call sites for the same reason the history mirroring does —
+            // a layer added later is handled without anyone remembering the rule.
+            //
+            // Edit mode is registered against <body> and is skipped: making the document inert
+            // would disable the whole app. Every focus() in this file is inside a setTimeout,
+            // so the observer's microtask always clears inert before focus is attempted.
+            _setInert(layer) {
+                if (layer.el === document.body) return;
+                if (this._visible(layer)) layer.el.removeAttribute('inert');
+                else layer.el.setAttribute('inert', '');
+            },
+
             _sync(layer) {
+                this._setInert(layer);
                 if (this._visible(layer)) this._show(layer); else this._hide(layer);
             },
 

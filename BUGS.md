@@ -51,6 +51,27 @@ Also measured while here, and **not** a bug: `.tap-extend::after` genuinely exte
 a dispatched touch 5px outside a 29px-tall button's border box registers a click. That had been
 assumed rather than verified.
 
+| # | Defect | Status |
+|---|---|---|
+| 27 | **The same dead end, through the keyboard.** `pointer-events` says nothing about focus or the accessibility tree, so fixing #26 fixed only the finger. Measured from the home screen: five presses of Tab walked into the closed search overlay, then the closed Library, then the closed Settings sheet — which alone holds **357** focusable controls, because every theme swatch is a button. Roughly 390 invisible controls, with nothing drawn to say where you were or how to get out. | FIXED |
+| 28 | Every icon carries an invisible "remove this code" button. `.edit-only` was `opacity: 0` outside edit mode — invisible, unclickable, and **still a tab stop**, so tabbing across a full home screen passed through 43 delete buttons. | FIXED |
+
+This is bug #1 again — *"I get stuck in a lot of pages and cant go back"* — arriving through a
+different input device. `XanNav` exists because that report was about the finger; nothing had ever
+asked what the same layers do to a keyboard.
+
+Closed layers now carry `inert`, which is the only thing that covers hit-testing, tab order and
+the accessibility tree at once. It is set from `XanNav._sync`, the same MutationObserver that
+already mirrors these layers into history, so a layer added later is covered without anyone
+remembering the rule — and edit mode is skipped, because it is registered against `<body>` and
+making the document inert would disable the whole app. `.edit-only` is now `visibility: hidden`,
+delayed by the length of its own shrink-away so the exit still animates.
+
+Two of the four tests fail against the previous build. The other two are the ones that matter
+longer term: that opening a layer still clears `inert` and its input still takes focus, and that
+`<body>` is never made inert. A fix that silently stops the search field accepting the keyboard
+would be worse than the leak it replaced.
+
 ---
 
 ## Found by the motion audit

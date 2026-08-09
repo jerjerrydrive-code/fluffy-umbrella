@@ -3897,10 +3897,15 @@ test.describe('A closed layer does not eat taps', () => {
         await page.goto('/index.html');
         await page.waitForTimeout(1000);
 
-        const reachable = await page.evaluate(() => {
+        const reachable = await page.evaluate(async () => {
             const modal = document.getElementById('scanner-modal');
             modal.classList.remove('opacity-0', 'pointer-events-none');
             modal.classList.add('opacity-100', 'pointer-events-auto');
+            // XanNav clears `inert` from a MutationObserver callback, which is a microtask.
+            // Yield to it, exactly as the real app does — the camera takes hundreds of
+            // milliseconds to come up before anyone can touch these.
+            await new Promise(r => setTimeout(r, 0));
+            if (modal.hasAttribute('inert')) return [{ id: 'scanner-modal', ok: false, why: 'still inert' }];
             return ['btn-close-scanner', 'btn-scan-batch', 'btn-scan-image', 'btn-toggle-flash']
                 .map(id => {
                     const el = document.getElementById(id);
@@ -3911,5 +3916,107 @@ test.describe('A closed layer does not eat taps', () => {
         });
         expect(reachable.filter(r => !r.ok),
                'the closed-layer rule leaked into the open scanner').toEqual([]);
+    });
+});
+
+test.describe('A closed layer does not eat the keyboard either', () => {
+    // The tap fix (pointer-events) says nothing about focus or the accessibility tree, so the
+    // same "I get stuck and can't get back" report existed for anyone using a keyboard, switch
+    // control or a screen reader. Measured on the home screen: five presses of Tab walked into
+    // the closed search overlay, then the closed Library, then the closed Settings sheet —
+    // which alone holds 357 focusable controls, because every theme swatch is a button.
+    //
+    // Two separate causes, fixed separately: layers now carry `inert` while closed (XanNav),
+    // and the per-icon delete buttons are `visibility: hidden` rather than merely `opacity: 0`.
+
+    test('Tab from the home screen never lands inside something invisible', async ({ page }) => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        const strays = [];
+        for (let i = 0; i < 30; i++) {
+            await page.keyboard.press('Tab');
+            const where = await page.evaluate(() => {
+                const a = document.activeElement;
+                if (!a || a === document.body) return null;
+                for (let n = a; n && n !== document.documentElement; n = n.parentElement) {
+                    const cs = getComputedStyle(n);
+                    if (parseFloat(cs.opacity) === 0 || cs.visibility === 'hidden')
+                        return (a.id || a.tagName + '.' + a.className.toString().slice(0, 30)) +
+                               ' inside ' + (n.id || n.className.toString().slice(0, 30));
+                }
+                return null;
+            });
+            if (where) strays.push(where);
+        }
+        expect(strays, `Tab reached controls the user cannot see:\n${strays.join('\n')}`).toEqual([]);
+    });
+
+    test('every closed layer is inert, and an open one is not', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        const closed = await page.evaluate(() =>
+            [...document.querySelectorAll('.modal-spring.pointer-events-none')]
+                .filter(l => l.id && !l.hasAttribute('inert')).map(l => l.id));
+        expect(closed, 'closed layers still reachable by keyboard and screen reader').toEqual([]);
+
+        // Opening one must clear it, or the app is unusable rather than merely leaky.
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(500);
+        expect(await page.evaluate(() =>
+            document.getElementById('library-overlay').hasAttribute('inert')),
+            'the Library stayed inert after opening').toBe(false);
+        expect(await page.evaluate(() => {
+            const el = document.getElementById('btn-close-library');
+            const r = el.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return el.contains(hit) || hit === el;
+        }), 'the open Library close button is not reachable').toBe(true);
+
+        // And closing it puts inert back.
+        await page.evaluate(() => window.LibraryManager.close());
+        await page.waitForTimeout(500);
+        expect(await page.evaluate(() =>
+            document.getElementById('library-overlay').hasAttribute('inert'))).toBe(true);
+    });
+
+    test('edit mode is never made inert, since it lives on <body>', async ({ page }) => {
+        // XanNav registers edit mode against document.body. Setting inert there would disable
+        // the entire application, which is why _setInert skips it.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        expect(await page.evaluate(() => document.body.hasAttribute('inert'))).toBe(false);
+
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() => document.body.hasAttribute('inert'))).toBe(false);
+
+        // The delete buttons must become real controls in edit mode, not stay hidden.
+        expect(await page.evaluate(() => {
+            const b = document.querySelector('.edit-only');
+            const cs = getComputedStyle(b);
+            const r = b.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return cs.visibility === 'visible' && (b.contains(hit) || hit === b);
+        }), 'edit mode controls did not come back').toBe(true);
+    });
+
+    test('opening a layer still focuses its input', async ({ page }) => {
+        // inert is cleared by a MutationObserver microtask; every focus() in the app is inside
+        // a setTimeout, so the ordering holds. If that ever stops being true, the search field
+        // silently stops taking the keyboard, which is exactly the kind of failure that gets
+        // shipped.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await page.evaluate(() => window.GestureManager.openSearch());
+        await page.waitForTimeout(400);
+        expect(await page.evaluate(() => document.activeElement && document.activeElement.id))
+            .toBe('search-input');
     });
 });
