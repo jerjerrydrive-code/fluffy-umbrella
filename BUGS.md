@@ -97,6 +97,21 @@ nothing.
 
 ---
 
+## Security
+
+| # | Defect | Status |
+|---|---|---|
+| 23 | **Script execution from a scanned code.** A QR code's content becomes a code's title, and three places wrote that title straight into `innerHTML`: the home-screen icon label, the search results (title *and* payload), and the toast. Scanning a code whose text was `<img src=x onerror=...>` **ran that handler** — verified as execution, not merely markup appearing — with access to everything in `localStorage`. | FIXED |
+
+A QR code is attacker-controlled by definition: anyone can print one and leave it on a wall. The
+Library rows and the batch tray already handled this correctly and carry a comment naming the
+rule, which is exactly what makes it worth a standing test — **the rule existed and three sinks
+missed it.** All untrusted text now reaches the DOM through `textContent`, and a test checks that
+ordinary titles containing `<` and `&` still display as typed, so escaping has not become
+mangling.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it

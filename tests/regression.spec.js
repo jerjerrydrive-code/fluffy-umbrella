@@ -3514,3 +3514,105 @@ test.describe('The navigation stack never drifts out of step with history', () =
         expect((await state(page)).depth).toBe(0);
     });
 });
+
+test.describe('Scanned text is never treated as markup', () => {
+    // A QR code's content is attacker-controlled by definition — anyone can print one, and the
+    // app puts what it read into a title. Three places interpolated that straight into
+    // innerHTML: the home-screen icon label, the search results, and the toast. Scanning a code
+    // whose text was `<img src=x onerror=...>` ran that handler, with access to every code in
+    // localStorage. Verified as script EXECUTION, not merely markup appearing.
+    //
+    // The Library rows and the batch tray already did this correctly, which is what makes it
+    // worth a standing test: the rule existed and three sinks missed it.
+    const EVIL = '<img src=x onerror="window.__XSS=(window.__XSS||0)+1">';
+
+    const attempt = async (page, setup) => {
+        await page.evaluate(() => { window.__XSS = 0; });
+        await page.evaluate(setup, EVIL);
+        await page.waitForTimeout(400);
+        return page.evaluate(() => ({
+            executed: window.__XSS || 0,
+            injected: document.querySelectorAll('img[src="x"]').length,
+        }));
+    };
+
+    const boot = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForFunction(() => window.Renderer && window.OS_STATE, null, { timeout: 20000 });
+        await page.waitForTimeout(1000);
+    };
+
+    test('a hostile title on the home screen does not run', async ({ page }) => {
+        await boot(page);
+        const r = await attempt(page, (evil) => {
+            window.OS_STATE.apps.push({ id: 'xss_1', title: evil, type: 'grid',
+                                        page: 0, order: 9, bcid: 'qrcode', data: 'a' });
+            window.Renderer.render();
+        });
+        expect(r.executed, 'script from a scanned title executed').toBe(0);
+        expect(r.injected, 'a scanned title was parsed as markup').toBe(0);
+    });
+
+    test('hostile text in search results does not run', async ({ page }) => {
+        await boot(page);
+        const r = await attempt(page, (evil) => {
+            window.OS_STATE.apps.push({ id: 'xss_2', title: evil, type: 'grid',
+                                        page: 0, order: 10, bcid: 'qrcode', data: evil });
+            window.Renderer.render();
+            window.GestureManager.openSearch();
+            const input = document.getElementById('search-input');
+            input.value = 'img';
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(r.executed).toBe(0);
+        expect(r.injected).toBe(0);
+    });
+
+    test('a hostile search query does not run in the empty-state message', async ({ page }) => {
+        await boot(page);
+        const r = await attempt(page, (evil) => {
+            window.GestureManager.openSearch();
+            const input = document.getElementById('search-input');
+            input.value = evil;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(r.executed).toBe(0);
+        expect(r.injected).toBe(0);
+    });
+
+    test('a hostile toast message does not run', async ({ page }) => {
+        // Several callers pass a code's title straight into showToast.
+        await boot(page);
+        const r = await attempt(page, (evil) => window.showToast(evil));
+        expect(r.executed).toBe(0);
+        expect(r.injected).toBe(0);
+    });
+
+    test('the Library and batch tray stay safe too', async ({ page }) => {
+        await boot(page);
+        const r = await attempt(page, (evil) => {
+            window.OS_STATE.apps.push({ id: 'xss_3', title: evil, type: 'grid',
+                                        page: 0, order: 11, bcid: 'qrcode', data: evil });
+            window.recordHistory({ data: evil, bcid: 'qrcode', source: 'scanned' });
+            window.Renderer.render();
+            window.LibraryManager.open();
+            window.LibraryManager.flushThumbs();
+        });
+        expect(r.executed).toBe(0);
+        expect(r.injected).toBe(0);
+    });
+
+    test('ordinary titles containing angle brackets still read correctly', async ({ page }) => {
+        // Escaping must not turn into mangling: a title with < or & is legitimate text and has
+        // to appear as the user typed it.
+        await boot(page);
+        const shown = await page.evaluate(() => {
+            window.OS_STATE.apps.push({ id: 'xss_4', title: 'Plain <Title> & co', type: 'grid',
+                                        page: 0, order: 12, bcid: 'qrcode', data: 'd' });
+            window.Renderer.render();
+            const label = document.querySelector('[data-id="xss_4"] .app-label');
+            return label && label.textContent;
+        });
+        expect(shown).toBe('Plain <Title> & co');
+    });
+});

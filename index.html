@@ -1842,7 +1842,10 @@
             toast.className = 'fixed top-16 left-1/2 -translate-x-1/2 bg-[#1c1c1e]/95 text-white px-6 py-3 rounded-full shadow-2xl backdrop-blur-md z-[400] transition-all duration-300 transform -translate-y-4 opacity-0 font-semibold text-sm flex items-center gap-2 border border-white/10';
             const icon = type === 'error' ? 'alert-circle' : 'check-circle-2';
             const iconColor = type === 'error' ? 'text-red-400' : 'text-green-400';
-            toast.innerHTML = `${toastIcon(icon, iconColor)} ${message}`;
+            // Icon as markup (ours), message as text (not necessarily ours — several callers
+            // pass a code's title straight through). HARD RULE 9.
+            toast.innerHTML = toastIcon(icon, iconColor);
+            toast.appendChild(document.createTextNode(' ' + message));
             document.body.appendChild(toast);
 
             // Animated explicitly rather than by toggling classes and hoping a transition
@@ -1961,7 +1964,11 @@
                 );
 
                 if (results.length === 0) {
-                    this.resultsContainer.innerHTML = `<div class="text-center text-white/50 mt-10 font-medium">No results found for "${query}"</div>`;
+                    // The query is the user's own typing, but it takes the same route as
+                    // everything else: a search box is a perfectly good way to paste markup.
+                    this.resultsContainer.innerHTML =
+                        '<div class="text-center text-white/50 mt-10 font-medium"></div>';
+                    this.resultsContainer.firstChild.textContent = `No results found for "${query}"`;
                     return;
                 }
 
@@ -1979,11 +1986,15 @@
                     el.innerHTML = `
                         ${iconHtml}
                         <div class="flex-1 overflow-hidden">
-                            <h4 class="text-white font-bold text-[15px] truncate tracking-wide">${app.title}</h4>
-                            <p class="text-white/50 text-[11px] truncate font-mono mt-0.5">${app.data || (app.type === 'dock' ? 'System Application' : '')}</p>
+                            <h4 class="text-white font-bold text-[15px] truncate tracking-wide"></h4>
+                            <p class="text-white/50 text-[11px] truncate font-mono mt-0.5"></p>
                         </div>
                         <i data-lucide="chevron-right" class="w-5 h-5 text-white/30 mr-1"></i>
                     `;
+                    // Same rule as the Library rows, which already did this correctly. HARD RULE 9.
+                    el.querySelector('h4').textContent = app.title || '';
+                    el.querySelector('p').textContent =
+                        app.data || (app.type === 'dock' ? 'System Application' : '');
 
                     el.addEventListener('click', () => {
                         window.GestureManager.closeSearch();
@@ -2144,8 +2155,20 @@
                     </div>
                 `;
 
-                const labelHtml = isDock ? '' : `<span class="app-label jiggle-target">${itemData.title}</span>`;
-                wrapper.innerHTML = iconHtml + labelHtml;
+                // The label is set as TEXT, never interpolated into the markup above.
+                // A code's title is whatever a scanned payload contained, and a QR code is
+                // attacker-controlled by definition — anyone can print one. Interpolating it
+                // here meant scanning a code whose text was `<img src=x onerror=...>` ran that
+                // handler on the home screen, with access to every code in localStorage.
+                // Verified: the script executed, it was not merely markup appearing.
+                // HARD RULE 9 — untrusted input reaches the DOM as text or not at all.
+                wrapper.innerHTML = iconHtml;
+                if (!isDock) {
+                    const label = document.createElement('span');
+                    label.className = 'app-label jiggle-target';
+                    label.textContent = itemData.title || '';
+                    wrapper.appendChild(label);
+                }
 
                 wrapper.addEventListener('click', (e) => {
                     if (window.DragEngine && window.DragEngine.wasDragging) return; 
