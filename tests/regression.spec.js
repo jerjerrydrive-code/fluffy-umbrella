@@ -3220,8 +3220,16 @@ test.describe('No dead ends in the dock', () => {
             return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
         }, id);
         await page.mouse.click(box.x, box.y);
-        await page.waitForTimeout(900);
     };
+    // Waits for the state to be what it should be, rather than for a fixed number of
+    // milliseconds and a hope. A 1540-execution soak turned up a single failure in this
+    // describe that could not be reproduced in 65 further runs, so its cause is unproven —
+    // but fixed timeouts around an asynchronous history.back() are a plausible source and are
+    // worth removing whether or not they were the one.
+    const settled = (page) => page.waitForFunction(
+        () => window.XanNav.stack.length === ((history.state && history.state.xanDepth) || 0)
+              && window.XanNav._suppress === 0,
+        null, { timeout: 10000 });
 
     test('every dock button opens something, and none says "coming soon"', async ({ page }) => {
         await boot(page);
@@ -3239,11 +3247,13 @@ test.describe('No dead ends in the dock', () => {
         };
         for (const [id, sel] of Object.entries(opens)) {
             await tapDock(page, id);
-            expect(await page.evaluate((s) => document.querySelector(s)
-                     .classList.contains('pointer-events-auto'), sel),
-                   `${id} did not open ${sel}`).toBe(true);
+            await expect(page.locator(sel), `${id} did not open ${sel}`)
+                .toHaveClass(/pointer-events-auto/, { timeout: 8000 });
+            await settled(page);
             await page.evaluate(() => history.back());
-            await page.waitForTimeout(600);
+            await expect(page.locator(sel), `${sel} did not close on Back`)
+                .not.toHaveClass(/pointer-events-auto/, { timeout: 8000 });
+            await settled(page);
         }
         expect(toasts.filter(t => /coming soon/i.test(t)),
                'a dock button is still a placeholder').toEqual([]);
@@ -3425,5 +3435,82 @@ test.describe('Nothing blocks a frame, and nothing claims success it did not hav
         const last = toasts[toasts.length - 1];
         expect(last.m, `a failed copy reported: "${last.m}"`).toMatch(/could not copy/i);
         expect(last.t).toBe('error');
+    });
+});
+
+
+test.describe('The navigation stack never drifts out of step with history', () => {
+    // XanNav's whole correctness rests on one invariant: the number of open layers equals the
+    // history depth it has pushed. If those disagree, a phantom entry is left behind — you press
+    // Back, nothing happens, and you press again. Nothing asserted it until now.
+    const state = (page) => page.evaluate(() => ({
+        stack: window.XanNav.stack.map(l => l.id),
+        depth: (history.state && history.state.xanDepth) || 0,
+        suppress: window.XanNav._suppress,
+    }));
+    const settled = (page) => page.waitForFunction(
+        () => window.XanNav.stack.length === ((history.state && history.state.xanDepth) || 0)
+              && window.XanNav._suppress === 0,
+        null, { timeout: 10000 });
+
+    test('every way of closing a layer leaves the two in agreement', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+
+        const closers = [
+            ['the X button',     async () => page.click('#btn-close-library')],
+            ['Back',             async () => page.evaluate(() => history.back())],
+            ['Escape',           async () => page.keyboard.press('Escape')],
+            ['close() directly', async () => page.evaluate(() => window.LibraryManager.close())],
+        ];
+
+        for (const [label, close] of closers) {
+            await page.evaluate(() => window.LibraryManager.open());
+            await settled(page);
+            expect((await state(page)).depth, `${label}: depth wrong while open`).toBe(1);
+
+            await close();
+            await settled(page);
+            const s = await state(page);
+            expect(s.stack, `${label}: a layer was left on the stack`).toEqual([]);
+            expect(s.depth, `${label}: left a phantom history entry`).toBe(0);
+        }
+    });
+
+    test('repeated opening and closing does not accumulate entries', async ({ page }) => {
+        // A leak of one entry per cycle is invisible once and unusable after twenty.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+
+        for (let i = 0; i < 10; i++) {
+            await page.evaluate(() => window.LibraryManager.open());
+            await settled(page);
+            await (i % 2 ? page.evaluate(() => history.back()) : page.click('#btn-close-library'));
+            await settled(page);
+        }
+        const s = await state(page);
+        expect(s.depth, `history grew to ${s.depth} after ten open/close cycles`).toBe(0);
+        expect(s.stack).toEqual([]);
+    });
+
+    test('nesting three deep unwinds one at a time, in order', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+
+        await page.evaluate(() => window.LibraryManager.open());
+        await settled(page);
+        await page.evaluate(() => window.SettingsManager.open());
+        await settled(page);
+        await page.evaluate(() => window.CloudSync.open());
+        await settled(page);
+        expect((await state(page)).stack)
+            .toEqual(['library-overlay', 'settings-modal', 'account-modal']);
+
+        for (const expected of [['library-overlay', 'settings-modal'], ['library-overlay'], []]) {
+            await page.evaluate(() => history.back());
+            await settled(page);
+            expect((await state(page)).stack).toEqual(expected);
+        }
+        expect((await state(page)).depth).toBe(0);
     });
 });

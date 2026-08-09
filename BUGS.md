@@ -97,6 +97,18 @@ nothing.
 
 ---
 
+## Chased and found not to be a bug
+
+Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
+again from scratch.
+
+| Observation | Verdict |
+|---|---|
+| One failure of *"every dock button opens something"* in a 1,540-execution soak | **Unreproduced.** 65 further runs at two and four workers were clean. The soak overlapped edits to `index.html`, so it was very likely testing a half-written file. Unproven either way, so the test's fixed timeouts were replaced with waits on real state — a plausible source of flake removed whether or not it was the one. The test also got 4× faster. |
+| `XanNav.stack` empty while history depth was 1 | **Probe artifact.** Caused by a reset loop calling internals directly and bypassing the normal close path. Every real close — X button, Back, Escape, `close()` — leaves the two in agreement. Now asserted, because the invariant was never checked and a phantom entry would mean pressing Back and nothing happening. |
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.
