@@ -4797,3 +4797,58 @@ test.describe('No skin costs the app its frame rate', () => {
         expect(offenders, `an animated heavy blur is back:\n${offenders.join('\n')}`).toEqual([]);
     });
 });
+
+test.describe('The page never scrolls sideways', () => {
+    // Deriving the grid icon size from the cell made the icons right and the DOCK wrong: its
+    // five icons shared --app-size, went from 60px to 74px inside a 380px bar, and pushed the
+    // document 7px wider than the screen. The motion audit reported it as
+    // "page scrolls horizontally: 419px of content in 412px" — 63 findings, on every skin and
+    // every size, because a document that scrolls sideways affects every layer drawn on it.
+    //
+    // Nothing in the suite was watching for this, which is why it took the audit to find it.
+
+    for (const [w, h] of [[360, 640], [390, 844], [412, 892], [430, 932], [768, 1024]]) {
+        test(`no horizontal overflow at ${w}x${h}`, async ({ page }) => {
+            await page.setViewportSize({ width: w, height: h });
+            await page.goto('/index.html');
+            await page.waitForTimeout(1000);
+            await page.evaluate(() => {
+                for (let i = 0; i < 20; i++) {
+                    window.OS_STATE.apps.push({ id: 'ov' + i, title: 'Code ' + i, type: 'grid',
+                        page: 0, order: i, bcid: 'qrcode', data: 'ov' + i });
+                }
+                window.Renderer.render();
+                window.Layout.calculateGrid();
+            });
+            await page.waitForTimeout(700);
+
+            const r = await page.evaluate(() => ({
+                vw: document.documentElement.clientWidth,
+                scrollW: document.documentElement.scrollWidth,
+                dockRight: document.getElementById('main-dock').getBoundingClientRect().right,
+                grid: getComputedStyle(document.documentElement).getPropertyValue('--app-size').trim(),
+                dock: getComputedStyle(document.documentElement).getPropertyValue('--dock-size').trim(),
+            }));
+            expect(r.scrollW,
+                   `the document scrolls sideways (grid ${r.grid}, dock ${r.dock})`)
+                .toBeLessThanOrEqual(r.vw);
+            expect(r.dockRight, 'the dock runs off the right edge').toBeLessThanOrEqual(r.vw);
+        });
+    }
+
+    test('an icon fills its cell the way a launcher does', async ({ page }) => {
+        // The point of the change: --app-size was a hardcoded 60px on every phone, so at 412px
+        // wide with four columns the icon used 63% of its 94.8px cell and floated in the middle.
+        // A real home screen fills about three quarters, which is what makes rows read as dense.
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1100);
+        const fill = await page.evaluate(() => {
+            const icon = document.querySelector('#workspace-pager .app-icon').getBoundingClientRect();
+            const cols = getComputedStyle(document.querySelector('.os-grid')).gridTemplateColumns.split(' ');
+            return icon.width / parseFloat(cols[0]);
+        });
+        expect(fill, 'the icon no longer fills its cell').toBeGreaterThan(0.7);
+        expect(fill, 'the icon has outgrown its cell').toBeLessThanOrEqual(0.85);
+    });
+});

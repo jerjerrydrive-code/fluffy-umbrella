@@ -406,6 +406,42 @@ under a different name.
 
 ---
 
+## Sizing the launcher like a launcher
+
+Asked for directly, with a screenshot of a real Android home screen alongside one of this app:
+*"do you think we will be able to size it like this"*.
+
+| # | Defect | Status |
+|---|---|---|
+| 44 | **`--app-size` was a hardcoded 60px on every phone**, whatever the screen. At 412px wide with four columns each cell is 94.8px, so the icon used **63%** of it and floated in the middle — the grid read as small and airy, nothing like the launcher it is modelled on. | FIXED |
+
+Derived from the actual cell now, at 78% of it, so it is right at every width rather than at one:
+
+| screen | icon | fill |
+|---|---|---|
+| 360×640 | 64px | 78% |
+| 390×844 | 70px | 78% |
+| 412×892 | 74px | 78% |
+| 430×932 | 77px | 78% |
+
+Row spacing scales with the icon, and rows-per-page is computed from the real row height instead
+of a constant 88 that no longer described anything.
+
+| # | Defect | Status |
+|---|---|---|
+| 45 | **The fix above broke the dock.** Its five icons shared `--app-size`, went to 74px inside a 380px bar, and pushed the document **7px wider than the screen**. | FIXED |
+
+The audit reported it as `page scrolls horizontally: 419px of content in 412px` — **63 findings**,
+across every skin and every screen size, because a document that scrolls sideways affects every
+layer drawn on it and not only the grid it came from.
+
+The dock now sizes from the bar it has to fit inside (54–64px) and is never larger than a grid
+icon. **Nothing in the test suite was watching for horizontal overflow**, which is why it took the
+audit to find it; there is now a test at five screen sizes, verified by reintroducing the bug and
+watching four of them fail.
+
+---
+
 ## Open
 
 | # | Defect | Status |
