@@ -321,6 +321,30 @@
         body.edit-mode .app-icon-wrapper:nth-child(3n) .jiggle-target { animation-duration: 0.28s; animation-delay: 0.05s; }
 
         .modal-spring { transition: transform 0.5s var(--spring-snappy), opacity 0.4s ease, backdrop-filter 0.4s ease; }
+
+        /* A closed layer must be closed all the way down.
+         *
+         * `pointer-events: none` is NOT a switch that disables a subtree — it is an inherited
+         * value, and any descendant setting `auto` opts itself back in. The scanner's four
+         * header buttons do exactly that, because their own parent header is `none` so taps
+         * reach the camera behind it. The consequence: while the scanner was CLOSED, those four
+         * buttons stayed hit-testable at z-index 300 — the highest layer in the app — as
+         * invisible 48px discs across the top of every single screen.
+         *
+         * Measured: the viewer's close button is a circle at (24,64) 48x48; the scanner's close
+         * button is a circle at (24,56) 48x48 sitting on top of it. Only the bottom crescent of
+         * the viewer's button was reachable, which is why closing a code "barely" worked rather
+         * than never working. Three more dead zones sat over the top-right of every layer, and
+         * one of them opens a file picker.
+         *
+         * Keyed on the class every layer already toggles (`pointer-events-none` <->
+         * `pointer-events-auto`, all nine of them), so a layer added later is covered without
+         * anyone remembering this. `!important` because the whole point is to beat a descendant
+         * that asked for `auto`. Hit-testing only — nothing here touches painting, so the
+         * fade-out still animates normally.
+         */
+        .modal-spring.pointer-events-none,
+        .modal-spring.pointer-events-none * { pointer-events: none !important; }
         .slide-up-spring { transition: transform 0.6s var(--spring-snappy), opacity 0.4s ease; }
         
         .apple-toggle-knob { transition: transform 0.4s var(--spring-snappy), background-color 0.3s ease, width 0.2s ease; }

@@ -23,6 +23,33 @@ like a guard and was not.
 | 6 | "tap and hold for edit only works when tapping very certain spots" | The long press cancelled on **any** `touchmove`, with no tolerance. A finger always drifts over 600ms, so it depended on holding perfectly still. | FIXED — pointer events + 12px slop |
 | 7 | "switching to page 2 in edit changes the icon from page one then shows in 2" | On a full page every swipe starts on an icon. A drag engaged after 5px in any direction, so the swipe grabbed the icon — and nothing constrained it, so it was dragged clean off the screen. | FIXED — swipe/drag split, and held icons are clamped on screen |
 | 8 | `Sign-in error: Error (auth/unauthorized-domain)` | A raw Firebase code shown as a user-facing message. | FIXED (message) / OWNER (setting) |
+| 26 | "it doesn't seem to register touches for buttons very well. I can barely back out of a barcode after the card opens up" | Four invisible buttons from the **closed** scanner sat hit-testable at z-index 300 — the topmost layer in the app — as 48px discs across the top of *every* screen. See below. | FIXED |
+
+`pointer-events: none` is an inherited **value**, not a switch that disables a subtree: a
+descendant setting `auto` opts itself back in. The scanner's header buttons each do that, and
+they must — their own parent is `none` so taps reach the camera behind it. Nothing then turned
+them off when the scanner closed.
+
+The word in the report that identified it was **"barely"**. The viewer's close button is a circle
+at (24,64) 48×48; the scanner's close button is a circle at (24,56) 48×48 directly on top of it.
+Two circles offset by 8px leave a thin crescent at the bottom of the viewer's button that still
+worked — so closing a code succeeded roughly one attempt in several rather than never. A bug that
+never worked would have been found long ago; one that *usually* fails reads as "the phone is being
+slow".
+
+The other three discs sat over the top-right corner of every layer. One of them opens a file
+picker.
+
+Fixed at the layer, not at the four buttons: `.modal-spring.pointer-events-none *` is
+`pointer-events: none !important`, keyed on the class all nine layers already toggle, so a layer
+added later is covered without anyone remembering this. The guard is a sweep of every point on
+the screen at three viewport sizes, failing if anything the user cannot see would receive the tap
+— four of the five new tests fail against the previous build. A fifth checks the rule does not
+leak into the *open* scanner, which would be a worse bug than the one being fixed.
+
+Also measured while here, and **not** a bug: `.tap-extend::after` genuinely extends the hit area —
+a dispatched touch 5px outside a 29px-tall button's border box registers a click. That had been
+assumed rather than verified.
 
 ---
 

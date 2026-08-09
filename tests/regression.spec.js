@@ -3801,3 +3801,115 @@ test.describe('Signing in never destroys what is already on the device', () => {
                'the merged result was never sent to the cloud').toBeGreaterThan(0);
     });
 });
+
+test.describe('A closed layer does not eat taps', () => {
+    // Reported from a phone: "it doesn't seem to register touches for buttons very well. I can
+    // barely back out of a barcode after the card opens up."
+    //
+    // Cause: `pointer-events: none` is an inherited value, not a switch that disables a subtree.
+    // The scanner's four header buttons each set `pointer-events: auto` (they must — their own
+    // parent is `none` so taps reach the camera behind it), so while the scanner was CLOSED they
+    // stayed hit-testable at z-index 300, the topmost layer in the app: four invisible 48px
+    // discs across the top of every screen. The viewer's close button sits directly under one of
+    // them, offset by 8px, so only its bottom crescent worked. Hence "barely".
+    //
+    // The sweep is the real guard. The specific-button test says what it felt like; the sweep is
+    // what stops a layer added next year from doing it again.
+
+    const finger = async (page, type, x, y) => {
+        const cdp = page.__cdp || (page.__cdp = await page.context().newCDPSession(page));
+        await cdp.send('Input.dispatchTouchEvent', {
+            type,
+            touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 8, radiusY: 8, force: 1 }],
+        });
+    };
+
+    for (const vp of [{ name: 'phone', width: 390, height: 844 },
+                      { name: 'small', width: 360, height: 640 },
+                      { name: 'tablet', width: 820, height: 1180 }]) {
+        test(`nothing inside a hidden layer is hit-testable @ ${vp.name}`, async ({ page }) => {
+            await page.setViewportSize({ width: vp.width, height: vp.height });
+            await page.goto('/index.html');
+            await page.waitForTimeout(1000);
+
+            // Every point on the screen, 8px apart. For each, walk up from whatever would
+            // receive the tap and fail if it is inside something the user cannot see.
+            const phantoms = await page.evaluate(() => {
+                const hiddenAncestor = (el) => {
+                    for (let n = el; n && n !== document.body; n = n.parentElement) {
+                        const cs = getComputedStyle(n);
+                        if (cs.opacity === '0' || cs.visibility === 'hidden' || cs.display === 'none') return n;
+                    }
+                    return null;
+                };
+                const found = new Map();
+                for (let y = 4; y < innerHeight; y += 8) {
+                    for (let x = 4; x < innerWidth; x += 8) {
+                        const el = document.elementFromPoint(x, y);
+                        if (!el) continue;
+                        const h = hiddenAncestor(el);
+                        if (!h) continue;
+                        const key = (h.id || h.className.toString().slice(0, 30)) + ' >> ' +
+                                    (el.id || el.tagName);
+                        const rec = found.get(key) || { key, points: 0, at: [x, y] };
+                        rec.points++;
+                        found.set(key, rec);
+                    }
+                }
+                return [...found.values()];
+            });
+            expect(phantoms, `invisible elements are catching taps:\n${JSON.stringify(phantoms, null, 2)}`)
+                .toEqual([]);
+        });
+    }
+
+    test('a finger on the viewer close button actually closes it', async ({ page }) => {
+        // Mouse-driven clicks passed against the broken build, because Playwright's click
+        // scrolls-and-hits the element it was given. A dispatched touch goes through real
+        // hit-testing at a coordinate, which is what a thumb does.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        await page.evaluate(() => window.InteractionManager.openEnlarge(
+            window.OS_STATE.apps.find(a => a.type === 'grid' && a.data)));
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() =>
+            document.getElementById('item-fullscreen-layer').classList.contains('opacity-100'))).toBe(true);
+
+        const b = await page.locator('#close-item-btn').boundingBox();
+        const x = b.x + b.width / 2, y = b.y + b.height / 2;
+        await finger(page, 'touchStart', x, y);
+        await page.waitForTimeout(50);
+        await finger(page, 'touchEnd', x, y);
+        await page.waitForTimeout(600);
+
+        expect(await page.evaluate(() =>
+            document.getElementById('item-fullscreen-layer').classList.contains('pointer-events-none')),
+            'tapping the middle of the close button did not close the viewer').toBe(true);
+    });
+
+    test('the scanner buttons still work once the scanner is open', async ({ page }) => {
+        // The fix is a blanket `pointer-events: none !important` on closed layers. If it leaked
+        // into the open state the scanner would be unusable, which is a worse bug than the one
+        // being fixed.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        const reachable = await page.evaluate(() => {
+            const modal = document.getElementById('scanner-modal');
+            modal.classList.remove('opacity-0', 'pointer-events-none');
+            modal.classList.add('opacity-100', 'pointer-events-auto');
+            return ['btn-close-scanner', 'btn-scan-batch', 'btn-scan-image', 'btn-toggle-flash']
+                .map(id => {
+                    const el = document.getElementById(id);
+                    const r = el.getBoundingClientRect();
+                    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                    return { id, ok: el.contains(hit) || hit === el };
+                });
+        });
+        expect(reachable.filter(r => !r.ok),
+               'the closed-layer rule leaked into the open scanner').toEqual([]);
+    });
+});
