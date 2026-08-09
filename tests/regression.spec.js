@@ -3290,3 +3290,140 @@ test.describe('No dead ends in the dock', () => {
                'the Library badge survived its codes being deleted').toBeNull();
     });
 });
+
+test.describe('Nothing blocks a frame, and nothing claims success it did not have', () => {
+    // Same class of defect as the toast dropped frame: work done synchronously on a user action
+    // that costs more than a frame, so the animation it triggers stutters. Measured under a
+    // realistic library rather than the three codes the app ships with — every one of these was
+    // fine at three and terrible at forty.
+    const loaded = async (page, codes = 40) => {
+        await page.goto('/index.html');
+        await page.waitForFunction(() => window.Renderer && window.OS_STATE, null, { timeout: 20000 });
+        await page.waitForTimeout(1200);
+        await page.evaluate((n) => {
+            for (let i = 0; i < n; i++) {
+                window.OS_STATE.apps.push({ id: 'perf_' + i, title: 'Code ' + i, type: 'grid',
+                    page: Math.floor(i / 20), order: i % 20, bcid: 'qrcode',
+                    data: 'https://example.com/item/' + i });
+            }
+            window.Renderer.render();
+        }, codes);
+        await page.waitForTimeout(600);
+    };
+    // One frame is 16.7ms. 32 gives room for a slow CI runner while still catching the shape of
+    // defect this guards — hundreds of milliseconds, not a few.
+    const BUDGET = 32;
+
+    test('opening the Library does not freeze, however many codes there are', async ({ page }) => {
+        // It rendered a barcode for every row as the list was built: 452ms of frozen interface
+        // with 43 codes, and linear, so the more you used the app the worse it got.
+        await loaded(page);
+        const ms = await page.evaluate(() => {
+            const t = performance.now();
+            window.LibraryManager.open();
+            return performance.now() - t;
+        });
+        expect(ms, `opening the Library blocked for ${Math.round(ms)}ms`).toBeLessThan(BUDGET);
+    });
+
+    test('only the thumbnails you can see are drawn', async ({ page }) => {
+        await loaded(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(700);
+
+        const state = await page.evaluate(() => ({
+            rows: document.querySelectorAll('#library-list > div').length,
+            pending: window.LibraryManager.pendingThumbs.size,
+        }));
+        expect(state.rows).toBeGreaterThan(30);
+        expect(state.pending, 'every thumbnail was drawn up front').toBeGreaterThan(0);
+        expect(state.pending, 'nothing was drawn at all').toBeLessThan(state.rows);
+
+        // And scrolling brings the rest in rather than leaving blanks.
+        const before = state.pending;
+        await page.evaluate(() => { const l = document.getElementById('library-list'); l.scrollTop = l.scrollHeight; });
+        await page.waitForTimeout(900);
+        expect(await page.evaluate(() => window.LibraryManager.pendingThumbs.size),
+               'scrolling did not draw the rows it revealed').toBeLessThan(before);
+    });
+
+    test('a toast costs nothing and still appears', async ({ page }) => {
+        // showToast called lucide's whole-document sweep to draw one icon: 40ms, more than a
+        // frame, so the toast's own fade lost its first one.
+        await loaded(page);
+        const ms = await page.evaluate(() => {
+            const t = performance.now();
+            window.showToast('budget check');
+            return performance.now() - t;
+        });
+        expect(ms, `showToast blocked for ${ms.toFixed(1)}ms`).toBeLessThan(16);
+        await page.waitForTimeout(400);
+        const el = await page.evaluate(() => {
+            const t = [...document.querySelectorAll('.fixed.top-16')].pop();
+            if (!t) return null;
+            const r = t.getBoundingClientRect();
+            return { opacity: +getComputedStyle(t).opacity, hasIcon: !!t.querySelector('svg'),
+                     centred: Math.abs((r.left + r.right) / 2 - window.innerWidth / 2) < 2 };
+        });
+        expect(el, 'no toast appeared').not.toBeNull();
+        expect(el.opacity).toBeGreaterThan(0.9);
+        expect(el.hasIcon, 'the toast lost its icon').toBe(true);
+        expect(el.centred, 'the toast is no longer centred').toBe(true);
+    });
+
+    test('opening a code shows the viewer immediately and draws right after', async ({ page }) => {
+        await loaded(page);
+        const ms = await page.evaluate(() => {
+            const item = window.OS_STATE.apps.find(a => a.type === 'grid');
+            const t = performance.now();
+            window.InteractionManager.openEnlarge(item);
+            return performance.now() - t;
+        });
+        expect(ms, `openEnlarge blocked for ${Math.round(ms)}ms before the layer appeared`)
+            .toBeLessThan(BUDGET);
+
+        // Deferred, not dropped: the code must actually be there a moment later.
+        await page.waitForTimeout(500);
+        const drawn = await page.evaluate(() => {
+            const c = document.getElementById('fullscreen-canvas');
+            const px = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let dark = 0;
+            for (let i = 0; i < px.length; i += 4) if (px[i] < 128) dark++;
+            return { w: c.width, dark };
+        });
+        expect(drawn.w).toBeGreaterThan(0);
+        expect(drawn.dark, 'the viewer opened but never drew the code').toBeGreaterThan(50);
+    });
+
+    test('Copy reports what actually happened, and never claims a copy it did not make', async ({ page }) => {
+        // The scanner's Copy used execCommand and toasted success unconditionally — but
+        // execCommand returns FALSE on failure without throwing, so a copy that did nothing
+        // still said "Copied to clipboard". The viewer's had no .catch() at all, so a rejected
+        // write produced no message and an unhandled rejection.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+
+        expect(await page.evaluate(() => window.copyText('hello clipboard')), 'a normal copy failed').toBe(true);
+
+        // Force both paths to fail and confirm it says so rather than claiming success.
+        const toasts = [];
+        await page.exposeFunction('__toast', (m, t) => toasts.push({ m, t }));
+        await page.evaluate(() => {
+            const real = window.showToast;
+            window.showToast = (m, t) => { window.__toast(String(m), t); return real(m, t); };
+            Object.defineProperty(navigator, 'clipboard', { value: {
+                writeText: () => Promise.reject(new Error('denied')) }, configurable: true });
+            document.execCommand = () => false;
+        });
+
+        expect(await page.evaluate(() => window.copyText('nope')),
+               'copyText claimed success when both paths failed').toBe(false);
+        await page.evaluate(() => window.copyAndReport('nope'));
+        await page.waitForTimeout(200);
+
+        expect(toasts.length, 'a failed copy said nothing at all').toBeGreaterThan(0);
+        const last = toasts[toasts.length - 1];
+        expect(last.m, `a failed copy reported: "${last.m}"`).toMatch(/could not copy/i);
+        expect(last.t).toBe('error');
+    });
+});

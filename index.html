@@ -1789,6 +1789,46 @@
             try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) {}
         };
 
+        // Single path for copying, and the only one that reports honestly.
+        //
+        // There were two, and both lied in different ways. The scanner's used
+        // document.execCommand('copy') and showed "Copied to clipboard" unconditionally — but
+        // execCommand returns FALSE on failure without throwing, so a copy that did nothing
+        // still claimed success. The viewer's preferred navigator.clipboard and had no .catch(),
+        // so a rejected write (no permission, document not focused) produced no message at all
+        // and an unhandled rejection.
+        //
+        // Telling someone their deliberate action worked when it did not is worse than saying
+        // nothing, so this returns what actually happened and both callers report from that.
+        window.copyText = async function(text) {
+            if (!text) return false;
+            if (navigator.clipboard && window.isSecureContext) {
+                try { await navigator.clipboard.writeText(text); return true; }
+                catch (e) { XanLogger.warn('Clipboard write refused, falling back', e); }
+            }
+            // Fallback for insecure contexts, where navigator.clipboard does not exist at all.
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.setAttribute('readonly', '');
+            ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+            document.body.appendChild(ta);
+            let ok = false;
+            try {
+                ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+                ok = document.execCommand('copy');   // false, not a throw, when it fails
+            } catch (e) { XanLogger.warn('execCommand copy threw', e); }
+            ta.remove();
+            return !!ok;
+        };
+
+        // Copies and says what happened. Used everywhere a person presses Copy.
+        window.copyAndReport = async function(text, okMessage = 'Copied to clipboard') {
+            const ok = await window.copyText(text);
+            window.showToast(ok ? okMessage : 'Could not copy — try selecting the text instead',
+                             ok ? 'success' : 'error');
+            return ok;
+        };
+
         // Motion is off when the user turns it off OR the OS asks for reduced motion. The CSS
         // handles the OS case on its own so it still works before this runs; this adds the
         // user's explicit choice on top.
@@ -1805,21 +1845,34 @@
             toast.innerHTML = `${toastIcon(icon, iconColor)} ${message}`;
             document.body.appendChild(toast);
 
-            // Force the starting style to be computed before changing it. A transition needs a
-            // resolved "from" value, and a freshly appended element has none until the browser
-            // does a style pass — a single requestAnimationFrame is not a guarantee of that, and
-            // the icon sweep above makes it likelier to be missed. The motion audit caught the
-            // toast's opacity jumping half its range in one frame at ~96ms: it snapped part-way
-            // in rather than fading. Intermittently, which is exactly what a race looks like.
-            // Reading offsetHeight forces the pass, which is deterministic where the rAF was a
-            // hope that usually held.
-            void toast.offsetHeight;
-            toast.style.transitionTimingFunction = "var(--spring-snappy)";
+            // Animated explicitly rather than by toggling classes and hoping a transition
+            // catches. A CSS transition needs a resolved "from" value, which a freshly appended
+            // element does not have until the browser does a style pass; a requestAnimationFrame
+            // is not a guarantee of that, and the audit caught the opacity jumping half its range
+            // in a single frame — intermittently, as a race does. Forcing the pass by reading
+            // offsetHeight fixed the animation and cost 19ms of full-document layout on a page
+            // with sixty icons, which is a worse problem than the one it solved.
+            //
+            // The Web Animations API needs neither: it takes both keyframes, so there is nothing
+            // to infer and nothing to force. Deterministic, and free.
             toast.classList.remove('-translate-y-4', 'opacity-0');
+            const motion = window.OS_STATE && window.OS_STATE.animations === false;
+            const IN = motion ? 1 : 300, OUT = motion ? 1 : 260;
+            toast.animate(
+                [{ opacity: 0, transform: 'translate(-50%, -1rem)' },
+                 { opacity: 1, transform: 'translate(-50%, 0)' }],
+                { duration: IN, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'backwards' }
+            );
             setTimeout(() => {
-                toast.style.transitionTimingFunction = "ease";
-                toast.classList.add('-translate-y-4', 'opacity-0');
-                setTimeout(() => toast.remove(), 400);
+                const bye = toast.animate(
+                    [{ opacity: 1, transform: 'translate(-50%, 0)' },
+                     { opacity: 0, transform: 'translate(-50%, -1rem)' }],
+                    { duration: OUT, easing: 'ease', fill: 'forwards' }
+                );
+                bye.onfinish = () => toast.remove();
+                // A cancelled or unsupported animation must not leave the toast on screen for
+                // ever, so removal is also guaranteed by a timer.
+                setTimeout(() => toast.remove(), OUT + 200);
             }, 2500);
         }
 
@@ -2784,12 +2837,22 @@
                 this.enlargeData.innerText = itemData.data;
                 this.populateEnlargeExtras(itemData);
 
-                try {
-                    window.renderCode('fullscreen-canvas', itemData, { scale: 5, padding: 3 });
-                } catch(e) { XanLogger.error(e) }
-
+                // Show first, draw on the next frame. Encoding at scale 5 costs ~38ms, which is
+                // more than two frames — done inline it was spent BEFORE the layer became
+                // visible, so the opening animation started late and stuttered into place.
+                // Deferring puts that work after the first frame of the transition; the code
+                // appears one frame later, which nobody can see, and the animation is smooth,
+                // which everybody can.
                 this.enlargeLayer.classList.remove('opacity-0', 'pointer-events-none', 'scale-[0.97]', 'rounded-[3rem]');
                 this.enlargeLayer.classList.add('opacity-100', 'pointer-events-auto', 'scale-100', 'rounded-none');
+
+                const drawing = itemData;
+                requestAnimationFrame(() => {
+                    // The viewer may already have been closed or moved on to another code.
+                    if (this.activeItem !== drawing) return;
+                    try { window.renderCode('fullscreen-canvas', drawing, { scale: 5, padding: 3 }); }
+                    catch (e) { XanLogger.error('Fullscreen canvas error', e); }
+                });
             }
 
             // Fills the skin-dependent "Scan Card" elements (badge + stat rows). These sit
@@ -2871,28 +2934,8 @@
             }
 
             copyData() {
-                if(!this.activeItem) return;
-                try {
-                    const textToCopy = this.activeItem.data;
-                    if (navigator.clipboard && window.isSecureContext) {
-                        navigator.clipboard.writeText(textToCopy).then(() => window.showToast('Data Copied!'));
-                    } else {
-                        let textArea = document.createElement("textarea");
-                        textArea.value = textToCopy;
-                        textArea.style.position = "fixed";
-                        textArea.style.left = "-999999px";
-                        textArea.style.top = "-999999px";
-                        document.body.appendChild(textArea);
-                        textArea.focus();
-                        textArea.select();
-                        document.execCommand('copy');
-                        textArea.remove();
-                        window.showToast('Data Copied!');
-                    }
-                } catch(err) {
-                    XanLogger.error('Copy failed', err);
-                    window.showToast('Copy Failed.');
-                }
+                if (!this.activeItem) return;
+                window.copyAndReport(this.activeItem.data, 'Data copied');
             }
 
             downloadPNG() {
@@ -4254,15 +4297,7 @@
                 document.getElementById('btn-scan-share').addEventListener('click', () => this.shareResult());
                 document.getElementById('btn-scan-discard').addEventListener('click', () => this.resetScan());
                 document.getElementById('btn-scan-copy').addEventListener('click', () => {
-                    if (this.currentResult) {
-                        let textArea = document.createElement("textarea");
-                        textArea.value = this.currentResult;
-                        textArea.style.position = "fixed"; textArea.style.left = "-999999px";
-                        document.body.appendChild(textArea);
-                        textArea.focus(); textArea.select();
-                        try { document.execCommand('copy'); window.showToast('Copied to clipboard'); } catch(e){}
-                        textArea.remove();
-                    }
+                    if (this.currentResult) window.copyAndReport(this.currentResult);
                 });
 
                 this.actionBtn = document.getElementById('btn-scan-save');
@@ -5750,6 +5785,47 @@
                 return !this.overlay.classList.contains('pointer-events-none');
             }
 
+            // Every row used to render its barcode synchronously as the list was built, so
+            // opening the Library cost 452ms of frozen interface with 43 codes — measured — and
+            // the cost is linear, so the more you actually use the app the worse it gets. Only
+            // the rows you can see need drawing.
+            //
+            // rootMargin gives a screen's worth of lead time, so a thumbnail is ready before it
+            // scrolls into view rather than popping in after it. Each canvas is unobserved once
+            // drawn: a code is drawn once, not on every scroll past it.
+            watchThumbs() {
+                if (this.thumbObserver) this.thumbObserver.disconnect();
+                this.pendingThumbs = new Map();
+                this.thumbObserver = new IntersectionObserver((entries) => {
+                    entries.forEach((entry) => {
+                        if (!entry.isIntersecting) return;
+                        const canvas = entry.target;
+                        this.thumbObserver.unobserve(canvas);
+                        const app = this.pendingThumbs.get(canvas);
+                        if (!app) return;
+                        this.pendingThumbs.delete(canvas);
+                        // Same guarded render as the home grid — a corrupt payload logs and
+                        // leaves an empty tile instead of taking the whole list down.
+                        try { window.renderCode(canvas.id, app, { scale: 3 }); }
+                        catch (e) { XanLogger.error('Library canvas error:', e); }
+                    });
+                }, { root: this.list, rootMargin: '250px 0px' });
+            }
+
+            // Draws everything still queued, regardless of visibility. For export and for tests,
+            // which need the pixels without scrolling the list past each row.
+            flushThumbs() {
+                if (!this.pendingThumbs) return 0;
+                const n = this.pendingThumbs.size;
+                this.pendingThumbs.forEach((app, canvas) => {
+                    try { window.renderCode(canvas.id, app, { scale: 3 }); }
+                    catch (e) { XanLogger.error('Library canvas error:', e); }
+                    this.thumbObserver.unobserve(canvas);
+                });
+                this.pendingThumbs.clear();
+                return n;
+            }
+
             // "Recent" needs a creation time. New codes carry createdAt; anything saved before that
             // field existed — and the seeded defaults — fall back to the timestamp baked into the
             // id ('bc_' + Date.now()). Seeds like 'bc_1' parse to a tiny number and sort oldest,
@@ -5810,6 +5886,8 @@
 
                 this.syncSelectBar();
                 this.list.innerHTML = '';
+                // Fresh observer per render: the old one holds canvases that no longer exist.
+                this.watchThumbs();
 
                 if (!items.length) {
                     const empty = document.createElement('div');
@@ -5883,11 +5961,9 @@
 
                     this.list.appendChild(row);
 
-                    // Same guarded render as the home grid — a corrupt payload logs and leaves an
-                    // empty tile instead of taking the whole list down.
-                    try {
-                        window.renderCode(`lib-can-${app.id}`, app, { scale: 3 });
-                    } catch (e) { XanLogger.error('Library canvas error:', e); }
+                    // Queued, not drawn. See watchThumbs().
+                    const canvas = row.querySelector(`#lib-can-${app.id}`);
+                    if (canvas) { this.pendingThumbs.set(canvas, app); this.thumbObserver.observe(canvas); }
                 });
 
                 safeCreateIcons();
@@ -6113,6 +6189,10 @@
         window.LibraryManager = new OSLibraryManager();
         window.FolderManager = new OSFolderManager();
         window.SkinManager = new OSSkinManager();
+        // Warm the two toast icons now rather than inside the first toast. The sweep costs ~40ms
+        // once the page is full of icons, and paying it inside showToast cost that toast its own
+        // first frame — the very thing the cache was added to stop.
+        toastIcon('check-circle-2', ''); toastIcon('alert-circle', '');
         window.ThemeManager = new OSThemeManager();
         window.Layout = new LayoutManager(window.Renderer);
         window.CloudSync = new OSCloudSyncManager();
