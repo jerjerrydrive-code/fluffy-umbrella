@@ -4382,6 +4382,66 @@ test.describe('The launcher arbitrates its own gestures', () => {
         expect(await viewerOpen(page), 'the launcher stopped responding after edit mode').toBe(true);
     });
 
+    test('a real finger can long-press, then drag an icon to a new place', async ({ page }) => {
+        // The whole loop the report is about — "the fluidity of the launchers actual placement"
+        // — driven end to end by dispatched touch. Reordering was previously covered only by
+        // mouse-driven tests, which pass against every build broken for a thumb.
+        await boot(page);
+        await page.evaluate(() => {
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type === 'dock');
+            for (let i = 0; i < 6; i++) {
+                window.OS_STATE.apps.push({ id: 'd' + i, title: 'D' + i, type: 'grid',
+                    page: 0, order: i, bcid: 'qrcode', data: 'd' + i });
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(600);
+
+        const order = () => page.evaluate(() => window.OS_STATE.apps
+            .filter(a => a.type === 'grid').sort((a, b) => a.order - b.order).map(a => a.id).join(','));
+        expect(await order()).toBe('d0,d1,d2,d3,d4,d5');
+
+        // In through the front door: a long press, with the drift a real finger has.
+        const b0 = await page.locator('#workspace-pager .app-icon-wrapper').first().boundingBox();
+        const cx = b0.x + b0.width / 2, cy = b0.y + b0.height / 2;
+        await finger(page, 'touchStart', cx, cy);
+        for (let i = 0; i < 10; i++) {
+            await finger(page, 'touchMove', cx + (i % 2) * 3, cy + (i % 2) * 3);
+            await page.waitForTimeout(55);
+        }
+        await finger(page, 'touchEnd', cx, cy);
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() => document.body.classList.contains('edit-mode')),
+               'the long press did not reach edit mode').toBe(true);
+
+        const boxes = await page.evaluate(() =>
+            [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')].map(el => {
+                const r = el.getBoundingClientRect();
+                return { id: el.dataset.id, x: r.x + r.width / 2, y: r.y + r.height / 2 };
+            }));
+        const from = boxes[0], to = boxes[2];
+
+        await finger(page, 'touchStart', from.x, from.y);
+        await page.waitForTimeout(80);
+        for (let i = 1; i <= 12; i++) {
+            await finger(page, 'touchMove', from.x + (to.x - from.x) * i / 12,
+                                            from.y + (to.y - from.y) * i / 12);
+            await page.waitForTimeout(20);
+        }
+        await page.waitForTimeout(120);
+        await finger(page, 'touchEnd', to.x, to.y);
+        await page.waitForTimeout(900);
+
+        expect(await order(), 'dragging with a finger did not move the icon').not.toBe('d0,d1,d2,d3,d4,d5');
+        // Bug #2: the drop used to synthesize a click that read as "tapped the background"
+        // and ended edit mode, so moving a second icon meant long-pressing all over again.
+        expect(await page.evaluate(() => document.body.classList.contains('edit-mode')),
+               'the drop dropped you out of edit mode').toBe(true);
+        expect(await page.evaluate(() =>
+            document.getElementById('rename-modal').classList.contains('opacity-100')),
+            'the drop opened a rename dialog').toBe(false);
+    });
+
     test('the launcher surfaces never hand a gesture to the browser', async ({ page }) => {
         await boot(page);
         const ta = await page.evaluate(() => ({
