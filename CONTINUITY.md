@@ -263,3 +263,12 @@ Rules that follow:
 
 Three of the five defects in that revamp were in the *new* code and were caught by probing it
 before release rather than by reading it. Write the probe.
+
+## `npm test` and `npm run audit:motion` cannot run at the same time
+
+Both bind **port 4173** — the audit spawns its own server (`scripts/motion-audit.mjs`), and
+Playwright's `webServer` starts one for the suite. Run them concurrently and the audit dies with
+a bind error that looks alarming and means nothing about the app. Run them one after the other.
+
+Recorded because it was chased twice: an audit that "fails" immediately after a green suite is
+almost always this.

@@ -263,6 +263,33 @@ Twelve tests, five of which fail against the previous build.
 
 ---
 
+## The same defect, everywhere else
+
+The launcher was not the only place it hurt. When the browser decides a touch is the start of a
+pan it sends `pointercancel` and **never dispatches `click`** — measured on the Settings button:
+`pointerdown`, then `pointercancel`, full stop.
+
+| # | Defect | Status |
+|---|---|---|
+| 36 | **Every button in the app failed at ~20px of drift.** About 3mm. Opening Settings did nothing, opening Account did nothing, the Library's Recent/Name/Format chips did nothing. Every one worked perfectly with a mouse, which is exactly why a green suite never showed it. | FIXED |
+| 37 | **The two most-used controls on the home screen were 30×30px.** Account and Settings, both well under the 44px minimum. Bug #9 swept five undersized controls and never reached these, because it opened *layers* and these live in the header. | FIXED |
+| 38 | `.tap-extend` only ever grew the **height**. Enough for a wide short chip, useless for a small square control — the header buttons stayed 30px wide however much the helper was applied. | FIXED |
+
+`TouchTap` watches **touch** events, which keep firing through a cancel, and activates the control
+only when the finger ended within it, within 24px of where it started, and the browser dispatched
+no click of its own. That last condition is what makes a double activation impossible — on a
+delete button, firing twice is unrecoverable.
+
+Forcing `touch-action: none` onto every control also works and was **rejected**: it would mean a
+list could not be scrolled by a finger that happened to land on a button inside it. Scrolling is
+left exactly as it was.
+
+Five tests, three of which fail against the previous build. The other two are the ones worth
+having later: that a drag starting on a control does not activate it, and that an ordinary tap is
+never delivered twice.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it

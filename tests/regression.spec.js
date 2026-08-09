@@ -4473,3 +4473,152 @@ test.describe('The launcher arbitrates its own gestures', () => {
         expect(ta.dock, 'the dock can still be claimed by the browser').toBe('none');
     });
 });
+
+test.describe('A tap that wanders still counts, everywhere', () => {
+    // The launcher was not the only place this hurt. When the browser decides a touch is the
+    // start of a pan it sends `pointercancel` and never dispatches `click` — measured on the
+    // Settings button: `pointerdown`, then `pointercancel`, full stop. At 20px of drift, which
+    // is about 3mm, opening Settings did nothing, opening Account did nothing, and the
+    // Library's Recent/Name/Format chips did nothing. All of them worked perfectly with a
+    // mouse, which is exactly why a green suite never showed it.
+    //
+    // TouchTap watches touch events, which keep firing through a cancel, and activates the
+    // control only if the finger ended near where it started and the browser dispatched no
+    // click of its own. Scrolling is untouched.
+
+    const finger = async (page, type, x, y) => {
+        const cdp = page.__cdp || (page.__cdp = await page.context().newCDPSession(page));
+        await cdp.send('Input.dispatchTouchEvent', {
+            type,
+            touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 8, radiusY: 8, force: 1 }],
+        });
+    };
+    const tapDrift = async (page, x, y, dx, dy, steps = 5) => {
+        await finger(page, 'touchStart', x, y);
+        for (let i = 1; i <= steps; i++) {
+            await finger(page, 'touchMove', x + dx * i / steps, y + dy * i / steps);
+            await page.waitForTimeout(16);
+        }
+        await finger(page, 'touchEnd', x + dx, y + dy);
+    };
+    const boot = async (page) => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1100);
+    };
+
+    test('a drifting tap still opens Settings', async ({ page }) => {
+        await boot(page);
+        const b = await page.locator('#btn-open-settings').boundingBox();
+        await tapDrift(page, b.x + b.width / 2, b.y + b.height / 2, 20, 0);
+        await page.waitForTimeout(700);
+        expect(await page.evaluate(() =>
+            document.getElementById('settings-modal').classList.contains('opacity-100')),
+            'a 20px drift stopped Settings opening').toBe(true);
+    });
+
+    test('a drifting tap still changes the Library sort', async ({ page }) => {
+        await boot(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(700);
+        await page.evaluate(() => document.querySelector('.library-sort-btn[data-sort="recent"]').click());
+        await page.waitForTimeout(300);
+
+        const b = await page.locator('.library-sort-btn[data-sort="name"]').boundingBox();
+        await tapDrift(page, b.x + b.width / 2, b.y + b.height / 2, 20, 0);
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() =>
+            document.querySelector('.library-sort-btn.active')?.dataset.sort),
+            'a 20px drift stopped the sort chip working').toBe('name');
+    });
+
+    test('a drag that starts on a control does not activate it', async ({ page }) => {
+        // The other half. If any touch that began on a button activated it, scrolling a list
+        // would fire whatever your finger happened to land on.
+        await boot(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(700);
+        await page.evaluate(() => document.querySelector('.library-sort-btn[data-sort="recent"]').click());
+        await page.waitForTimeout(300);
+
+        const b = await page.locator('.library-sort-btn[data-sort="name"]').boundingBox();
+        await tapDrift(page, b.x + b.width / 2, b.y + b.height / 2, 0, 220, 12);
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() =>
+            document.querySelector('.library-sort-btn.active')?.dataset.sort),
+            'dragging away from a chip still activated it').toBe('recent');
+    });
+
+    test('a tap is never delivered twice', async ({ page }) => {
+        // TouchTap only acts when the browser dispatched no click. If that check ever breaks,
+        // every ordinary tap fires its handler twice, which on a delete button is unrecoverable.
+        await boot(page);
+        const n = await page.evaluate(async () => {
+            let count = 0;
+            const btn = document.getElementById('btn-open-settings');
+            btn.addEventListener('click', () => count++);
+            await new Promise(r => setTimeout(r, 50));
+            return new Promise(res => setTimeout(() => res(count), 900));
+        });
+        // No touch yet — baseline must be zero.
+        expect(n).toBe(0);
+
+        await page.evaluate(() => {
+            window.__clicks = 0;
+            document.getElementById('btn-open-settings')
+                .addEventListener('click', () => window.__clicks++);
+        });
+        const b = await page.locator('#btn-open-settings').boundingBox();
+        // A dead-still tap, the case where the browser DOES dispatch its own click.
+        await tapDrift(page, b.x + b.width / 2, b.y + b.height / 2, 0, 0, 2);
+        await page.waitForTimeout(800);
+        expect(await page.evaluate(() => window.__clicks),
+               'the tap fired the handler twice').toBe(1);
+    });
+
+    test('every visible control meets the 44px minimum', async ({ page }) => {
+        // The two most-used controls on the home screen were 30x30. The earlier accessibility
+        // sweep fixed five undersized controls and never reached these, because it opened
+        // layers and these live in the header.
+        await boot(page);
+        const measure = () => {
+            const out = [];
+            document.querySelectorAll('button, [role="button"], a[href]').forEach(el => {
+                if (el.closest('[inert]')) return;
+                const r = el.getBoundingClientRect();
+                if (!r.width || !r.height) return;
+                for (let n = el; n; n = n.parentElement) {
+                    const s = getComputedStyle(n);
+                    if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return;
+                }
+                const af = getComputedStyle(el, '::after');
+                let w = r.width, h = r.height;
+                if (af && af.content && af.content !== 'none') {
+                    const ah = parseFloat(af.height), aw = parseFloat(af.width);
+                    if (!isNaN(ah)) h = Math.max(h, ah);
+                    if (!isNaN(aw)) w = Math.max(w, aw);
+                }
+                if (Math.min(w, h) < 44) {
+                    out.push((el.id || el.className.toString().slice(0, 30)) + ' ' + Math.round(w) + 'x' + Math.round(h));
+                }
+            });
+            return out;
+        };
+
+        expect(await page.evaluate(measure), 'undersized controls on the home screen').toEqual([]);
+
+        for (const open of ['window.SettingsManager.open()', 'window.LibraryManager.open()',
+                            'window.CodeGenerator.open()']) {
+            await page.evaluate(open);
+            await page.waitForTimeout(600);
+            expect(await page.evaluate(measure), `undersized controls after ${open}`).toEqual([]);
+            await page.evaluate(() => {
+                document.querySelectorAll('.modal-spring.pointer-events-auto').forEach(l => {
+                    l.classList.add('opacity-0', 'pointer-events-none');
+                    l.classList.remove('opacity-100', 'pointer-events-auto');
+                });
+            });
+            await page.waitForTimeout(450);
+        }
+    });
+});

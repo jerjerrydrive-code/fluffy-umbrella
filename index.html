@@ -964,7 +964,11 @@
         .tap-extend::after {
             content: ''; position: absolute; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            width: 100%; height: max(100%, 44px);
+            /* Both axes. This only grew the height at first, which is enough for a wide short
+               chip and useless for a small square one — the two header buttons were 30x30 and
+               stayed 30 wide. Anything already wider than 44px is unaffected, so no two chips
+               in a row start overlapping. */
+            width: max(100%, 44px); height: max(100%, 44px);
         }
 
         /* ---------- Reduced motion ----------
@@ -1011,10 +1015,10 @@
             </div>
             
             <div class="flex justify-end items-center gap-2 pointer-events-auto">
-                <button id="btn-open-account" class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md" title="Account & Cloud Sync">
+                <button id="btn-open-account" class="tap44 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md" title="Account & Cloud Sync">
                     <i data-lucide="cloud" id="account-status-icon" class="w-[18px] h-[18px] text-white drop-shadow-md"></i>
                 </button>
-                <button id="btn-open-settings" class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md">
+                <button id="btn-open-settings" class="tap44 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md">
                     <i data-lucide="settings" class="w-[18px] h-[18px] text-white drop-shadow-md"></i>
                 </button>
             </div>
@@ -6812,6 +6816,79 @@
         };
         window.LauncherInput = LauncherInput;
         LauncherInput.init([pager, document.getElementById('dock-container')]);
+
+        /* ==================================================================================
+           TouchTap — a tap counts if it goes down and comes up on the same control.
+
+           The launcher was not the only place this hurt. Chrome refuses to synthesize `click`
+           once a touch has drifted about 15px — whatever the element, scrollable or not.
+           Measured across the app at 20px of drift, which is about 3mm: opening Settings did
+           nothing, opening Account did nothing, and the Library's Recent/Name/Format chips did
+           nothing. Every one of them worked perfectly with a mouse, which is why a green suite
+           never showed it.
+
+           Neither mobile platform works that way. A tap is judged against the CONTROL'S BOUNDS,
+           so a large button is forgiving and a small one is not — which is what people expect
+           and what makes a 90px icon or a 70px chip feel solid. That is the rule here.
+
+           Touch only, deliberately. A mouse never has this problem, so the mouse path is left
+           exactly as it was; that also means no existing behaviour on a desktop changes.
+
+           Nothing happens here when the browser dispatched a click of its own, so an ordinary
+           tap is untouched and a double activation is impossible. The launcher surfaces are
+           excluded for the same reason — LauncherInput already owns those.
+
+           Scrolling is deliberately left alone. Forcing `touch-action: none` onto every control
+           also works, and was rejected: it would mean a list could not be scrolled by a finger
+           that happened to land on a button inside it.
+           ================================================================================== */
+        const TouchTap = {
+            SEL: 'button, [role="button"], a[href], label',
+            SLOP: 24,          // how far a finger may wander and still mean "tap"
+            MS: 700,
+
+            init() {
+                // TOUCH events, not pointer events. When the browser decides a touch is the
+                // start of a pan it sends `pointercancel` and no `pointerup` ever arrives —
+                // measured: pressing the Settings button and drifting 20px produced
+                // `pointerdown` then `pointercancel`, full stop. A pointerup-based rule can
+                // never see the release. Touch events keep firing all the way to `touchend`.
+                document.addEventListener('touchstart', (e) => {
+                    if (e.touches.length !== 1) { this.el = null; return; }
+                    const t = e.changedTouches[0];
+                    const el = t.target && t.target.closest ? t.target.closest(this.SEL) : null;
+                    this.el = (el && !el.closest('#workspace-pager, #dock-container')) ? el : null;
+                    this.x = t.clientX; this.y = t.clientY; this.t = performance.now();
+                    this.clicked = false;
+                }, { passive: true, capture: true });
+
+                // Set by any click the browser dispatched for this gesture. If it did its job,
+                // this does nothing at all — which is what makes a double activation impossible.
+                document.addEventListener('click', () => { this.clicked = true; }, true);
+
+                document.addEventListener('touchend', (e) => {
+                    const el = this.el;
+                    this.el = null;
+                    if (!el || el.disabled) return;
+                    if (performance.now() - this.t > this.MS) return;
+
+                    const t = e.changedTouches[0];
+                    if (!t) return;
+                    // Where the finger ENDED, not where the browser gave up. A real scroll
+                    // travels far past this before the finger lifts; a tap that wandered a few
+                    // millimetres does not.
+                    if (Math.hypot(t.clientX - this.x, t.clientY - this.y) > this.SLOP) return;
+
+                    const up = document.elementFromPoint(t.clientX, t.clientY);
+                    if (!up || !up.closest || up.closest(this.SEL) !== el) return;
+
+                    // click lands after touchend, so the check waits a turn.
+                    setTimeout(() => { if (!this.clicked) el.click(); }, 0);
+                }, { passive: true, capture: true });
+            },
+        };
+        window.TouchTap = TouchTap;
+        TouchTap.init();
 
         window.exitEditMode = () => {
             if (!window.OS_STATE.isEditMode) return;
