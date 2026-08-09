@@ -67,6 +67,36 @@ like a guard and was not.
 
 ---
 
+## Found by measuring blocking cost under a realistic library
+
+Every one of these was fine with the three codes the app ships with and bad at forty. A user
+action that costs more than one frame (16.7ms) makes whatever it triggers stutter.
+
+| # | Defect | Before | After | Status |
+|---|---|---|---|---|
+| 18 | Opening the Library rendered a barcode for **every** row as the list was built — and linear, so the more you used the app the worse it got | 452.6ms | 6.5ms | FIXED — thumbnails draw when they scroll into view |
+| 19 | `showToast` called lucide's whole-document sweep, re-rendering all 59 icons on the page, to draw one icon in a toast — costing the toast its own first frame | 40.6ms | 0.2ms | FIXED — the two toast icons are rendered once and reused |
+| 20 | Opening a code encoded at scale 5 **before** the layer became visible, so the opening animation started late | 38.3ms | ~0ms | FIXED — shows first, draws on the next frame |
+
+The forced reflow that first fixed #19 was itself a bug: it cost 19ms of full-document layout on
+a page with sixty icons, trading one frame drop for another. The toast is now animated explicitly
+through the Web Animations API, which needs no "from" value inferred and so needs no reflow.
+
+---
+
+## Found by reading every swallowed error
+
+| # | Defect | Status |
+|---|---|---|
+| 21 | The scanner's **Copy button lied**. `document.execCommand('copy')` returns `false` on failure *without throwing*, and the success toast fired unconditionally — so a copy that did nothing still said "Copied to clipboard". | FIXED |
+| 22 | The viewer's Copy had **no `.catch()`** on `navigator.clipboard.writeText`, so a rejected write (no permission, document not focused) produced no message at all and an unhandled rejection. | FIXED |
+
+Both are now one path, `window.copyText()`, which returns what actually happened; `copyAndReport()`
+says so. Telling someone their deliberate action worked when it did not is worse than saying
+nothing.
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.
