@@ -3154,14 +3154,30 @@ test.describe('Edit mode: entering it, and turning pages once you are in it', ()
         const before = await page.evaluate(() => window.OS_STATE.apps
             .filter(a => a.type === 'grid').map(a => `${a.id}:${a.page}:${a.order}`).sort());
 
+        // The app tells a page swipe from a deliberate drag by SPEED
+        // (PhysicsDragEngine.QUICK_MS, 180ms). Direction cannot be used, because reordering an
+        // icon within a row is horizontal too.
+        //
+        // The harness cannot deliver a gesture that fast. Measured under four workers: four
+        // mouse moves with no sleeps between them took 436ms, 547ms, 752ms — every awaited
+        // round trip eats the budget. So the swipe was "quick" on an idle machine and a drag on
+        // a busy one, and the test failed intermittently for a reason the app had no part in.
+        //
+        // performance.now() is frozen for the length of the gesture instead. The app then
+        // measures exactly what a real thumb would give it, and the result no longer depends on
+        // how loaded the machine is. Nothing else is stubbed: the drag engine's own logic runs
+        // untouched and still decides.
+        await page.evaluate(() => {
+            window.__realNow = performance.now.bind(performance);
+            const frozen = window.__realNow();
+            performance.now = () => frozen;
+        });
         await page.mouse.move(box.x, box.y);
         await page.mouse.down();
-        for (let i = 1; i <= 8; i++) {
-            await page.mouse.move(box.x - i * 40, box.y);
-            await page.waitForTimeout(12);
-        }
+        for (let i = 1; i <= 8; i++) await page.mouse.move(box.x - i * 40, box.y);
         const engaged = await page.evaluate(() => window.DragEngine.isEngaged);
         await page.mouse.up();
+        await page.evaluate(() => { performance.now = window.__realNow; });
         await page.waitForTimeout(1000);
 
         expect(engaged, 'a page swipe was treated as picking the icon up').toBe(false);
@@ -4471,5 +4487,241 @@ test.describe('The launcher arbitrates its own gestures', () => {
         }));
         expect(ta.pager, 'the grid can still be claimed by the browser scroller').toBe('none');
         expect(ta.dock, 'the dock can still be claimed by the browser').toBe('none');
+    });
+});
+
+test.describe('A tap that wanders still counts, everywhere', () => {
+    // The launcher was not the only place this hurt. When the browser decides a touch is the
+    // start of a pan it sends `pointercancel` and never dispatches `click` — measured on the
+    // Settings button: `pointerdown`, then `pointercancel`, full stop. At 20px of drift, which
+    // is about 3mm, opening Settings did nothing, opening Account did nothing, and the
+    // Library's Recent/Name/Format chips did nothing. All of them worked perfectly with a
+    // mouse, which is exactly why a green suite never showed it.
+    //
+    // TouchTap watches touch events, which keep firing through a cancel, and activates the
+    // control only if the finger ended near where it started and the browser dispatched no
+    // click of its own. Scrolling is untouched.
+
+    const finger = async (page, type, x, y) => {
+        const cdp = page.__cdp || (page.__cdp = await page.context().newCDPSession(page));
+        await cdp.send('Input.dispatchTouchEvent', {
+            type,
+            touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 8, radiusY: 8, force: 1 }],
+        });
+    };
+    const tapDrift = async (page, x, y, dx, dy, steps = 5) => {
+        await finger(page, 'touchStart', x, y);
+        for (let i = 1; i <= steps; i++) {
+            await finger(page, 'touchMove', x + dx * i / steps, y + dy * i / steps);
+            await page.waitForTimeout(16);
+        }
+        await finger(page, 'touchEnd', x + dx, y + dy);
+    };
+    const boot = async (page) => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1100);
+    };
+
+    test('a drifting tap still opens Settings', async ({ page }) => {
+        await boot(page);
+        const b = await page.locator('#btn-open-settings').boundingBox();
+        await tapDrift(page, b.x + b.width / 2, b.y + b.height / 2, 20, 0);
+        await page.waitForTimeout(700);
+        expect(await page.evaluate(() =>
+            document.getElementById('settings-modal').classList.contains('opacity-100')),
+            'a 20px drift stopped Settings opening').toBe(true);
+    });
+
+    test('a drifting tap still changes the Library sort', async ({ page }) => {
+        await boot(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(700);
+        await page.evaluate(() => document.querySelector('.library-sort-btn[data-sort="recent"]').click());
+        await page.waitForTimeout(300);
+
+        const b = await page.locator('.library-sort-btn[data-sort="name"]').boundingBox();
+        await tapDrift(page, b.x + b.width / 2, b.y + b.height / 2, 20, 0);
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() =>
+            document.querySelector('.library-sort-btn.active')?.dataset.sort),
+            'a 20px drift stopped the sort chip working').toBe('name');
+    });
+
+    test('a drag that starts on a control does not activate it', async ({ page }) => {
+        // The other half. If any touch that began on a button activated it, scrolling a list
+        // would fire whatever your finger happened to land on.
+        await boot(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(700);
+        await page.evaluate(() => document.querySelector('.library-sort-btn[data-sort="recent"]').click());
+        await page.waitForTimeout(300);
+
+        const b = await page.locator('.library-sort-btn[data-sort="name"]').boundingBox();
+        await tapDrift(page, b.x + b.width / 2, b.y + b.height / 2, 0, 220, 12);
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() =>
+            document.querySelector('.library-sort-btn.active')?.dataset.sort),
+            'dragging away from a chip still activated it').toBe('recent');
+    });
+
+    test('a tap is never delivered twice', async ({ page }) => {
+        // TouchTap only acts when the browser dispatched no click. If that check ever breaks,
+        // every ordinary tap fires its handler twice, which on a delete button is unrecoverable.
+        await boot(page);
+        const n = await page.evaluate(async () => {
+            let count = 0;
+            const btn = document.getElementById('btn-open-settings');
+            btn.addEventListener('click', () => count++);
+            await new Promise(r => setTimeout(r, 50));
+            return new Promise(res => setTimeout(() => res(count), 900));
+        });
+        // No touch yet — baseline must be zero.
+        expect(n).toBe(0);
+
+        await page.evaluate(() => {
+            window.__clicks = 0;
+            document.getElementById('btn-open-settings')
+                .addEventListener('click', () => window.__clicks++);
+        });
+        const b = await page.locator('#btn-open-settings').boundingBox();
+        // A dead-still tap, the case where the browser DOES dispatch its own click.
+        await tapDrift(page, b.x + b.width / 2, b.y + b.height / 2, 0, 0, 2);
+        await page.waitForTimeout(800);
+        expect(await page.evaluate(() => window.__clicks),
+               'the tap fired the handler twice').toBe(1);
+    });
+
+    test('every visible control meets the 44px minimum', async ({ page }) => {
+        // The two most-used controls on the home screen were 30x30. The earlier accessibility
+        // sweep fixed five undersized controls and never reached these, because it opened
+        // layers and these live in the header.
+        await boot(page);
+        const measure = () => {
+            const out = [];
+            document.querySelectorAll('button, [role="button"], a[href]').forEach(el => {
+                if (el.closest('[inert]')) return;
+                const r = el.getBoundingClientRect();
+                if (!r.width || !r.height) return;
+                for (let n = el; n; n = n.parentElement) {
+                    const s = getComputedStyle(n);
+                    if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return;
+                }
+                const af = getComputedStyle(el, '::after');
+                let w = r.width, h = r.height;
+                if (af && af.content && af.content !== 'none') {
+                    const ah = parseFloat(af.height), aw = parseFloat(af.width);
+                    if (!isNaN(ah)) h = Math.max(h, ah);
+                    if (!isNaN(aw)) w = Math.max(w, aw);
+                }
+                if (Math.min(w, h) < 44) {
+                    out.push((el.id || el.className.toString().slice(0, 30)) + ' ' + Math.round(w) + 'x' + Math.round(h));
+                }
+            });
+            return out;
+        };
+
+        expect(await page.evaluate(measure), 'undersized controls on the home screen').toEqual([]);
+
+        for (const open of ['window.SettingsManager.open()', 'window.LibraryManager.open()',
+                            'window.CodeGenerator.open()']) {
+            await page.evaluate(open);
+            await page.waitForTimeout(600);
+            expect(await page.evaluate(measure), `undersized controls after ${open}`).toEqual([]);
+            await page.evaluate(() => {
+                document.querySelectorAll('.modal-spring.pointer-events-auto').forEach(l => {
+                    l.classList.add('opacity-0', 'pointer-events-none');
+                    l.classList.remove('opacity-100', 'pointer-events-auto');
+                });
+            });
+            await page.waitForTimeout(450);
+        }
+    });
+});
+
+test.describe('Restoring accepts the file you actually have', () => {
+    // Reported: "I cant figure out how to import these. or what file is expected to import it's
+    // not the same as export so its fucking stupid."
+    //
+    // The importer demanded `format: 'xancode-os-backup'` and refused everything else with
+    // "That is not a XanCode OS backup file" — a header the user cannot see and did not write,
+    // standing between them and a file full of their own codes. A restore only ever ADDS, so
+    // being generous about the shape costs nothing and refusing costs someone their codes.
+
+    const code = { id: 'x1', title: 'T', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'hello' };
+    const wipeAndApply = (page, obj) => page.evaluate((j) => {
+        window.showToast = () => {};
+        window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type === 'dock');
+        const res = window.applyBackup(j);
+        return { res, n: window.OS_STATE.apps.filter(a => a.type === 'grid').length };
+    }, JSON.stringify(obj));
+
+    const shapes = {
+        'the app\'s own export': { format: 'xancode-os-backup', version: 1, state: { apps: [code] } },
+        'a state object with no header': { state: { apps: [code] } },
+        'a bare apps object': { apps: [code] },
+        'a bare array of codes': [code],
+        'a list under another name': { codes: [code] },
+    };
+
+    for (const [name, obj] of Object.entries(shapes)) {
+        test(`restores from ${name}`, async ({ page }) => {
+            await page.goto('/index.html');
+            await page.waitForTimeout(1000);
+            const r = await wipeAndApply(page, obj);
+            expect(r.res.ok, `${name} was refused: ${r.res.error}`).toBe(true);
+            expect(r.res.added).toBe(1);
+            expect(r.n).toBe(1);
+        });
+    }
+
+    test('the file picker does not filter the backup away', async ({ page }) => {
+        // Android's picker HIDES files whose MIME type it does not recognise, and a .json that
+        // arrived via a download or a messaging app is routinely text/plain, octet-stream, or
+        // typeless. `accept="application/json"` therefore greyed out the exact file the user had
+        // just been told to choose. The content is validated when it is read, so the filter was
+        // only ever a convenience and it cost more than it gave.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        const accept = await page.evaluate(() =>
+            document.getElementById('backup-import-input').getAttribute('accept'));
+        expect(accept, 'the backup picker filters by MIME type again').toBeNull();
+    });
+
+    test('a file with no codes in it is still refused, and says so', async ({ page }) => {
+        // Generous is not the same as credulous. Silently "succeeding" on a file that holds
+        // nothing would be the lying-success bug all over again.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        const r = await wipeAndApply(page, { hello: 'world' });
+        expect(r.res.ok).toBe(false);
+        expect(r.res.error).toBeTruthy();
+    });
+
+    test('a backup from a newer version is still refused', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        const r = await wipeAndApply(page,
+            { format: 'xancode-os-backup', version: 99, state: { apps: [code] } });
+        expect(r.res.ok).toBe(false);
+        expect(r.res.error).toContain('newer version');
+    });
+
+    test('the preferences in a real backup still come through', async ({ page }) => {
+        // The loosened path must not quietly drop everything that is not a code.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        const r = await page.evaluate(() => {
+            window.showToast = () => {};
+            window.OS_STATE.skin = 'dock';
+            window.OS_STATE.accent = '#3b82f6';
+            window.applyBackup(JSON.stringify({
+                format: 'xancode-os-backup', version: 1,
+                state: { apps: [], skin: 'aurora', accent: '#ff0000' },
+            }));
+            return { skin: window.OS_STATE.skin, accent: window.OS_STATE.accent };
+        });
+        expect(r.skin).toBe('aurora');
+        expect(r.accent).toBe('#ff0000');
     });
 });

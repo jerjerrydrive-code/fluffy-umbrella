@@ -964,7 +964,11 @@
         .tap-extend::after {
             content: ''; position: absolute; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            width: 100%; height: max(100%, 44px);
+            /* Both axes. This only grew the height at first, which is enough for a wide short
+               chip and useless for a small square one — the two header buttons were 30x30 and
+               stayed 30 wide. Anything already wider than 44px is unaffected, so no two chips
+               in a row start overlapping. */
+            width: max(100%, 44px); height: max(100%, 44px);
         }
 
         /* ---------- Reduced motion ----------
@@ -1011,10 +1015,10 @@
             </div>
             
             <div class="flex justify-end items-center gap-2 pointer-events-auto">
-                <button id="btn-open-account" class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md" title="Account & Cloud Sync">
+                <button id="btn-open-account" class="tap44 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md" title="Account & Cloud Sync">
                     <i data-lucide="cloud" id="account-status-icon" class="w-[18px] h-[18px] text-white drop-shadow-md"></i>
                 </button>
-                <button id="btn-open-settings" class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md">
+                <button id="btn-open-settings" class="tap44 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md">
                     <i data-lucide="settings" class="w-[18px] h-[18px] text-white drop-shadow-md"></i>
                 </button>
             </div>
@@ -1144,7 +1148,7 @@
             </div>
             <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
                 <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Your Data</div>
-                <input type="file" id="backup-import-input" accept="application/json,.json" class="hidden">
+                <input type="file" id="backup-import-input" class="hidden">
                 <div class="flex gap-2">
                     <button id="btn-export-backup" class="flex-1 py-3 bg-white/10 hover:bg-white/20 active:scale-[0.98] rounded-xl flex items-center justify-center gap-2 text-white font-medium text-sm transition-all">
                         <i data-lucide="download" class="w-[18px] h-[18px]"></i> Back up
@@ -1957,9 +1961,18 @@
         //
         // There are exactly two toast icons, so each is rendered once and its markup kept. Every
         // toast after the first costs a string concatenation.
-        const TOAST_ICON_CACHE = {};
-        function toastIcon(name, colorClass) {
-            if (!TOAST_ICON_CACHE[name]) {
+        // One icon's markup, rendered once and reused, WITHOUT sweeping the document.
+        //
+        // lucide.createIcons() walks every [data-lucide] on the page. With a real library that
+        // is around 200 icons, and it is a whole-document read-and-write however many icons you
+        // actually wanted. The toast needed one and paid for all of them (defect #19); the code
+        // viewer needed five and paid 9.9ms of the 10.3ms it cost to open (defect #40).
+        //
+        // The cache is filled by rendering the single icon inside a detached, zero-size holder.
+        // One sweep per distinct icon name, ever — after that it is a string.
+        const ICON_CACHE = {};
+        function iconSvg(name, className) {
+            if (ICON_CACHE[name] === undefined) {
                 const holder = document.createElement('div');
                 holder.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
                 holder.innerHTML = `<i data-lucide="${name}"></i>`;
@@ -1968,11 +1981,15 @@
                 const svg = holder.querySelector('svg');
                 // Falls back to no icon rather than to a raw <i>, which would render as nothing
                 // visible anyway and leave a stray element behind.
-                TOAST_ICON_CACHE[name] = svg ? svg.outerHTML : '';
+                ICON_CACHE[name] = svg ? svg.outerHTML : '';
                 holder.remove();
             }
-            if (!TOAST_ICON_CACHE[name]) return '';
-            return TOAST_ICON_CACHE[name].replace('<svg ', `<svg class="w-4 h-4 ${colorClass}" `);
+            if (!ICON_CACHE[name]) return '';
+            return ICON_CACHE[name].replace('<svg ', `<svg class="${className}" `);
+        }
+
+        function toastIcon(name, colorClass) {
+            return iconSvg(name, `w-4 h-4 ${colorClass}`);
         }
 
         function safeCreateIcons() {
@@ -2956,6 +2973,10 @@
                 this.activeItem = itemData;
                 this.enlargeTitle.innerText = itemData.title;
                 this.enlargeData.innerText = itemData.data;
+                // Synchronous again, now that it costs almost nothing. Deferring it into the
+                // first animation frame merely moved the cost to where it stalled the opening
+                // transition instead of delaying it — the motion audit caught that in half its
+                // runs. The right answer was to stop doing the expensive thing at all.
                 this.populateEnlargeExtras(itemData);
 
                 // Show first, draw on the next frame. Encoding at scale 5 costs ~38ms, which is
@@ -2988,7 +3009,7 @@
                     const chip = document.createElement('button');
                     chip.className = 'tag-chip';
                     chip.dataset.tag = tag;
-                    chip.innerHTML = `<span></span><i data-lucide="x" class="w-3 h-3 opacity-50"></i>`;
+                    chip.innerHTML = `<span></span>${iconSvg('x', 'w-3 h-3 opacity-50')}`;
                     chip.querySelector('span').textContent = tag;
                     chip.addEventListener('click', () => {
                         window.removeTag(itemData.id, tag);
@@ -3001,7 +3022,7 @@
                 const add = document.createElement('button');
                 add.id = 'btn-add-tag';
                 add.className = 'tag-chip tag-chip-add tap-extend';
-                add.innerHTML = `<i data-lucide="plus" class="w-3 h-3"></i><span>Tag</span>`;
+                add.innerHTML = `${iconSvg('plus', 'w-3 h-3')}<span>Tag</span>`;
                 add.addEventListener('click', () => {
                     this.promptFor({
                         heading: 'Add a tag',
@@ -3016,7 +3037,6 @@
                     });
                 });
                 row.appendChild(add);
-                safeCreateIcons();
             }
 
             populateEnlargeExtras(itemData) {
@@ -3034,13 +3054,14 @@
                         { icon: 'ruler', label: 'Data Length', value: `${itemData.data.length} chars` },
                         { icon: 'clock', label: 'Created', value: getItemCreatedLabel(itemData) }
                     ];
+                    // Cached SVG rather than <i data-lucide> plus a document sweep. Three icons
+                    // used to cost a walk of every icon on the page — see iconSvg.
                     stats.innerHTML = rows.map(r => `
                         <div class="stat-row">
-                            <div class="stat-row-label"><i data-lucide="${r.icon}" class="w-4 h-4"></i> ${r.label}</div>
+                            <div class="stat-row-label">${iconSvg(r.icon, 'w-4 h-4')} ${r.label}</div>
                             <div class="stat-row-value">${r.value}</div>
                         </div>
                     `).join('');
-                    safeCreateIcons();
                 }
             }
 
@@ -3703,19 +3724,54 @@
             } catch (e) {
                 return { ok: false, added: 0, error: 'That file is not valid JSON.' };
             }
-            if (!parsed || parsed.format !== 'xancode-os-backup') {
-                return { ok: false, added: 0, error: 'That is not a XanCode OS backup file.' };
-            }
-            if (!parsed.state || !Array.isArray(parsed.state.apps)) {
-                return { ok: false, added: 0, error: 'That backup is missing its code list.' };
-            }
-            if (Number(parsed.version) > BACKUP_VERSION) {
+            if (Number(parsed && parsed.version) > BACKUP_VERSION) {
                 return { ok: false, added: 0,
                     error: 'That backup was made by a newer version of the app.' };
             }
 
+            // Take the codes from wherever they are.
+            //
+            // This used to demand `format: 'xancode-os-backup'` and refuse everything else with
+            // "That is not a XanCode OS backup file." Reported, in as many words: "I cant figure
+            // out how to import these. or what file is expected to import it's not the same as
+            // export so its fucking stupid." That is a fair complaint about a file full of the
+            // user's own codes being rejected on a header they cannot see and did not write.
+            //
+            // A restore only ever ADDS (see below), so being generous about the shape costs
+            // nothing and refusing costs someone their codes. Anything carrying a list of
+            // objects with `data` is accepted: this app's own export, a bare `{apps: [...]}`,
+            // a bare array, or a `{state: {...}}` with no header at all.
+            // An array sitting under a name that means "the codes" is taken at its word, even
+            // when empty — a backup of an empty app is still a backup, and it carries the skin,
+            // accent and page names with it. An UNNAMED array has to prove itself by containing
+            // something code-shaped, or any stray list in the file would match.
+            const named = (o, depth) => {
+                if (!o || typeof o !== 'object' || depth > 4) return null;
+                for (const key of ['apps', 'codes', 'items', 'barcodes']) {
+                    if (Array.isArray(o[key])) return o[key];
+                }
+                return named(o.state, depth + 1);
+            };
+            const findApps = (o) => {
+                const byName = named(o, 0);
+                if (byName) return byName;
+                if (Array.isArray(o) && o.some(a => a && typeof a === 'object' && typeof a.data === 'string')) {
+                    return o;
+                }
+                return null;
+            };
+
+            const apps = findApps(parsed);
+            if (!apps) {
+                return { ok: false, added: 0,
+                    error: 'No codes found in that file.' };
+            }
+
             const st = window.OS_STATE;
-            const incoming = parsed.state;
+            // Preferences travel with a real backup and are simply absent from a bare list.
+            const incoming = (parsed && parsed.state && typeof parsed.state === 'object')
+                ? Object.assign({}, parsed.state, { apps })
+                : (Array.isArray(parsed) ? { apps } : Object.assign({}, parsed, { apps }));
 
             // Merge codes, deduped by payload. Existing entries win, so a restore can only ever
             // add — it cannot rewrite something already on this device.
@@ -6458,10 +6514,18 @@
         window.LibraryManager = new OSLibraryManager();
         window.FolderManager = new OSFolderManager();
         window.SkinManager = new OSSkinManager();
-        // Warm the two toast icons now rather than inside the first toast. The sweep costs ~40ms
-        // once the page is full of icons, and paying it inside showToast cost that toast its own
-        // first frame — the very thing the cache was added to stop.
-        toastIcon('check-circle-2', ''); toastIcon('alert-circle', '');
+        // Warm every cached icon now rather than inside the interaction that first needs one.
+        //
+        // A sweep costs ~40ms once the page is full of icons, and paying it inside showToast
+        // cost that toast its own first frame — the very thing the cache was added to stop. The
+        // viewer's five were missed when the cache was generalised, so the FIRST code opened
+        // still paid five sweeps: measured at 35-42ms, against a two-frame budget, while every
+        // subsequent open was 0.4ms. A cost that only lands once is still a cost, and it lands
+        // on the first thing the user does.
+        ['check-circle-2', 'alert-circle',            // toasts
+         'barcode', 'ruler', 'clock',                 // the viewer's stat rows
+         'x', 'plus'                                  // its tag chips
+        ].forEach(n => iconSvg(n, ''));
         window.ThemeManager = new OSThemeManager();
         window.Layout = new LayoutManager(window.Renderer);
         window.CloudSync = new OSCloudSyncManager();
@@ -6812,6 +6876,93 @@
         };
         window.LauncherInput = LauncherInput;
         LauncherInput.init([pager, document.getElementById('dock-container')]);
+
+        /* ==================================================================================
+           TouchTap — a tap counts if it goes down and comes up on the same control.
+
+           The launcher was not the only place this hurt. Chrome refuses to synthesize `click`
+           once a touch has drifted about 15px — whatever the element, scrollable or not.
+           Measured across the app at 20px of drift, which is about 3mm: opening Settings did
+           nothing, opening Account did nothing, and the Library's Recent/Name/Format chips did
+           nothing. Every one of them worked perfectly with a mouse, which is why a green suite
+           never showed it.
+
+           Neither mobile platform works that way. A tap is judged against the CONTROL'S BOUNDS,
+           so a large button is forgiving and a small one is not — which is what people expect
+           and what makes a 90px icon or a 70px chip feel solid. That is the rule here.
+
+           Touch only, deliberately. A mouse never has this problem, so the mouse path is left
+           exactly as it was; that also means no existing behaviour on a desktop changes.
+
+           Nothing happens here when the browser dispatched a click of its own, so an ordinary
+           tap is untouched and a double activation is impossible. The launcher surfaces are
+           excluded for the same reason — LauncherInput already owns those.
+
+           Scrolling is deliberately left alone. Forcing `touch-action: none` onto every control
+           also works, and was rejected: it would mean a list could not be scrolled by a finger
+           that happened to land on a button inside it.
+           ================================================================================== */
+        const TouchTap = {
+            SEL: 'button, [role="button"], a[href], label',
+            SLOP: 24,          // how far a finger may wander and still mean "tap"
+            // Under this the browser dispatches the click itself, so this stays out of the way
+            // entirely. Measured: it clicks at 12px and refuses at 16px, so 18 clears it.
+            //
+            // This is not belt-and-braces, it is the fix for a race that shipped once already.
+            // The first version asked "did a click arrive?" from a setTimeout(0) after touchend
+            // — and the browser's click lands AFTER that turn. So on a dead-still tap of the
+            // viewer's close button, this fired first and closed the viewer, and the browser's
+            // real click then landed on the home-screen icon underneath and re-opened it. Two
+            // clicks, one of them on the wrong element. Caught by an existing test, which is
+            // the entire reason that test was written.
+            MARGIN: 18,
+            MS: 700,
+
+            init() {
+                // TOUCH events, not pointer events. When the browser decides a touch is the
+                // start of a pan it sends `pointercancel` and no `pointerup` ever arrives —
+                // measured: pressing the Settings button and drifting 20px produced
+                // `pointerdown` then `pointercancel`, full stop. A pointerup-based rule can
+                // never see the release. Touch events keep firing all the way to `touchend`.
+                document.addEventListener('touchstart', (e) => {
+                    if (e.touches.length !== 1) { this.el = null; return; }
+                    const t = e.changedTouches[0];
+                    const el = t.target && t.target.closest ? t.target.closest(this.SEL) : null;
+                    this.el = (el && !el.closest('#workspace-pager, #dock-container')) ? el : null;
+                    this.x = t.clientX; this.y = t.clientY; this.t = performance.now();
+                    this.clicked = false;
+                }, { passive: true, capture: true });
+
+                // Set by any click the browser dispatched for this gesture. If it did its job,
+                // this does nothing at all — which is what makes a double activation impossible.
+                document.addEventListener('click', () => { this.clicked = true; }, true);
+
+                document.addEventListener('touchend', (e) => {
+                    const el = this.el;
+                    this.el = null;
+                    if (!el || el.disabled) return;
+                    if (performance.now() - this.t > this.MS) return;
+
+                    const t = e.changedTouches[0];
+                    if (!t) return;
+                    // Where the finger ENDED, not where the browser gave up. A real scroll
+                    // travels far past this before the finger lifts; a tap that wandered a few
+                    // millimetres does not.
+                    const moved = Math.hypot(t.clientX - this.x, t.clientY - this.y);
+                    if (moved > this.SLOP) return;
+                    if (moved <= this.MARGIN) return;      // the browser's job, not this one
+
+                    const up = document.elementFromPoint(t.clientX, t.clientY);
+                    if (!up || !up.closest || up.closest(this.SEL) !== el) return;
+
+                    // Only reached when the browser has already declined to click. The delay is
+                    // long enough that a click on its way would have landed and set the flag.
+                    setTimeout(() => { if (!this.clicked) el.click(); }, 80);
+                }, { passive: true, capture: true });
+            },
+        };
+        window.TouchTap = TouchTap;
+        TouchTap.init();
 
         window.exitEditMode = () => {
             if (!window.OS_STATE.isEditMode) return;

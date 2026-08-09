@@ -263,6 +263,102 @@ Twelve tests, five of which fail against the previous build.
 
 ---
 
+## The same defect, everywhere else
+
+The launcher was not the only place it hurt. When the browser decides a touch is the start of a
+pan it sends `pointercancel` and **never dispatches `click`** — measured on the Settings button:
+`pointerdown`, then `pointercancel`, full stop.
+
+| # | Defect | Status |
+|---|---|---|
+| 36 | **Every button in the app failed at ~20px of drift.** About 3mm. Opening Settings did nothing, opening Account did nothing, the Library's Recent/Name/Format chips did nothing. Every one worked perfectly with a mouse, which is exactly why a green suite never showed it. | FIXED |
+| 37 | **The two most-used controls on the home screen were 30×30px.** Account and Settings, both well under the 44px minimum. Bug #9 swept five undersized controls and never reached these, because it opened *layers* and these live in the header. | FIXED |
+| 38 | `.tap-extend` only ever grew the **height**. Enough for a wide short chip, useless for a small square control — the header buttons stayed 30px wide however much the helper was applied. | FIXED |
+
+`TouchTap` watches **touch** events, which keep firing through a cancel, and activates the control
+only when the finger ended within it, within 24px of where it started, and the browser dispatched
+no click of its own. That last condition is what makes a double activation impossible — on a
+delete button, firing twice is unrecoverable.
+
+Forcing `touch-action: none` onto every control also works and was **rejected**: it would mean a
+list could not be scrolled by a finger that happened to land on a button inside it. Scrolling is
+left exactly as it was.
+
+Five tests, three of which fail against the previous build. The other two are the ones worth
+having later: that a drag starting on a control does not activate it, and that an ordinary tap is
+never delivered twice.
+
+---
+
+## Restoring
+
+> "I cant figure out how to import these. or what file is expected to import it's not the same as
+> export so its fucking stupid"
+
+| # | Defect | Status |
+|---|---|---|
+| 39 | **The importer refused anything without a header the user never wrote.** It demanded `format: 'xancode-os-backup'` and answered everything else with "That is not a XanCode OS backup file" — standing between someone and a file full of their own codes. | FIXED |
+
+A restore only ever **adds**, so being generous about the shape costs nothing and refusing costs
+someone their codes. It now takes the list from wherever it is: the app's own export, a
+`{state: {...}}` with no header, a bare `{apps: [...]}`, a bare array, or a list under `codes` /
+`items` / `barcodes`.
+
+Generous is not credulous. A file with nothing code-shaped in it is still refused **with a
+reason**, and a backup claiming a newer version is still refused — silently "succeeding" on a
+file that held nothing would be defect #29 all over again.
+
+An array under a name meaning "the codes" is taken at its word even when empty, because a backup
+of an empty app is still a backup and carries the skin, accent and page names with it. That case
+was missed on the first attempt and caught by a test written for it.
+
+---
+
+## Found by a budget test failing only under load
+
+| # | Defect | Status |
+|---|---|---|
+| 40 | **Opening a code still blocked before the layer appeared.** Defect #20 deferred the *canvas* to the next frame and left `populateEnlargeExtras` where it was — and that runs two whole-document lucide sweeps. Measured with 198 icons on the page: 10.3ms total, **9.9ms of it in the extras**, all of it spent before the layer was made visible, which is the exact thing the deferral exists to prevent. Under parallel load it reached 35ms and blew the two-frame budget. | FIXED |
+
+Same shape as #19, where the toast swept every icon in the document to draw one of its own.
+
+**The first fix was wrong and the motion audit caught it.** Moving the extras into the opening
+`requestAnimationFrame` did not remove the 10ms, it relocated it into the first frame of the
+transition — so instead of delaying the animation it stalled it, and the audit started reporting
+a finding in **half** its runs where it had been clean all day.
+
+The right answer was to stop doing the expensive thing at all. `toastIcon` was generalised into
+`iconSvg`: one document sweep per distinct icon name, ever, and a string thereafter. The extras
+went back to being synchronous, because they now cost nothing.
+
+| # | Defect | Status |
+|---|---|---|
+| 41 | The generalised cache was **not warmed**, so the FIRST code opened still paid five sweeps — 35–42ms against a two-frame budget, while every later open was 0.4ms. The app already warms the two toast icons at init for exactly this reason; the viewer's five were missed. | FIXED |
+
+Measured end to end: **10.3ms → 0.4ms**, zero document sweeps, and the first open is no longer a
+special case. A cost that only lands once is still a cost, and it lands on the first thing the
+user does.
+
+Worth recording **how** all of this was found: a budget test that only failed under contention.
+The temptation is to widen the budget or blame the machine. Twice, the measurement said
+otherwise — and the second time, the thing it caught was my own fix.
+
+---
+
+## Fixed in the tests, not the app
+
+Two tests failed intermittently under parallel load and neither was an app defect. Both are
+recorded because "it was the harness" is a conclusion that has to be earned, not assumed.
+
+| Test | Why it flaked | What changed |
+|---|---|---|
+| *swiping across a page in edit mode turns the page* | The app separates a page swipe from a deliberate drag by **speed** (`QUICK_MS`, 180ms) — direction cannot be used, because reordering within a row is horizontal too. The harness cannot deliver a gesture that fast: four mouse moves with no sleeps measured **436ms, 547ms, 752ms** under four workers. | `performance.now()` is frozen for the length of the gesture, so the app measures what a real thumb would give it. The drag engine's own logic still decides. 10/10 under load after. |
+
+The other, *a held finger that drifts a few pixels*, passed 12/12 under the same load once
+re-run and was not changed.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
@@ -272,6 +368,34 @@ again from scratch.
 |---|---|
 | One failure of *"every dock button opens something"* in a 1,540-execution soak | **Unreproduced.** 65 further runs at two and four workers were clean. The soak overlapped edits to `index.html`, so it was very likely testing a half-written file. Unproven either way, so the test's fixed timeouts were replaced with waits on real state — a plausible source of flake removed whether or not it was the one. The test also got 4× faster. |
 | `XanNav.stack` empty while history depth was 1 | **Probe artifact.** Caused by a reset loop calling internals directly and bypassing the normal close path. Every real close — X button, Back, Escape, `close()` — leaves the two in agreement. Now asserted, because the invariant was never checked and a phantom entry would mean pressing Back and nothing happening. |
+
+---
+
+## Open
+
+| # | Defect | Status |
+|---|---|---|
+| 42 | **The skin morph occasionally leaves the screen illegible for ~660ms.** `#workspace-container: unreadable (blur ≥4px) for 661ms`, against a 500ms budget. Intermittent: **1 run in 4** on the currently-live build, 1 in 2 on the working branch — small samples, and present at baseline either way. | OPEN |
+
+This is defect #5 coming back part-time. The timings say it should not: the blur eases in over
+220ms, `morph-pulse` is removed at 260ms, and the ease-out finishes around 480ms — a span above
+4px of roughly **334ms**. Measured, it is sometimes double that.
+
+Ruled out, by measurement rather than reasoning:
+- Not main-thread blocking from rendering — `Renderer.render()` is 7.5ms and `SkinManager.render()`
+  is 4.2ms with 40 codes on the page.
+- Not caused by any of the launcher, TouchTap, inert, or icon-cache work — it reproduces on the
+  build that was already live before any of it.
+
+The likely mechanism, not yet confirmed: the morph is sequenced by wall-clock `setTimeout`, and
+at 150ms it flips `data-skin`, which invalidates essentially every rule in the stylesheet. A slow
+style recalc there delays the 260ms timer that removes the blur, and the blur simply sits. If so
+the fix is to stop sequencing a visual transition on wall-clock timers — drive it from
+`transitionend` or the Web Animations API, the same reasoning that fixed the toast in #19.
+
+Not shipped as part of this round deliberately: it is pre-existing, so holding the other fixes
+back does not protect anyone from it, and changing the morph deserves its own audit cycle rather
+than being bundled into a deploy.
 
 ---
 

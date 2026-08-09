@@ -263,3 +263,31 @@ Rules that follow:
 
 Three of the five defects in that revamp were in the *new* code and were caught by probing it
 before release rather than by reading it. Write the probe.
+
+## `npm test` and `npm run audit:motion` cannot run at the same time
+
+Both bind **port 4173** — the audit spawns its own server (`scripts/motion-audit.mjs`), and
+Playwright's `webServer` starts one for the suite. Run them concurrently and the audit dies with
+a bind error that looks alarming and means nothing about the app. Run them one after the other.
+
+Recorded because it was chased twice: an audit that "fails" immediately after a green suite is
+almost always this.
+
+## Moving work is not the same as removing it
+
+`openEnlarge` cost 10.3ms, nearly all of it two whole-document `lucide.createIcons()` sweeps.
+The first fix moved them into the opening `requestAnimationFrame` — and that was worse: the cost
+landed inside the first frame of the transition, stalling the animation instead of delaying it.
+The motion audit went from clean all day to a finding in **half** its runs, which is how it was
+caught.
+
+`lucide.createIcons()` walks every `[data-lucide]` in the document. Wanting five icons costs the
+same as wanting two hundred. There is a cache (`iconSvg`) — use it, and **warm it at init**
+alongside the others, or the first interaction that needs an icon pays the sweep the cache exists
+to avoid. That warming step was missed when the cache was generalised and cost 35–42ms on the
+first code opened, against a two-frame budget.
+
+Result: 10.3ms to 0.4ms, no sweeps, no special case for the first open.
+
+The general rule, which has now bitten twice here: when something is too slow, ask whether it can
+stop happening before asking when it should happen.
