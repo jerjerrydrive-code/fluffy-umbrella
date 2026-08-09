@@ -1148,7 +1148,7 @@
             </div>
             <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
                 <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Your Data</div>
-                <input type="file" id="backup-import-input" accept="application/json,.json" class="hidden">
+                <input type="file" id="backup-import-input" class="hidden">
                 <div class="flex gap-2">
                     <button id="btn-export-backup" class="flex-1 py-3 bg-white/10 hover:bg-white/20 active:scale-[0.98] rounded-xl flex items-center justify-center gap-2 text-white font-medium text-sm transition-all">
                         <i data-lucide="download" class="w-[18px] h-[18px]"></i> Back up
@@ -2960,7 +2960,6 @@
                 this.activeItem = itemData;
                 this.enlargeTitle.innerText = itemData.title;
                 this.enlargeData.innerText = itemData.data;
-                this.populateEnlargeExtras(itemData);
 
                 // Show first, draw on the next frame. Encoding at scale 5 costs ~38ms, which is
                 // more than two frames — done inline it was spent BEFORE the layer became
@@ -2975,6 +2974,19 @@
                 requestAnimationFrame(() => {
                     // The viewer may already have been closed or moved on to another code.
                     if (this.activeItem !== drawing) return;
+                    // The badge, tags and stat rows went with it.
+                    //
+                    // Deferring the canvas alone was not enough: populateEnlargeExtras runs two
+                    // whole-document lucide sweeps, and with 198 icons on the page that measured
+                    // 9.9ms of the 10.3ms this call cost — all of it spent BEFORE the layer was
+                    // made visible, which is the exact thing the deferral exists to prevent. On
+                    // a loaded machine it reached 35ms and blew the two-frame budget. Same shape
+                    // as the toast sweeping every icon in the document to draw one of its own.
+                    //
+                    // Everything read at a glance — title and payload — is still set
+                    // synchronously above. What lands a frame later is detail nobody can see
+                    // arriving.
+                    this.populateEnlargeExtras(drawing);
                     try { window.renderCode('fullscreen-canvas', drawing, { scale: 5, padding: 3 }); }
                     catch (e) { XanLogger.error('Fullscreen canvas error', e); }
                 });
@@ -3707,19 +3719,54 @@
             } catch (e) {
                 return { ok: false, added: 0, error: 'That file is not valid JSON.' };
             }
-            if (!parsed || parsed.format !== 'xancode-os-backup') {
-                return { ok: false, added: 0, error: 'That is not a XanCode OS backup file.' };
-            }
-            if (!parsed.state || !Array.isArray(parsed.state.apps)) {
-                return { ok: false, added: 0, error: 'That backup is missing its code list.' };
-            }
-            if (Number(parsed.version) > BACKUP_VERSION) {
+            if (Number(parsed && parsed.version) > BACKUP_VERSION) {
                 return { ok: false, added: 0,
                     error: 'That backup was made by a newer version of the app.' };
             }
 
+            // Take the codes from wherever they are.
+            //
+            // This used to demand `format: 'xancode-os-backup'` and refuse everything else with
+            // "That is not a XanCode OS backup file." Reported, in as many words: "I cant figure
+            // out how to import these. or what file is expected to import it's not the same as
+            // export so its fucking stupid." That is a fair complaint about a file full of the
+            // user's own codes being rejected on a header they cannot see and did not write.
+            //
+            // A restore only ever ADDS (see below), so being generous about the shape costs
+            // nothing and refusing costs someone their codes. Anything carrying a list of
+            // objects with `data` is accepted: this app's own export, a bare `{apps: [...]}`,
+            // a bare array, or a `{state: {...}}` with no header at all.
+            // An array sitting under a name that means "the codes" is taken at its word, even
+            // when empty — a backup of an empty app is still a backup, and it carries the skin,
+            // accent and page names with it. An UNNAMED array has to prove itself by containing
+            // something code-shaped, or any stray list in the file would match.
+            const named = (o, depth) => {
+                if (!o || typeof o !== 'object' || depth > 4) return null;
+                for (const key of ['apps', 'codes', 'items', 'barcodes']) {
+                    if (Array.isArray(o[key])) return o[key];
+                }
+                return named(o.state, depth + 1);
+            };
+            const findApps = (o) => {
+                const byName = named(o, 0);
+                if (byName) return byName;
+                if (Array.isArray(o) && o.some(a => a && typeof a === 'object' && typeof a.data === 'string')) {
+                    return o;
+                }
+                return null;
+            };
+
+            const apps = findApps(parsed);
+            if (!apps) {
+                return { ok: false, added: 0,
+                    error: 'No codes found in that file.' };
+            }
+
             const st = window.OS_STATE;
-            const incoming = parsed.state;
+            // Preferences travel with a real backup and are simply absent from a bare list.
+            const incoming = (parsed && parsed.state && typeof parsed.state === 'object')
+                ? Object.assign({}, parsed.state, { apps })
+                : (Array.isArray(parsed) ? { apps } : Object.assign({}, parsed, { apps }));
 
             // Merge codes, deduped by payload. Existing entries win, so a restore can only ever
             // add — it cannot rewrite something already on this device.
@@ -6845,6 +6892,17 @@
         const TouchTap = {
             SEL: 'button, [role="button"], a[href], label',
             SLOP: 24,          // how far a finger may wander and still mean "tap"
+            // Under this the browser dispatches the click itself, so this stays out of the way
+            // entirely. Measured: it clicks at 12px and refuses at 16px, so 18 clears it.
+            //
+            // This is not belt-and-braces, it is the fix for a race that shipped once already.
+            // The first version asked "did a click arrive?" from a setTimeout(0) after touchend
+            // — and the browser's click lands AFTER that turn. So on a dead-still tap of the
+            // viewer's close button, this fired first and closed the viewer, and the browser's
+            // real click then landed on the home-screen icon underneath and re-opened it. Two
+            // clicks, one of them on the wrong element. Caught by an existing test, which is
+            // the entire reason that test was written.
+            MARGIN: 18,
             MS: 700,
 
             init() {
@@ -6877,13 +6935,16 @@
                     // Where the finger ENDED, not where the browser gave up. A real scroll
                     // travels far past this before the finger lifts; a tap that wandered a few
                     // millimetres does not.
-                    if (Math.hypot(t.clientX - this.x, t.clientY - this.y) > this.SLOP) return;
+                    const moved = Math.hypot(t.clientX - this.x, t.clientY - this.y);
+                    if (moved > this.SLOP) return;
+                    if (moved <= this.MARGIN) return;      // the browser's job, not this one
 
                     const up = document.elementFromPoint(t.clientX, t.clientY);
                     if (!up || !up.closest || up.closest(this.SEL) !== el) return;
 
-                    // click lands after touchend, so the check waits a turn.
-                    setTimeout(() => { if (!this.clicked) el.click(); }, 0);
+                    // Only reached when the browser has already declined to click. The delay is
+                    // long enough that a click on its way would have landed and set the flag.
+                    setTimeout(() => { if (!this.clicked) el.click(); }, 80);
                 }, { passive: true, capture: true });
             },
         };

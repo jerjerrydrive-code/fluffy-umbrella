@@ -290,6 +290,59 @@ never delivered twice.
 
 ---
 
+## Restoring
+
+> "I cant figure out how to import these. or what file is expected to import it's not the same as
+> export so its fucking stupid"
+
+| # | Defect | Status |
+|---|---|---|
+| 39 | **The importer refused anything without a header the user never wrote.** It demanded `format: 'xancode-os-backup'` and answered everything else with "That is not a XanCode OS backup file" — standing between someone and a file full of their own codes. | FIXED |
+
+A restore only ever **adds**, so being generous about the shape costs nothing and refusing costs
+someone their codes. It now takes the list from wherever it is: the app's own export, a
+`{state: {...}}` with no header, a bare `{apps: [...]}`, a bare array, or a list under `codes` /
+`items` / `barcodes`.
+
+Generous is not credulous. A file with nothing code-shaped in it is still refused **with a
+reason**, and a backup claiming a newer version is still refused — silently "succeeding" on a
+file that held nothing would be defect #29 all over again.
+
+An array under a name meaning "the codes" is taken at its word even when empty, because a backup
+of an empty app is still a backup and carries the skin, accent and page names with it. That case
+was missed on the first attempt and caught by a test written for it.
+
+---
+
+## Found by a budget test failing only under load
+
+| # | Defect | Status |
+|---|---|---|
+| 40 | **Opening a code still blocked before the layer appeared.** Defect #20 deferred the *canvas* to the next frame and left `populateEnlargeExtras` where it was — and that runs two whole-document lucide sweeps. Measured with 198 icons on the page: 10.3ms total, **9.9ms of it in the extras**, all of it spent before the layer was made visible, which is the exact thing the deferral exists to prevent. Under parallel load it reached 35ms and blew the two-frame budget. | FIXED |
+
+Same shape as #19, where the toast swept every icon in the document to draw one of its own. The
+badge, tags and stat rows now go with the canvas; the title and payload — everything read at a
+glance — are still set synchronously.
+
+Worth recording **how** it was found: a budget test that only failed under contention. The
+temptation is to widen the budget or blame the machine. The measurement said otherwise.
+
+---
+
+## Fixed in the tests, not the app
+
+Two tests failed intermittently under parallel load and neither was an app defect. Both are
+recorded because "it was the harness" is a conclusion that has to be earned, not assumed.
+
+| Test | Why it flaked | What changed |
+|---|---|---|
+| *swiping across a page in edit mode turns the page* | The app separates a page swipe from a deliberate drag by **speed** (`QUICK_MS`, 180ms) — direction cannot be used, because reordering within a row is horizontal too. The harness cannot deliver a gesture that fast: four mouse moves with no sleeps measured **436ms, 547ms, 752ms** under four workers. | `performance.now()` is frozen for the length of the gesture, so the app measures what a real thumb would give it. The drag engine's own logic still decides. 10/10 under load after. |
+
+The other, *a held finger that drifts a few pixels*, passed 12/12 under the same load once
+re-run and was not changed.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
