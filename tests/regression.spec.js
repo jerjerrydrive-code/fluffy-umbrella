@@ -2902,3 +2902,89 @@ test.describe('Text stays readable on every skin', () => {
         });
     }
 });
+
+test.describe('Arming a folder merge is visible, not only felt', () => {
+    // Found by the gesture filmstrip in scripts/motion-audit.mjs: the frame at the moment a
+    // merge armed was pixel-identical to the frame before it. The target does grow and take an
+    // accent ring, but the icon you are holding sits directly on top of it at scale 1.15 and
+    // covered the lot — so the only signal that releasing would make a folder rather than
+    // reorder was the haptic. Vibration is a setting the user can switch off, which left that
+    // case with no feedback at all.
+    const arm = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(500);
+        const p = await page.evaluate(() =>
+            [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')].slice(0, 2).map(el => {
+                const r = el.getBoundingClientRect();
+                return { id: el.dataset.id, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+            }));
+        await page.mouse.move(p[1].x, p[1].y);
+        await page.mouse.down();
+        await page.mouse.move(p[1].x + 14, p[1].y + 8);
+        await page.mouse.move(p[0].x, p[0].y, { steps: 8 });
+        return p;
+    };
+
+    test('the target takes a ring and the held icon fades once armed', async ({ page }) => {
+        await arm(page);
+
+        // Before the dwell completes, neither marker is present.
+        const early = await page.evaluate(() => ({
+            target: !!document.querySelector('.folder-target'),
+            merging: !!document.querySelector('.drag-merging'),
+        }));
+        expect(early.target, 'armed before the dwell elapsed').toBe(false);
+        expect(early.merging).toBe(false);
+
+        await page.waitForTimeout(750);
+
+        const armed = await page.evaluate(() => {
+            const t = document.querySelector('.folder-target');
+            const m = document.querySelector('.drag-merging');
+            if (!t || !m) return null;
+            const icon = t.querySelector('.app-icon');
+            return {
+                ring: getComputedStyle(icon).boxShadow,
+                scale: getComputedStyle(icon).transform,
+                heldOpacity: +getComputedStyle(m).opacity,
+            };
+        });
+        expect(armed, 'nothing was armed').not.toBeNull();
+        // The ring has to reach past the held icon, so it is two shadows, not one.
+        expect(armed.ring.split('rgb').length - 1, 'the ring lost its outer halo').toBeGreaterThanOrEqual(3);
+        expect(armed.scale).not.toBe('none');
+        expect(armed.heldOpacity, 'the held icon still hides the target').toBeLessThan(0.7);
+
+        await page.mouse.up();
+        await page.waitForTimeout(800);
+        expect(await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(1);
+    });
+
+    test('moving off the target undims the held icon again', async ({ page }) => {
+        // clearFolderDwell has to strip the fade whether or not a merge had armed, or a near
+        // miss leaves the icon translucent for the rest of the drag.
+        const p = await arm(page);
+        await page.waitForTimeout(750);
+        expect(await page.evaluate(() => !!document.querySelector('.drag-merging'))).toBe(true);
+
+        await page.mouse.move(p[1].x, p[1].y + 180, { steps: 8 });
+        await page.waitForTimeout(200);
+        expect(await page.evaluate(() => !!document.querySelector('.drag-merging')),
+               'the held icon stayed faded after moving away').toBe(false);
+        expect(await page.evaluate(() => !!document.querySelector('.folder-target'))).toBe(false);
+
+        await page.mouse.up();
+        await page.waitForTimeout(700);
+        // And nothing is left translucent once it lands.
+        expect(await page.evaluate(() =>
+            [...document.querySelectorAll('.app-icon-wrapper')]
+                .filter(el => +getComputedStyle(el).opacity < 0.9).length)).toBe(0);
+    });
+});

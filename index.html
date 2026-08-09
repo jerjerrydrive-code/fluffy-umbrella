@@ -867,10 +867,23 @@
         /* Brief whole-app blur/scale pulse while a skin swap is committed underneath it */
         /* Armed folder target: the icon a dwell would merge into. Ring plus a slight lift,
            so it reads as "this one opens up" rather than "this one is selected". */
+        /* Arming a merge already grew the target and gave it an accent ring — and you could
+           not see any of it, because the icon you are holding sits directly on top at scale
+           1.15 and covered the whole thing. Frame-by-frame, the "armed" moment was pixel-
+           identical to the moment before it, which meant the ONLY signal that releasing would
+           make a folder rather than reorder was the haptic. That is a setting the user can turn
+           off, so for anyone who has, there was no feedback at all.
+           Two changes, both so the state is visible past the thing occluding it: the ring grows
+           beyond the held icon's edge and gains a soft outer halo, and the held icon fades so
+           the target reads through it. */
         .folder-target .app-icon {
-            transform: scale(1.12);
-            box-shadow: 0 0 0 3px var(--accent), 0 10px 26px -6px rgba(0,0,0,0.5);
+            transform: scale(1.3);
+            box-shadow: 0 0 0 3px var(--accent),
+                        0 0 0 10px color-mix(in srgb, var(--accent) 26%, transparent),
+                        0 10px 26px -6px rgba(0,0,0,0.5);
         }
+        .app-icon-wrapper { transition: opacity 0.18s ease; }
+        .drag-merging { opacity: 0.4; }
 
         .tag-chip {
             display: inline-flex; align-items: center; gap: 0.35rem;
@@ -2548,6 +2561,7 @@
                             if (this.dwellTarget !== slot) return;
                             this.folderArmed = slot;
                             slot.classList.add('folder-target');
+                            if (this.draggedEl) this.draggedEl.classList.add('drag-merging');
                             haptic(18);
                         }, 550);
                     }
@@ -2558,6 +2572,10 @@
                 if (this.dwellTimer) clearTimeout(this.dwellTimer);
                 this.dwellTimer = null;
                 if (this.folderArmed) this.folderArmed.classList.remove('folder-target');
+                // Always, not only when armed: moving off the target has to undim the held icon
+                // even though nothing was armed yet, or a near-miss leaves it faded for the rest
+                // of the drag.
+                if (this.draggedEl) this.draggedEl.classList.remove('drag-merging');
                 this.folderArmed = null;
                 this.dwellTarget = null;
             }
@@ -2594,7 +2612,7 @@
                 // A folder drop replaces the reorder entirely — the dragged icon is going INTO
                 // something, so animating it back into a grid slot would be wrong.
                 if (this.resolveFolderDrop()) {
-                    if (this.draggedEl) this.draggedEl.style = '';
+                    if (this.draggedEl) { this.draggedEl.style = ''; this.draggedEl.classList.remove('drag-merging'); }
                     if (this.ghostEl) this.ghostEl.remove();
                     this.draggedEl = null; this.ghostEl = null;
                     window.Renderer.render();
@@ -2618,6 +2636,7 @@
                 if (!this.draggedEl || !this.ghostEl) return;
 
                 this.draggedEl.style = '';
+                this.draggedEl.classList.remove('drag-merging');
                 this.draggedEl.querySelectorAll('.jiggle-target').forEach(j => j.style.animation = '');
 
                 this.currentContainer.insertBefore(this.draggedEl, this.ghostEl);

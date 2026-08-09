@@ -336,7 +336,7 @@ async function contactSheet(browser, scene, shots, dir) {
         figure { margin:0; }
         img { width:100%; display:block; border:1px solid #333; border-radius:4px; background:#000; }
         figcaption { text-align:center; padding-top:4px; color:#8a8a8a; font-variant-numeric:tabular-nums; }
-      </style><h1>${scene.name} — ${scene.ms}ms, stepped deterministically</h1>
+      </style><h1>${scene.name} — ${typeof scene.ms === 'number' ? scene.ms + 'ms, stepped deterministically' : scene.ms}</h1>
       <div class="grid">${cells}</div>`;
     const file = path.join(dir, `_sheet-${scene.name}.html`);
     fs.writeFileSync(file, html);
@@ -350,7 +350,156 @@ async function contactSheet(browser, scene, shots, dir) {
     return png;
 }
 
-/* --------------------------------------------------- pass 3: geometry at rest */
+/* ------------------------------------------------------- pass 3: gestures */
+/* Dragging is the interaction that actually got complained about, and it was the one thing the
+   audit could not see: the scenes above are all "call a method and watch CSS happen", while a
+   drag is a pointer sequence whose state lives in the engine rather than in a transition.
+ *
+ * A gesture filmstrip is indexed by pointer position rather than by time, because that is what
+ * the user is actually controlling. Alongside it, one objective check that matters more than
+ * any screenshot: the dragged icon must stay under the finger. The engine positions it with a
+ * fixed offset captured at pickup, so if that offset drifts, the icon slides away from the
+ * touch — the single most common way a drag feels broken. */
+const GESTURES = [
+    {
+        name: 'drag-reorder',
+        setup: enterEditMode,
+        steps: async (page, { mouse, shoot, wait }) => {
+            const p = await gridPoints(page);
+            await mouse.move(p.icons[0].x, p.icons[0].y);
+            await mouse.down();                                          await shoot('touch down');
+            await mouse.move(p.icons[0].x + 14, p.icons[0].y + 8);       await shoot('lifted');
+            await mouse.move(p.icons[1].x, p.icons[1].y, { steps: 6 });  await shoot('over neighbour');
+            await mouse.move(p.empty.x, p.empty.y, { steps: 6 });        await shoot('over free slot');
+            await mouse.up();                                            await shoot('released');
+            await wait(250);                                             await shoot('mid-settle');
+            await wait(500);                                             await shoot('settled');
+        },
+    },
+    {
+        name: 'drag-folder-dwell',
+        setup: enterEditMode,
+        steps: async (page, { mouse, shoot, wait }) => {
+            const p = await gridPoints(page);
+            await mouse.move(p.icons[1].x, p.icons[1].y);
+            await mouse.down();
+            await mouse.move(p.icons[1].x + 14, p.icons[1].y + 8);       await shoot('lifted');
+            await mouse.move(p.icons[0].x, p.icons[0].y, { steps: 8 });  await shoot('arrives on target');
+            await wait(300);                                             await shoot('dwell 300ms');
+            await wait(400);                                             await shoot('armed (700ms)');
+            await mouse.up();                                            await shoot('released');
+            await wait(700);                                             await shoot('folder made');
+        },
+    },
+    {
+        name: 'page-swipe',
+        setup: async () => {},
+        steps: async (page, { mouse, shoot, wait }) => {
+            const w = VIEWPORT.width, y = Math.round(VIEWPORT.height * 0.45);
+            await shoot('page 1');
+            await mouse.move(w - 40, y);
+            await mouse.down();                                          await shoot('touch down');
+            await mouse.move(w * 0.6, y, { steps: 4 });                  await shoot('dragging');
+            await mouse.move(60, y, { steps: 6 });                       await shoot('past threshold');
+            await mouse.up();
+            await wait(200);                                             await shoot('releasing');
+            await wait(600);                                             await shoot('page 2');
+        },
+    },
+];
+
+async function enterEditMode(page) {
+    await page.evaluate(() => {
+        window.OS_STATE.isEditMode = true;
+        document.body.classList.add('edit-mode');
+        window.Renderer.render();
+    });
+    await page.waitForTimeout(500);
+}
+
+function gridPoints(page) { return page.evaluate(() => {
+    const mid = (el) => { const r = el.getBoundingClientRect();
+        return { id: el.dataset.id, x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+    const icons = [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')].slice(0, 2).map(mid);
+    const slots = [...document.querySelectorAll('#workspace-pager .empty-slot')];
+    return { icons, empty: mid(slots[4] || slots[0]) };
+}); }
+
+async function gesture(page, g, dir) {
+    await g.setup(page);
+
+    // The pointer is wrapped so its position is known at capture time: the finger-to-icon offset
+    // is the whole point, and a screenshot alone cannot tell you where the finger was.
+    let px = 0, py = 0, down = false;
+    const mouse = {
+        move: async (x, y, opts) => { await page.mouse.move(x, y, opts); px = x; py = y; },
+        down: async () => { await page.mouse.down(); down = true; },
+        up: async () => { await page.mouse.up(); down = false; },
+    };
+
+    const samples = [];
+    const shots = [];
+    let n = 0;
+    const t0 = Date.now();
+
+    const shoot = async (label) => {
+        // Real elapsed time, not the sum of the waits. Screenshots cost tens of milliseconds
+        // each, so a step labelled "dwell 300ms" has actually been held considerably longer by
+        // the time it is captured — and captioning it with the intended figure would misreport
+        // when the 550ms arm threshold was crossed.
+        const at = Date.now() - t0;
+        const file = path.join(dir, `${g.name}-${String(n).padStart(2, '0')}.png`);
+        await page.screenshot({ path: file });
+        shots.push({ file: path.basename(file), t: `${label} · ${at}ms` });
+        const box = await page.evaluate(() => {
+            const de = window.DragEngine;
+            if (!de || !de.isEngaged || !de.draggedEl) return null;
+            const r = de.draggedEl.getBoundingClientRect();
+            return { left: r.left, top: r.top, w: r.width, h: r.height };
+        });
+        samples.push({ label, px, py, down, box });
+        n++;
+    };
+
+    await g.steps(page, { mouse, shoot, wait: (ms) => page.waitForTimeout(ms) });
+    return { shots, samples };
+}
+
+function analyseGesture(g, samples) {
+    const findings = [], info = [];
+    const held = samples.filter(s => s.box);
+    if (!held.length) { info.push('no engaged drag in this gesture'); return { findings, info }; }
+
+    // The engine captures a finger-to-corner offset at pickup and holds it for the whole drag.
+    // If it drifts, the icon slides out from under the touch — the commonest way a drag feels
+    // wrong, and completely invisible to an end-state assertion.
+    //
+    // Only while the pointer is DOWN. After release the icon is supposed to leave the finger and
+    // fly to its slot, and counting that as drift reported an 18.9px failure on a drag whose
+    // tracking was in fact pixel-exact for its whole length.
+    const tracking = held.filter(s => s.down);
+    if (!tracking.length) { info.push('no captures while holding'); return { findings, info }; }
+    const offs = tracking.map(s => ({ label: s.label,
+                                      dx: s.px - s.box.left, dy: s.py - s.box.top }));
+    const dxs = offs.map(o => o.dx), dys = offs.map(o => o.dy);
+    const drift = Math.max(Math.max(...dxs) - Math.min(...dxs), Math.max(...dys) - Math.min(...dys));
+    info.push(`held for ${held.length} captures (${tracking.length} while down), offset drifts ${drift.toFixed(1)}px`);
+    if (drift > 8) {
+        findings.push(`the icon slides out from under the finger — offset drifts ${drift.toFixed(1)}px `
+                    + `(${offs.map(o => `${o.label}:${o.dx.toFixed(0)},${o.dy.toFixed(0)}`).join(' ')})`);
+    }
+
+    // And it must actually be somewhere you can see while you are holding it.
+    held.forEach(s => {
+        if (s.box.left + s.box.w < 0 || s.box.left > VIEWPORT.width ||
+            s.box.top + s.box.h < 0 || s.box.top > VIEWPORT.height) {
+            findings.push(`dragged icon is off-screen at "${s.label}"`);
+        }
+    });
+    return { findings, info };
+}
+
+/* --------------------------------------------------- pass 4: geometry at rest */
 /* What the filmstrip cannot tell you: whether anything is a few pixels off, unreachable, or
    spilling out of the layer it belongs to. Run on each layer once it has settled. */
 const LAYERS = [
@@ -537,6 +686,27 @@ for (const scene of scenes) {
     report.push({ scene: scene.name, findings, info, errors, sheet, animationCount });
 }
 
+/* Gestures. Driven from Node because they are pointer sequences, not method calls. */
+const gest = [];
+for (const g of GESTURES.filter(x => !ONLY || x.name.includes(ONLY))) {
+    const dir = path.join(OUT, g.name);
+    ensure(dir);
+    process.stdout.write(`\n${g.name}\n`);
+
+    const page = await boot(browser);
+    const { shots, samples } = await gesture(page, g, dir);
+    const { findings, info } = analyseGesture(g, samples);
+    const errors = page._auditErrors.slice();
+    await page.close();
+
+    await contactSheet(browser, { name: g.name, ms: 'pointer-driven' }, shots, dir);
+    info.forEach(l => process.stdout.write(`   · ${l}\n`));
+    findings.forEach(f => process.stdout.write(`   ✗ ${f}\n`));
+    errors.forEach(e => process.stdout.write(`   ✗ page error: ${e}\n`));
+    if (!findings.length && !errors.length) process.stdout.write('   ✓ clean\n');
+    gest.push({ gesture: g.name, findings, info, errors });
+}
+
 /* Geometry at rest, swept over every skin and a range of screen sizes. Two sweeps rather than
    the full cross product: skins are audited at the common size, sizes at the default skin. The
    combinations that matter are covered without paying for 6x3x8 page loads. */
@@ -572,10 +742,13 @@ if (!ONLY) {
                                               size: { width: z.width, height: z.height } })));
 }
 
-fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ motion: report, geometry: geo }, null, 2));
+fs.writeFileSync(path.join(OUT, 'report.json'),
+                 JSON.stringify({ motion: report, gestures: gest, geometry: geo }, null, 2));
 const total = report.reduce((n, r) => n + r.findings.length + r.errors.length, 0)
+            + gest.reduce((n, g) => n + g.findings.length + g.errors.length, 0)
             + geo.reduce((n, g) => n + g.findings.length, 0);
-process.stdout.write(`\n${total} finding(s) across ${report.length} scenes and ${geo.length} layers → ${OUT}/\n`);
+process.stdout.write(`\n${total} finding(s) across ${report.length} scenes, ${gest.length} gestures `
+                   + `and ${geo.length} sweeps \u2192 ${OUT}/\n`);
 
 await browser.close();
 server.kill();
