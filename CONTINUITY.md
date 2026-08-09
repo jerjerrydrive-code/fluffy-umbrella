@@ -78,9 +78,23 @@ Four independent layers. They catch different things and none of them subsumes a
 | Layer | Command | Catches |
 |---|---|---|
 | Regression suite | `npm test` | Behaviour, end states, data integrity |
+| Camera | `npm run test:camera` | The real scan path, via a fake webcam fed a real code |
+| Offline | `npm run test:offline` | Service worker, app shell, working with the network gone |
 | Motion audit | `npm run audit:motion` | Everything *between* states; geometry; contrast |
-| CI | automatic on push | That the two above were actually run |
+| CI | automatic on push | That all of the above were actually run |
 | Screenshots | read the PNGs | What no assertion thought to check |
+
+`npm test` runs every spec, including camera and offline; the individual scripts are for when
+you want one of them on its own.
+
+### Offline is a promise, and it fails silently
+A service worker registers fine, "installs" fine, and you discover it cached nothing useful the
+first time you open the app on a train. `sw.js` used to swallow every `cache.add` failure, so a
+renamed vendor file would install a worker that could not serve the app offline and say nothing.
+It now refuses to install if a **critical** asset is missing, leaving the previous worker in
+place, and two tests read the repo rather than the browser: everything the shell lists must
+exist, and everything under `vendor/` and `icons/` must be in the shell. Adding a vendored file
+and forgetting `sw.js` is otherwise invisible until you are offline.
 
 ### The rule that matters most
 **A test that has never failed has proven nothing.** Before claiming a fix, verify the new test
