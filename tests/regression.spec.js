@@ -4442,6 +4442,27 @@ test.describe('The launcher arbitrates its own gestures', () => {
             'the drop opened a rename dialog').toBe(false);
     });
 
+    test('pulling down still opens search', async ({ page }) => {
+        // `touch-action: none` stops the browser acting on a touch; it does not stop touch
+        // events firing, which is what the pull-down gesture listens to. Worth asserting,
+        // because taking ownership of a surface is exactly how you break the other things
+        // living on it.
+        await boot(page);
+        await finger(page, 'touchStart', 195, 300);
+        for (let i = 1; i <= 12; i++) {
+            await finger(page, 'touchMove', 195, 300 + i * 12);
+            await page.waitForTimeout(16);
+        }
+        await finger(page, 'touchEnd', 195, 444);
+        await page.waitForTimeout(800);
+
+        expect(await page.evaluate(() =>
+            document.getElementById('search-overlay').classList.contains('opacity-100')),
+            'pulling down no longer opens search').toBe(true);
+        expect(await page.evaluate(() => document.activeElement && document.activeElement.id))
+            .toBe('search-input');
+    });
+
     test('the launcher surfaces never hand a gesture to the browser', async ({ page }) => {
         await boot(page);
         const ta = await page.evaluate(() => ({
