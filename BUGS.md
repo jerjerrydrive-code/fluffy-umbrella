@@ -110,6 +110,14 @@ missed it.** All untrusted text now reaches the DOM through `textContent`, and a
 ordinary titles containing `<` and `&` still display as typed, so escaping has not become
 mangling.
 
+| # | Defect | Status |
+|---|---|---|
+| 24 | **Formula injection in the CSV export.** Cells were quoted but not defused. Excel, Sheets and LibreOffice treat a cell beginning `=` `+` `-` `@` (or tab/CR) as a **formula regardless of quoting**, so a scanned code reading `=cmd|'/c calc'!A1` exported cleanly and executed when the file was opened — and export-then-open-in-Excel is the entire point of the button. Verified with five payloads including `IMPORTXML`, which exfiltrates silently with no prompt. | FIXED |
+
+Same shape as #23: attacker-controlled scanned text reaching a context that interprets it. Both
+export paths had their own escaper; there is now one `window.csvCell()`, so a fix to one cannot
+miss the other. A test checks ordinary URLs and WiFi strings export unchanged.
+
 ---
 
 ## Chased and found not to be a bug
