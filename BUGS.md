@@ -320,12 +320,28 @@ was missed on the first attempt and caught by a test written for it.
 |---|---|---|
 | 40 | **Opening a code still blocked before the layer appeared.** Defect #20 deferred the *canvas* to the next frame and left `populateEnlargeExtras` where it was — and that runs two whole-document lucide sweeps. Measured with 198 icons on the page: 10.3ms total, **9.9ms of it in the extras**, all of it spent before the layer was made visible, which is the exact thing the deferral exists to prevent. Under parallel load it reached 35ms and blew the two-frame budget. | FIXED |
 
-Same shape as #19, where the toast swept every icon in the document to draw one of its own. The
-badge, tags and stat rows now go with the canvas; the title and payload — everything read at a
-glance — are still set synchronously.
+Same shape as #19, where the toast swept every icon in the document to draw one of its own.
 
-Worth recording **how** it was found: a budget test that only failed under contention. The
-temptation is to widen the budget or blame the machine. The measurement said otherwise.
+**The first fix was wrong and the motion audit caught it.** Moving the extras into the opening
+`requestAnimationFrame` did not remove the 10ms, it relocated it into the first frame of the
+transition — so instead of delaying the animation it stalled it, and the audit started reporting
+a finding in **half** its runs where it had been clean all day.
+
+The right answer was to stop doing the expensive thing at all. `toastIcon` was generalised into
+`iconSvg`: one document sweep per distinct icon name, ever, and a string thereafter. The extras
+went back to being synchronous, because they now cost nothing.
+
+| # | Defect | Status |
+|---|---|---|
+| 41 | The generalised cache was **not warmed**, so the FIRST code opened still paid five sweeps — 35–42ms against a two-frame budget, while every later open was 0.4ms. The app already warms the two toast icons at init for exactly this reason; the viewer's five were missed. | FIXED |
+
+Measured end to end: **10.3ms → 0.4ms**, zero document sweeps, and the first open is no longer a
+special case. A cost that only lands once is still a cost, and it lands on the first thing the
+user does.
+
+Worth recording **how** all of this was found: a budget test that only failed under contention.
+The temptation is to widen the budget or blame the machine. Twice, the measurement said
+otherwise — and the second time, the thing it caught was my own fix.
 
 ---
 

@@ -1961,9 +1961,18 @@
         //
         // There are exactly two toast icons, so each is rendered once and its markup kept. Every
         // toast after the first costs a string concatenation.
-        const TOAST_ICON_CACHE = {};
-        function toastIcon(name, colorClass) {
-            if (!TOAST_ICON_CACHE[name]) {
+        // One icon's markup, rendered once and reused, WITHOUT sweeping the document.
+        //
+        // lucide.createIcons() walks every [data-lucide] on the page. With a real library that
+        // is around 200 icons, and it is a whole-document read-and-write however many icons you
+        // actually wanted. The toast needed one and paid for all of them (defect #19); the code
+        // viewer needed five and paid 9.9ms of the 10.3ms it cost to open (defect #40).
+        //
+        // The cache is filled by rendering the single icon inside a detached, zero-size holder.
+        // One sweep per distinct icon name, ever — after that it is a string.
+        const ICON_CACHE = {};
+        function iconSvg(name, className) {
+            if (ICON_CACHE[name] === undefined) {
                 const holder = document.createElement('div');
                 holder.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
                 holder.innerHTML = `<i data-lucide="${name}"></i>`;
@@ -1972,11 +1981,15 @@
                 const svg = holder.querySelector('svg');
                 // Falls back to no icon rather than to a raw <i>, which would render as nothing
                 // visible anyway and leave a stray element behind.
-                TOAST_ICON_CACHE[name] = svg ? svg.outerHTML : '';
+                ICON_CACHE[name] = svg ? svg.outerHTML : '';
                 holder.remove();
             }
-            if (!TOAST_ICON_CACHE[name]) return '';
-            return TOAST_ICON_CACHE[name].replace('<svg ', `<svg class="w-4 h-4 ${colorClass}" `);
+            if (!ICON_CACHE[name]) return '';
+            return ICON_CACHE[name].replace('<svg ', `<svg class="${className}" `);
+        }
+
+        function toastIcon(name, colorClass) {
+            return iconSvg(name, `w-4 h-4 ${colorClass}`);
         }
 
         function safeCreateIcons() {
@@ -2960,6 +2973,11 @@
                 this.activeItem = itemData;
                 this.enlargeTitle.innerText = itemData.title;
                 this.enlargeData.innerText = itemData.data;
+                // Synchronous again, now that it costs almost nothing. Deferring it into the
+                // first animation frame merely moved the cost to where it stalled the opening
+                // transition instead of delaying it — the motion audit caught that in half its
+                // runs. The right answer was to stop doing the expensive thing at all.
+                this.populateEnlargeExtras(itemData);
 
                 // Show first, draw on the next frame. Encoding at scale 5 costs ~38ms, which is
                 // more than two frames — done inline it was spent BEFORE the layer became
@@ -2974,19 +2992,6 @@
                 requestAnimationFrame(() => {
                     // The viewer may already have been closed or moved on to another code.
                     if (this.activeItem !== drawing) return;
-                    // The badge, tags and stat rows went with it.
-                    //
-                    // Deferring the canvas alone was not enough: populateEnlargeExtras runs two
-                    // whole-document lucide sweeps, and with 198 icons on the page that measured
-                    // 9.9ms of the 10.3ms this call cost — all of it spent BEFORE the layer was
-                    // made visible, which is the exact thing the deferral exists to prevent. On
-                    // a loaded machine it reached 35ms and blew the two-frame budget. Same shape
-                    // as the toast sweeping every icon in the document to draw one of its own.
-                    //
-                    // Everything read at a glance — title and payload — is still set
-                    // synchronously above. What lands a frame later is detail nobody can see
-                    // arriving.
-                    this.populateEnlargeExtras(drawing);
                     try { window.renderCode('fullscreen-canvas', drawing, { scale: 5, padding: 3 }); }
                     catch (e) { XanLogger.error('Fullscreen canvas error', e); }
                 });
@@ -3004,7 +3009,7 @@
                     const chip = document.createElement('button');
                     chip.className = 'tag-chip';
                     chip.dataset.tag = tag;
-                    chip.innerHTML = `<span></span><i data-lucide="x" class="w-3 h-3 opacity-50"></i>`;
+                    chip.innerHTML = `<span></span>${iconSvg('x', 'w-3 h-3 opacity-50')}`;
                     chip.querySelector('span').textContent = tag;
                     chip.addEventListener('click', () => {
                         window.removeTag(itemData.id, tag);
@@ -3017,7 +3022,7 @@
                 const add = document.createElement('button');
                 add.id = 'btn-add-tag';
                 add.className = 'tag-chip tag-chip-add tap-extend';
-                add.innerHTML = `<i data-lucide="plus" class="w-3 h-3"></i><span>Tag</span>`;
+                add.innerHTML = `${iconSvg('plus', 'w-3 h-3')}<span>Tag</span>`;
                 add.addEventListener('click', () => {
                     this.promptFor({
                         heading: 'Add a tag',
@@ -3032,7 +3037,6 @@
                     });
                 });
                 row.appendChild(add);
-                safeCreateIcons();
             }
 
             populateEnlargeExtras(itemData) {
@@ -3050,13 +3054,14 @@
                         { icon: 'ruler', label: 'Data Length', value: `${itemData.data.length} chars` },
                         { icon: 'clock', label: 'Created', value: getItemCreatedLabel(itemData) }
                     ];
+                    // Cached SVG rather than <i data-lucide> plus a document sweep. Three icons
+                    // used to cost a walk of every icon on the page — see iconSvg.
                     stats.innerHTML = rows.map(r => `
                         <div class="stat-row">
-                            <div class="stat-row-label"><i data-lucide="${r.icon}" class="w-4 h-4"></i> ${r.label}</div>
+                            <div class="stat-row-label">${iconSvg(r.icon, 'w-4 h-4')} ${r.label}</div>
                             <div class="stat-row-value">${r.value}</div>
                         </div>
                     `).join('');
-                    safeCreateIcons();
                 }
             }
 
@@ -6509,10 +6514,18 @@
         window.LibraryManager = new OSLibraryManager();
         window.FolderManager = new OSFolderManager();
         window.SkinManager = new OSSkinManager();
-        // Warm the two toast icons now rather than inside the first toast. The sweep costs ~40ms
-        // once the page is full of icons, and paying it inside showToast cost that toast its own
-        // first frame — the very thing the cache was added to stop.
-        toastIcon('check-circle-2', ''); toastIcon('alert-circle', '');
+        // Warm every cached icon now rather than inside the interaction that first needs one.
+        //
+        // A sweep costs ~40ms once the page is full of icons, and paying it inside showToast
+        // cost that toast its own first frame — the very thing the cache was added to stop. The
+        // viewer's five were missed when the cache was generalised, so the FIRST code opened
+        // still paid five sweeps: measured at 35-42ms, against a two-frame budget, while every
+        // subsequent open was 0.4ms. A cost that only lands once is still a cost, and it lands
+        // on the first thing the user does.
+        ['check-circle-2', 'alert-circle',            // toasts
+         'barcode', 'ruler', 'clock',                 // the viewer's stat rows
+         'x', 'plus'                                  // its tag chips
+        ].forEach(n => iconSvg(n, ''));
         window.ThemeManager = new OSThemeManager();
         window.Layout = new LayoutManager(window.Renderer);
         window.CloudSync = new OSCloudSyncManager();
