@@ -299,10 +299,21 @@
 
         .edit-only {
             opacity: 0; transform: scale(0.2); pointer-events: none;
-            transition: transform 0.4s var(--spring-snappy), opacity 0.3s ease;
+            /* visibility, not opacity alone: an opacity-0 button is still a TAB STOP. Every
+               icon carries one of these ("remove this code"), so outside edit mode tabbing
+               across the home screen walked through one invisible delete button per icon —
+               forty-three of them on a full screen — with nothing drawn to say where you were.
+               Same defect as the closed layers above, one level down.
+               The 0.4s delay is the length of the shrink-away, so the exit still animates. */
+            visibility: hidden;
+            transition: transform 0.4s var(--spring-snappy), opacity 0.3s ease,
+                        visibility 0s linear 0.4s;
             transform-origin: center;
         }
-        body.edit-mode .edit-only { opacity: 1; transform: scale(1); pointer-events: auto; }
+        body.edit-mode .edit-only {
+            opacity: 1; transform: scale(1); pointer-events: auto; visibility: visible;
+            transition: transform 0.4s var(--spring-snappy), opacity 0.3s ease, visibility 0s;
+        }
 
         @keyframes jiggle { 
             0% { transform: translate3d(0,0,0) rotate(-1.5deg); } 
@@ -321,6 +332,30 @@
         body.edit-mode .app-icon-wrapper:nth-child(3n) .jiggle-target { animation-duration: 0.28s; animation-delay: 0.05s; }
 
         .modal-spring { transition: transform 0.5s var(--spring-snappy), opacity 0.4s ease, backdrop-filter 0.4s ease; }
+
+        /* A closed layer must be closed all the way down.
+         *
+         * `pointer-events: none` is NOT a switch that disables a subtree — it is an inherited
+         * value, and any descendant setting `auto` opts itself back in. The scanner's four
+         * header buttons do exactly that, because their own parent header is `none` so taps
+         * reach the camera behind it. The consequence: while the scanner was CLOSED, those four
+         * buttons stayed hit-testable at z-index 300 — the highest layer in the app — as
+         * invisible 48px discs across the top of every single screen.
+         *
+         * Measured: the viewer's close button is a circle at (24,64) 48x48; the scanner's close
+         * button is a circle at (24,56) 48x48 sitting on top of it. Only the bottom crescent of
+         * the viewer's button was reachable, which is why closing a code "barely" worked rather
+         * than never working. Three more dead zones sat over the top-right of every layer, and
+         * one of them opens a file picker.
+         *
+         * Keyed on the class every layer already toggles (`pointer-events-none` <->
+         * `pointer-events-auto`, all nine of them), so a layer added later is covered without
+         * anyone remembering this. `!important` because the whole point is to beat a descendant
+         * that asked for `auto`. Hit-testing only — nothing here touches painting, so the
+         * fade-out still animates normally.
+         */
+        .modal-spring.pointer-events-none,
+        .modal-spring.pointer-events-none * { pointer-events: none !important; }
         .slide-up-spring { transition: transform 0.6s var(--spring-snappy), opacity 0.4s ease; }
         
         .apple-toggle-knob { transition: transform 0.4s var(--spring-snappy), background-color 0.3s ease, width 0.2s ease; }
@@ -5425,6 +5460,10 @@
             }
 
             attachStateListener(uid) {
+                // Each sign-in reconciles once. Without this reset, signing out and into a
+                // different account would treat that account's first snapshot as authoritative
+                // and wipe whatever was on the device.
+                this.reconciled = false;
                 const { doc, onSnapshot, db } = this.fb;
                 const ref = doc(db, 'xancode_users', uid, 'state', 'home');
                 this.unsubscribeState = onSnapshot(ref, (snap) => {
@@ -5436,10 +5475,53 @@
                 });
             }
 
+            // Union of what is here and what is in the cloud. Remote wins for anything both
+            // sides have; anything only this device has is kept and given a free slot, so two
+            // codes never land on the same square and silently hide one another.
+            mergeApps(local, remote) {
+                const remoteIds = new Set(remote.map(a => a && a.id).filter(Boolean));
+                const merged = remote.slice();
+                const highestOrder = {};
+                merged.forEach(a => {
+                    if (!a || a.type !== 'grid') return;
+                    const pg = a.page || 0;
+                    highestOrder[pg] = Math.max(highestOrder[pg] === undefined ? -1 : highestOrder[pg],
+                                                a.order === undefined ? -1 : a.order);
+                });
+                (local || []).forEach(a => {
+                    if (!a || !a.id || remoteIds.has(a.id)) return;
+                    if (a.type !== 'grid') { merged.push(a); return; }
+                    const pg = a.page || 0;
+                    highestOrder[pg] = (highestOrder[pg] === undefined ? -1 : highestOrder[pg]) + 1;
+                    merged.push(Object.assign({}, a, { order: highestOrder[pg] }));
+                });
+                return merged;
+            }
+
             applyRemoteState(data) {
                 if (!data || !Array.isArray(data.apps)) return;
                 this.applyingRemote = true;
-                window.OS_STATE.apps = data.apps;
+
+                // The FIRST snapshot after signing in is a reconciliation, not an instruction.
+                //
+                // It used to be `OS_STATE.apps = data.apps` unconditionally, which meant signing
+                // in on a phone you had been using as a guest replaced everything on it with
+                // whatever the account happened to hold. Measured: 50 local codes became 2, and
+                // an account whose document existed but was empty took all 10 of them to zero —
+                // then queueSave pushed that result back up and made it permanent. Silent, and
+                // on the most ordinary action there is.
+                //
+                // Restoring a backup already refuses to delete anything ("Restoring only ever
+                // adds"). Signing in is the same promise and now keeps it. Later snapshots in
+                // the session ARE authoritative, so deleting a code on another device still
+                // propagates here — otherwise nothing could ever be deleted.
+                const firstReconcile = !this.reconciled;
+                this.reconciled = true;
+                window.OS_STATE.apps = firstReconcile
+                    ? this.mergeApps(window.OS_STATE.apps, data.apps)
+                    : data.apps;
+                this.mergedOnSignIn = firstReconcile &&
+                    window.OS_STATE.apps.length !== data.apps.length;
                 if (Array.isArray(data.pageNames)) window.OS_STATE.pageNames = data.pageNames;
                 if (data.gridSize) window.OS_STATE.gridSize = data.gridSize;
                 if (data.autoArrange !== undefined) window.OS_STATE.autoArrange = data.autoArrange;
@@ -5461,6 +5543,13 @@
                 window.Renderer.render();
                 if (window.Layout) window.Layout.calculateGrid();
                 this.applyingRemote = false;
+
+                // Anything this device had and the cloud did not has to go up, or the other
+                // device never learns about it and the next snapshot deletes it again.
+                if (this.mergedOnSignIn) {
+                    this.mergedOnSignIn = false;
+                    this.pushStateNow();
+                }
             }
 
             queueSave() {
@@ -6136,10 +6225,38 @@
                 this.layers.set(id, layer);
                 new MutationObserver(() => this._sync(layer))
                     .observe(el, { attributes: true, attributeFilter: ['class'] });
+                this._setInert(layer);
                 if (this._visible(layer)) this._show(layer);
             },
 
+            // A closed layer has to be closed to the KEYBOARD too, not just to the finger.
+            //
+            // The CSS rule on `.modal-spring.pointer-events-none` stops taps reaching a hidden
+            // layer, but pointer-events has nothing to say about focus or the accessibility
+            // tree. Measured from the home screen: five presses of Tab walked into the closed
+            // search overlay, then the closed Library, then the closed Settings sheet — which
+            // alone holds 357 focusable controls, because every theme swatch is a button. A
+            // keyboard, switch-control or screen-reader user fell into roughly 390 invisible
+            // controls, with nothing to say where they were or how to get out. That is the same
+            // "I get stuck and can't go back" report this whole object exists to answer,
+            // arriving through a different input device.
+            //
+            // `inert` is the one thing that covers all three at once: no hit-testing, no tab
+            // stop, and removed from the accessibility tree. It belongs here rather than at the
+            // nine open and close call sites for the same reason the history mirroring does —
+            // a layer added later is handled without anyone remembering the rule.
+            //
+            // Edit mode is registered against <body> and is skipped: making the document inert
+            // would disable the whole app. Every focus() in this file is inside a setTimeout,
+            // so the observer's microtask always clears inert before focus is attempted.
+            _setInert(layer) {
+                if (layer.el === document.body) return;
+                if (this._visible(layer)) layer.el.removeAttribute('inert');
+                else layer.el.setAttribute('inert', '');
+            },
+
             _sync(layer) {
+                this._setInert(layer);
                 if (this._visible(layer)) this._show(layer); else this._hide(layer);
             },
 

@@ -3691,3 +3691,332 @@ test.describe('Exported CSV cannot run in a spreadsheet', () => {
         expect(usesHelper, 'an export path still has its own escaper').toBeGreaterThanOrEqual(2);
     });
 });
+
+test.describe('Signing in never destroys what is already on the device', () => {
+    // The worst defect found. applyRemoteState did `OS_STATE.apps = data.apps` unconditionally,
+    // so signing in on a phone used as a guest replaced everything on it with whatever the
+    // account happened to hold — then queueSave pushed that result up and made it permanent.
+    // Silent, irreversible, and on the most ordinary action there is.
+    //
+    // Restoring a backup already refuses to delete ("Restoring only ever adds"). Signing in is
+    // the same promise.
+    const boot = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForFunction(() => window.CloudSync && window.OS_STATE, null, { timeout: 20000 });
+        await page.waitForTimeout(900);
+    };
+    const seed = (page, n, prefix) => page.evaluate(([n, prefix]) => {
+        window.CloudSync.reconciled = false;
+        window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type === 'dock');
+        for (let i = 0; i < n; i++) {
+            window.OS_STATE.apps.push({ id: prefix + i, title: prefix + i, type: 'grid',
+                page: Math.floor(i / 20), order: i % 20, bcid: 'qrcode', data: 'd' + i });
+        }
+    }, [n, prefix]);
+    const grid = (page) => page.evaluate(() =>
+        window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.id));
+
+    test('local codes survive a sign-in that finds a smaller account', async ({ page }) => {
+        await boot(page);
+        await seed(page, 50, 'mine_');
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'other_1', title: 'T1', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'a' },
+            { id: 'other_2', title: 'T2', type: 'grid', page: 0, order: 1, bcid: 'qrcode', data: 'b' },
+        ] }));
+
+        const ids = await grid(page);
+        expect(ids.filter(i => i.startsWith('mine_')).length,
+               'signing in destroyed codes that were on the device').toBe(50);
+        expect(ids.filter(i => i.startsWith('other_')).length,
+               'the account\'s own codes did not arrive').toBe(2);
+    });
+
+    test('an empty cloud document does not wipe the device', async ({ page }) => {
+        // Array.isArray([]) is true, so an empty document passed the old guard and erased
+        // everything.
+        await boot(page);
+        await seed(page, 10, 'keep_');
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [] }));
+        expect((await grid(page)).length, 'an empty cloud document erased the device').toBe(10);
+    });
+
+    test('merged codes each get their own slot', async ({ page }) => {
+        // Keeping them is not enough — two codes on the same page and order hide one another.
+        await boot(page);
+        await seed(page, 12, 'mine_');
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'r1', title: 'r1', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'a' },
+            { id: 'r2', title: 'r2', type: 'grid', page: 0, order: 1, bcid: 'qrcode', data: 'b' },
+        ] }));
+        const slots = await page.evaluate(() => window.OS_STATE.apps
+            .filter(a => a.type === 'grid').map(a => `${a.page || 0}:${a.order}`));
+        expect(slots.length - new Set(slots).size, 'two codes were placed on the same slot').toBe(0);
+    });
+
+    test('a later snapshot is still authoritative, so deletions propagate', async ({ page }) => {
+        // The other half of the contract. If every snapshot merged, nothing could ever be
+        // deleted from another device.
+        await boot(page);
+        await seed(page, 10, 'keep_');
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'keep_0', title: 'k0', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'k' },
+        ] }));
+        const afterFirst = (await grid(page)).length;
+        expect(afterFirst).toBe(10);   // first snapshot merged
+
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'keep_0', title: 'k0', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'k' },
+        ] }));
+        expect((await grid(page)).length,
+               'a deletion made on another device did not reach this one').toBe(1);
+    });
+
+    test('switching accounts reconciles again rather than wiping', async ({ page }) => {
+        await boot(page);
+        await seed(page, 5, 'acctB_');
+        // attachStateListener resets the flag on each sign-in; seed() mirrors that.
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'z', title: 'z', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'z' },
+        ] }));
+        const ids = await grid(page);
+        expect(ids.filter(i => i.startsWith('acctB_')).length,
+               'switching accounts wiped the device').toBe(5);
+        expect(ids).toContain('z');
+    });
+
+    test('the merge is pushed back up, so the other device gains what only this one had', async ({ page }) => {
+        // Without this the union is local-only, and the next snapshot from the other device
+        // deletes everything again — the bug would simply take one extra round trip.
+        await boot(page);
+        await page.evaluate(() => {
+            window.CloudSync.pushed = 0;
+            window.CloudSync.pushStateNow = function () { this.pushed++; };
+        });
+        await seed(page, 5, 'mine_');
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'r1', title: 'r1', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'a' },
+        ] }));
+        await page.waitForTimeout(300);
+        expect(await page.evaluate(() => window.CloudSync.pushed),
+               'the merged result was never sent to the cloud').toBeGreaterThan(0);
+    });
+});
+
+test.describe('A closed layer does not eat taps', () => {
+    // Reported from a phone: "it doesn't seem to register touches for buttons very well. I can
+    // barely back out of a barcode after the card opens up."
+    //
+    // Cause: `pointer-events: none` is an inherited value, not a switch that disables a subtree.
+    // The scanner's four header buttons each set `pointer-events: auto` (they must — their own
+    // parent is `none` so taps reach the camera behind it), so while the scanner was CLOSED they
+    // stayed hit-testable at z-index 300, the topmost layer in the app: four invisible 48px
+    // discs across the top of every screen. The viewer's close button sits directly under one of
+    // them, offset by 8px, so only its bottom crescent worked. Hence "barely".
+    //
+    // The sweep is the real guard. The specific-button test says what it felt like; the sweep is
+    // what stops a layer added next year from doing it again.
+
+    const finger = async (page, type, x, y) => {
+        const cdp = page.__cdp || (page.__cdp = await page.context().newCDPSession(page));
+        await cdp.send('Input.dispatchTouchEvent', {
+            type,
+            touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 8, radiusY: 8, force: 1 }],
+        });
+    };
+
+    for (const vp of [{ name: 'phone', width: 390, height: 844 },
+                      { name: 'small', width: 360, height: 640 },
+                      { name: 'tablet', width: 820, height: 1180 }]) {
+        test(`nothing inside a hidden layer is hit-testable @ ${vp.name}`, async ({ page }) => {
+            await page.setViewportSize({ width: vp.width, height: vp.height });
+            await page.goto('/index.html');
+            await page.waitForTimeout(1000);
+
+            // Every point on the screen, 8px apart. For each, walk up from whatever would
+            // receive the tap and fail if it is inside something the user cannot see.
+            const phantoms = await page.evaluate(() => {
+                const hiddenAncestor = (el) => {
+                    for (let n = el; n && n !== document.body; n = n.parentElement) {
+                        const cs = getComputedStyle(n);
+                        if (cs.opacity === '0' || cs.visibility === 'hidden' || cs.display === 'none') return n;
+                    }
+                    return null;
+                };
+                const found = new Map();
+                for (let y = 4; y < innerHeight; y += 8) {
+                    for (let x = 4; x < innerWidth; x += 8) {
+                        const el = document.elementFromPoint(x, y);
+                        if (!el) continue;
+                        const h = hiddenAncestor(el);
+                        if (!h) continue;
+                        const key = (h.id || h.className.toString().slice(0, 30)) + ' >> ' +
+                                    (el.id || el.tagName);
+                        const rec = found.get(key) || { key, points: 0, at: [x, y] };
+                        rec.points++;
+                        found.set(key, rec);
+                    }
+                }
+                return [...found.values()];
+            });
+            expect(phantoms, `invisible elements are catching taps:\n${JSON.stringify(phantoms, null, 2)}`)
+                .toEqual([]);
+        });
+    }
+
+    test('a finger on the viewer close button actually closes it', async ({ page }) => {
+        // Mouse-driven clicks passed against the broken build, because Playwright's click
+        // scrolls-and-hits the element it was given. A dispatched touch goes through real
+        // hit-testing at a coordinate, which is what a thumb does.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        await page.evaluate(() => window.InteractionManager.openEnlarge(
+            window.OS_STATE.apps.find(a => a.type === 'grid' && a.data)));
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() =>
+            document.getElementById('item-fullscreen-layer').classList.contains('opacity-100'))).toBe(true);
+
+        const b = await page.locator('#close-item-btn').boundingBox();
+        const x = b.x + b.width / 2, y = b.y + b.height / 2;
+        await finger(page, 'touchStart', x, y);
+        await page.waitForTimeout(50);
+        await finger(page, 'touchEnd', x, y);
+        await page.waitForTimeout(600);
+
+        expect(await page.evaluate(() =>
+            document.getElementById('item-fullscreen-layer').classList.contains('pointer-events-none')),
+            'tapping the middle of the close button did not close the viewer').toBe(true);
+    });
+
+    test('the scanner buttons still work once the scanner is open', async ({ page }) => {
+        // The fix is a blanket `pointer-events: none !important` on closed layers. If it leaked
+        // into the open state the scanner would be unusable, which is a worse bug than the one
+        // being fixed.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        const reachable = await page.evaluate(async () => {
+            const modal = document.getElementById('scanner-modal');
+            modal.classList.remove('opacity-0', 'pointer-events-none');
+            modal.classList.add('opacity-100', 'pointer-events-auto');
+            // XanNav clears `inert` from a MutationObserver callback, which is a microtask.
+            // Yield to it, exactly as the real app does — the camera takes hundreds of
+            // milliseconds to come up before anyone can touch these.
+            await new Promise(r => setTimeout(r, 0));
+            if (modal.hasAttribute('inert')) return [{ id: 'scanner-modal', ok: false, why: 'still inert' }];
+            return ['btn-close-scanner', 'btn-scan-batch', 'btn-scan-image', 'btn-toggle-flash']
+                .map(id => {
+                    const el = document.getElementById(id);
+                    const r = el.getBoundingClientRect();
+                    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                    return { id, ok: el.contains(hit) || hit === el };
+                });
+        });
+        expect(reachable.filter(r => !r.ok),
+               'the closed-layer rule leaked into the open scanner').toEqual([]);
+    });
+});
+
+test.describe('A closed layer does not eat the keyboard either', () => {
+    // The tap fix (pointer-events) says nothing about focus or the accessibility tree, so the
+    // same "I get stuck and can't get back" report existed for anyone using a keyboard, switch
+    // control or a screen reader. Measured on the home screen: five presses of Tab walked into
+    // the closed search overlay, then the closed Library, then the closed Settings sheet —
+    // which alone holds 357 focusable controls, because every theme swatch is a button.
+    //
+    // Two separate causes, fixed separately: layers now carry `inert` while closed (XanNav),
+    // and the per-icon delete buttons are `visibility: hidden` rather than merely `opacity: 0`.
+
+    test('Tab from the home screen never lands inside something invisible', async ({ page }) => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        const strays = [];
+        for (let i = 0; i < 30; i++) {
+            await page.keyboard.press('Tab');
+            const where = await page.evaluate(() => {
+                const a = document.activeElement;
+                if (!a || a === document.body) return null;
+                for (let n = a; n && n !== document.documentElement; n = n.parentElement) {
+                    const cs = getComputedStyle(n);
+                    if (parseFloat(cs.opacity) === 0 || cs.visibility === 'hidden')
+                        return (a.id || a.tagName + '.' + a.className.toString().slice(0, 30)) +
+                               ' inside ' + (n.id || n.className.toString().slice(0, 30));
+                }
+                return null;
+            });
+            if (where) strays.push(where);
+        }
+        expect(strays, `Tab reached controls the user cannot see:\n${strays.join('\n')}`).toEqual([]);
+    });
+
+    test('every closed layer is inert, and an open one is not', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        const closed = await page.evaluate(() =>
+            [...document.querySelectorAll('.modal-spring.pointer-events-none')]
+                .filter(l => l.id && !l.hasAttribute('inert')).map(l => l.id));
+        expect(closed, 'closed layers still reachable by keyboard and screen reader').toEqual([]);
+
+        // Opening one must clear it, or the app is unusable rather than merely leaky.
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(500);
+        expect(await page.evaluate(() =>
+            document.getElementById('library-overlay').hasAttribute('inert')),
+            'the Library stayed inert after opening').toBe(false);
+        expect(await page.evaluate(() => {
+            const el = document.getElementById('btn-close-library');
+            const r = el.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return el.contains(hit) || hit === el;
+        }), 'the open Library close button is not reachable').toBe(true);
+
+        // And closing it puts inert back.
+        await page.evaluate(() => window.LibraryManager.close());
+        await page.waitForTimeout(500);
+        expect(await page.evaluate(() =>
+            document.getElementById('library-overlay').hasAttribute('inert'))).toBe(true);
+    });
+
+    test('edit mode is never made inert, since it lives on <body>', async ({ page }) => {
+        // XanNav registers edit mode against document.body. Setting inert there would disable
+        // the entire application, which is why _setInert skips it.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        expect(await page.evaluate(() => document.body.hasAttribute('inert'))).toBe(false);
+
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(600);
+        expect(await page.evaluate(() => document.body.hasAttribute('inert'))).toBe(false);
+
+        // The delete buttons must become real controls in edit mode, not stay hidden.
+        expect(await page.evaluate(() => {
+            const b = document.querySelector('.edit-only');
+            const cs = getComputedStyle(b);
+            const r = b.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return cs.visibility === 'visible' && (b.contains(hit) || hit === b);
+        }), 'edit mode controls did not come back').toBe(true);
+    });
+
+    test('opening a layer still focuses its input', async ({ page }) => {
+        // inert is cleared by a MutationObserver microtask; every focus() in the app is inside
+        // a setTimeout, so the ordering holds. If that ever stops being true, the search field
+        // silently stops taking the keyboard, which is exactly the kind of failure that gets
+        // shipped.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await page.evaluate(() => window.GestureManager.openSearch());
+        await page.waitForTimeout(400);
+        expect(await page.evaluate(() => document.activeElement && document.activeElement.id))
+            .toBe('search-input');
+    });
+});

@@ -23,6 +23,54 @@ like a guard and was not.
 | 6 | "tap and hold for edit only works when tapping very certain spots" | The long press cancelled on **any** `touchmove`, with no tolerance. A finger always drifts over 600ms, so it depended on holding perfectly still. | FIXED — pointer events + 12px slop |
 | 7 | "switching to page 2 in edit changes the icon from page one then shows in 2" | On a full page every swipe starts on an icon. A drag engaged after 5px in any direction, so the swipe grabbed the icon — and nothing constrained it, so it was dragged clean off the screen. | FIXED — swipe/drag split, and held icons are clamped on screen |
 | 8 | `Sign-in error: Error (auth/unauthorized-domain)` | A raw Firebase code shown as a user-facing message. | FIXED (message) / OWNER (setting) |
+| 26 | "it doesn't seem to register touches for buttons very well. I can barely back out of a barcode after the card opens up" | Four invisible buttons from the **closed** scanner sat hit-testable at z-index 300 — the topmost layer in the app — as 48px discs across the top of *every* screen. See below. | FIXED |
+
+`pointer-events: none` is an inherited **value**, not a switch that disables a subtree: a
+descendant setting `auto` opts itself back in. The scanner's header buttons each do that, and
+they must — their own parent is `none` so taps reach the camera behind it. Nothing then turned
+them off when the scanner closed.
+
+The word in the report that identified it was **"barely"**. The viewer's close button is a circle
+at (24,64) 48×48; the scanner's close button is a circle at (24,56) 48×48 directly on top of it.
+Two circles offset by 8px leave a thin crescent at the bottom of the viewer's button that still
+worked — so closing a code succeeded roughly one attempt in several rather than never. A bug that
+never worked would have been found long ago; one that *usually* fails reads as "the phone is being
+slow".
+
+The other three discs sat over the top-right corner of every layer. One of them opens a file
+picker.
+
+Fixed at the layer, not at the four buttons: `.modal-spring.pointer-events-none *` is
+`pointer-events: none !important`, keyed on the class all nine layers already toggle, so a layer
+added later is covered without anyone remembering this. The guard is a sweep of every point on
+the screen at three viewport sizes, failing if anything the user cannot see would receive the tap
+— four of the five new tests fail against the previous build. A fifth checks the rule does not
+leak into the *open* scanner, which would be a worse bug than the one being fixed.
+
+Also measured while here, and **not** a bug: `.tap-extend::after` genuinely extends the hit area —
+a dispatched touch 5px outside a 29px-tall button's border box registers a click. That had been
+assumed rather than verified.
+
+| # | Defect | Status |
+|---|---|---|
+| 27 | **The same dead end, through the keyboard.** `pointer-events` says nothing about focus or the accessibility tree, so fixing #26 fixed only the finger. Measured from the home screen: five presses of Tab walked into the closed search overlay, then the closed Library, then the closed Settings sheet — which alone holds **357** focusable controls, because every theme swatch is a button. Roughly 390 invisible controls, with nothing drawn to say where you were or how to get out. | FIXED |
+| 28 | Every icon carries an invisible "remove this code" button. `.edit-only` was `opacity: 0` outside edit mode — invisible, unclickable, and **still a tab stop**, so tabbing across a full home screen passed through 43 delete buttons. | FIXED |
+
+This is bug #1 again — *"I get stuck in a lot of pages and cant go back"* — arriving through a
+different input device. `XanNav` exists because that report was about the finger; nothing had ever
+asked what the same layers do to a keyboard.
+
+Closed layers now carry `inert`, which is the only thing that covers hit-testing, tab order and
+the accessibility tree at once. It is set from `XanNav._sync`, the same MutationObserver that
+already mirrors these layers into history, so a layer added later is covered without anyone
+remembering the rule — and edit mode is skipped, because it is registered against `<body>` and
+making the document inert would disable the whole app. `.edit-only` is now `visibility: hidden`,
+delayed by the length of its own shrink-away so the exit still animates.
+
+Two of the four tests fail against the previous build. The other two are the ones that matter
+longer term: that opening a layer still clears `inert` and its input still takes focus, and that
+`<body>` is never made inert. A fix that silently stops the search field accepting the keyboard
+would be worse than the leak it replaced.
 
 ---
 
@@ -117,6 +165,27 @@ mangling.
 Same shape as #23: attacker-controlled scanned text reaching a context that interprets it. Both
 export paths had their own escaper; there is now one `window.csvCell()`, so a fix to one cannot
 miss the other. A test checks ordinary URLs and WiFi strings export unchanged.
+
+---
+
+## Data loss
+
+| # | Defect | Status |
+|---|---|---|
+| 25 | **Signing in destroyed everything on the device.** `applyRemoteState` did `OS_STATE.apps = data.apps` unconditionally, so the account's contents replaced the phone's. Measured: 50 local codes became 2. An account whose document existed but was empty took 10 local codes to **zero** — `Array.isArray([])` is true, so an empty document passed the guard. `queueSave` then pushed that result up and made it permanent. | FIXED |
+
+The worst defect found: silent, irreversible, and triggered by the most ordinary action there is.
+Restoring a backup already refused to delete anything ("Restoring only ever adds"); signing in is
+the same promise and now keeps it.
+
+The **first** snapshot after sign-in is a reconciliation — a union by id, remote winning on
+conflict, local-only codes kept and given free slots so two never share one square — and the
+result is pushed back up so the other device gains them too. Every **later** snapshot stays
+authoritative, so deleting a code on another device still propagates; otherwise nothing could
+ever be deleted. Switching accounts reconciles again rather than wiping.
+
+Six tests, five of which fail against the previous build. (The sixth — that the merge is pushed
+back up — passes either way, because the old code pushed unconditionally.)
 
 ---
 
