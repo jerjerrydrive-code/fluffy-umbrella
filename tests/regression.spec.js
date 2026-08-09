@@ -4020,3 +4020,171 @@ test.describe('A closed layer does not eat the keyboard either', () => {
             .toBe('search-input');
     });
 });
+
+test.describe('A save that did not happen is never reported as success', () => {
+    // saveState() swallowed the quota error and returned nothing, while TWO call sites were
+    // written as `try { saveState() } catch` — expecting a throw that could never arrive. Both
+    // failure paths were dead code, so both lied, and the unsaveable value stayed in OS_STATE
+    // and broke every later save too.
+
+    const photo = (w, h) => `(() => {
+        const c = document.createElement('canvas');
+        c.width = ${w}; c.height = ${h};
+        const g = c.getContext('2d');
+        const d = g.createImageData(${w}, ${h});
+        for (let i = 0; i < d.data.length; i += 4) {
+            d.data[i] = (i * 7) % 255; d.data[i+1] = (i * 13) % 255;
+            d.data[i+2] = (i * 29) % 255; d.data[i+3] = 255;
+        }
+        g.putImageData(d, 0, 0);
+        const url = c.toDataURL('image/jpeg', 1.0);
+        const bin = atob(url.split(',')[1]);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new File([bytes], 'photo.jpg', { type: 'image/jpeg' });
+    })()`;
+
+    test('a photo the size a phone camera takes can actually be set as a wallpaper', async ({ page }) => {
+        // localStorage holds ~5MB in total, shared with every code. Stored at full resolution
+        // the picker failed for essentially every real photo — it never worked on the device it
+        // was built for.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        const r = await page.evaluate(async (expr) => {
+            const toasts = [];
+            window.showToast = (m) => toasts.push(m);
+            const file = eval(expr);
+            window.SettingsManager.handleWallpaperUpload({ target: { files: [file], value: '' } });
+            await new Promise(r => setTimeout(r, 4000));
+            return {
+                originalMB: file.size / 1048576,
+                storedKB: window.OS_STATE.wallpaper ? window.OS_STATE.wallpaper.length / 1024 : 0,
+                onDisk: (localStorage.getItem('xancode_v2_state') || '').includes('"wallpaper":"data:'),
+                toasts,
+            };
+        }, photo(4032, 3024));
+
+        expect(r.originalMB, 'the probe did not build a camera-sized photo').toBeGreaterThan(5);
+        expect(r.onDisk, 'the wallpaper was never written to storage').toBe(true);
+        expect(r.storedKB, 'the stored wallpaper is too big to coexist with the codes').toBeLessThan(1500);
+        expect(r.toasts).toEqual(['Wallpaper updated!']);
+
+        // And it is still there next launch, which is the whole claim.
+        await page.reload();
+        await page.waitForTimeout(1000);
+        expect(await page.evaluate(() => !!window.OS_STATE.wallpaper),
+               'the wallpaper did not survive a reload').toBe(true);
+    });
+
+    test('a wallpaper that will not fit says so, and keeps the one you had', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        const r = await page.evaluate(async (expr) => {
+            const toasts = [];
+            window.showToast = (m) => toasts.push(m);
+            const PREV = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+            window.OS_STATE.wallpaper = PREV;
+
+            // Eat the quota with an unrelated key so nothing else can be written.
+            const filler = 'x'.repeat(1024 * 1024);
+            try { for (let i = 0; i < 10; i++) localStorage.setItem('filler' + i, filler); } catch (e) {}
+
+            window.SettingsManager.handleWallpaperUpload({ target: { files: [eval(expr)], value: '' } });
+            await new Promise(r => setTimeout(r, 4000));
+            return { toasts, keptPrevious: window.OS_STATE.wallpaper === PREV };
+        }, photo(3000, 3000));
+
+        expect(r.toasts, 'a wallpaper that was never saved reported success')
+            .not.toContain('Wallpaper updated!');
+        expect(r.toasts.length, 'the failure was silent').toBeGreaterThan(0);
+        expect(r.keptPrevious, 'a failed replacement threw away the wallpaper you had').toBe(true);
+    });
+
+    test('a wallpaper that would not fit does not stop everything else saving', async ({ page }) => {
+        // The real damage. The oversized value stayed in OS_STATE, so every later write hit the
+        // same quota. Measured on the old build: a code added afterwards was gone on reload.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        await page.evaluate(async (expr) => {
+            window.showToast = () => {};
+            const filler = 'x'.repeat(1024 * 1024);
+            try { for (let i = 0; i < 10; i++) localStorage.setItem('filler' + i, filler); } catch (e) {}
+            window.SettingsManager.handleWallpaperUpload({ target: { files: [eval(expr)], value: '' } });
+            await new Promise(r => setTimeout(r, 4000));
+            for (let i = 0; i < 10; i++) localStorage.removeItem('filler' + i);
+        }, photo(3000, 3000));
+
+        const kept = await page.evaluate(async () => {
+            window.OS_STATE.apps.push({ id: 'after_wp', title: 'T', type: 'grid', page: 0,
+                order: 51, bcid: 'qrcode', data: 'x' });
+            window.addTag('after_wp', 'work');
+            await new Promise(r => setTimeout(r, 200));
+            return (localStorage.getItem('xancode_v2_state') || '').includes('after_wp');
+        });
+        expect(kept, 'nothing could be saved after a failed wallpaper').toBe(true);
+
+        await page.reload();
+        await page.waitForTimeout(1000);
+        expect(await page.evaluate(() => window.OS_STATE.apps.some(a => a.id === 'after_wp')),
+               'the code added after a failed wallpaper was lost').toBe(true);
+    });
+
+    test('a restore that saved nothing does not report success', async ({ page }) => {
+        // Worse than the wallpaper case: "Restore complete", and the entire backup gone on the
+        // next launch.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        const res = await page.evaluate(() => {
+            window.showToast = () => {};
+            // Fill down to the last few bytes: big chunks first, then progressively smaller,
+            // so no room is left even for a payload of a few hundred bytes. A partial fill
+            // leaves space for a small state and proves nothing.
+            const keys = [];
+            for (const size of [1024 * 1024, 64 * 1024, 4 * 1024, 256]) {
+                const chunk = 'x'.repeat(size);
+                for (let i = 0; i < 200; i++) {
+                    const k = 'filler_' + size + '_' + i;
+                    try { localStorage.setItem(k, chunk); keys.push(k); } catch (e) { break; }
+                }
+            }
+            // Restore assigns fresh ids by design ("Restoring only ever adds"), so look for the
+            // payload, which is preserved, not the id, which is not.
+            const out = window.applyBackup(JSON.stringify({
+                format: 'xancode-os-backup', version: 1,
+                state: { apps: [{ id: 'restored_1', title: 'RestoreMarker', type: 'grid',
+                                  page: 0, order: 0, bcid: 'qrcode',
+                                  data: 'RESTORE_MARKER_PAYLOAD' }] },
+            }));
+            const written = (localStorage.getItem('xancode_v2_state') || '')
+                .includes('RESTORE_MARKER_PAYLOAD');
+            keys.forEach(k => localStorage.removeItem(k));
+            return { out, written };
+        });
+
+        // Either it saved, or it said it could not. Claiming success without writing is the bug.
+        if (!res.written) {
+            expect(res.out.ok, 'a restore that wrote nothing reported ok').toBe(false);
+            expect(res.out.error, 'a failed restore gave no reason').toBeTruthy();
+        }
+    });
+
+    test('a file that is not an image is refused rather than stored', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        const r = await page.evaluate(async () => {
+            const toasts = [];
+            window.showToast = (m) => toasts.push(m);
+            const before = window.OS_STATE.wallpaper;
+            window.SettingsManager.handleWallpaperUpload({ target: {
+                files: [new File(['not an image'], 'x.txt', { type: 'text/plain' })], value: '' } });
+            await new Promise(r => setTimeout(r, 800));
+            return { toasts, unchanged: window.OS_STATE.wallpaper === before };
+        });
+        expect(r.unchanged).toBe(true);
+        expect(r.toasts).not.toContain('Wallpaper updated!');
+    });
+});

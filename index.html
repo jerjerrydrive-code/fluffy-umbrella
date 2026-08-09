@@ -1800,11 +1800,38 @@
             }
         } catch(e) { window.OS_STATE = DEFAULT_STATE; }
 
-        function saveState() {
+        // Returns whether the write actually landed.
+        //
+        // It used to swallow the quota error and return nothing, and TWO call sites were
+        // written as `try { saveState() } catch` — expecting a throw that could never arrive.
+        // Both failure paths were dead code:
+        //
+        //   · Setting an oversized wallpaper toasted "Storage Limit Reached!" and then
+        //     "Wallpaper updated!" straight over the top of it, applied the image to the
+        //     screen and showed the Reset button. Every visible signal said it worked.
+        //   · Restoring a backup whose wallpaper pushed it past the quota returned
+        //     `{ ok: true, error: null }` — "Restore complete" — having saved nothing at all.
+        //     The whole restored backup was gone on reload.
+        //
+        // Worse than either: the unsaveable value stayed in OS_STATE, so every LATER save hit
+        // the same quota and failed too. Measured — after one oversized wallpaper, adding a
+        // code did not persist, and the reload came back with neither. From that moment until
+        // you restarted the app, nothing you did was kept, and it never said so.
+        //
+        // Same rule as window.copyText(): an operation the user asked for reports what it did.
+        // `quiet` is for the two callers that report the failure themselves, so the generic
+        // toast does not fight with a specific one.
+        function saveState(opts) {
+            let ok = true;
             try { localStorage.setItem('xancode_v2_state', JSON.stringify(window.OS_STATE)); }
-            catch(e) { console.warn("Local storage write failed."); window.showToast("Storage Limit Reached!"); }
+            catch (e) {
+                ok = false;
+                console.warn("Local storage write failed.");
+                if (!(opts && opts.quiet)) window.showToast("Storage Limit Reached!");
+            }
             // Cloud sync is a mirror layered on top of local save, never a dependency of it — see HARD RULE 1.
             if (window.CloudSync) window.CloudSync.queueSave();
+            return ok;
         }
 
         const XanLogger = {
@@ -3681,18 +3708,17 @@
                 .forEach(k => { if (incoming[k] !== undefined) st[k] = incoming[k]; });
             if (incoming.wallpaper) st.wallpaper = incoming.wallpaper;
 
-            try {
-                saveState();
-            } catch (e) {
-                // A wallpaper can push the payload past the localStorage quota. Dropping it is
-                // far better than losing the codes that were just restored.
-                st.wallpaper = null;
-                try { saveState(); } catch (e2) {
-                    return { ok: false, added, error: 'Not enough storage to save that backup.' };
-                }
-                return { ok: true, added, error: 'Restored, but the wallpaper was too large to keep.' };
+            // A wallpaper can push the payload past the localStorage quota. Dropping it is
+            // far better than losing the codes that were just restored. This used to be a
+            // try/catch around a saveState() that never threw, so a restore that saved nothing
+            // still reported success and was gone on the next launch.
+            if (saveState({ quiet: true })) return { ok: true, added, error: null };
+
+            st.wallpaper = null;
+            if (!saveState({ quiet: true })) {
+                return { ok: false, added, error: 'Not enough storage to save that backup.' };
             }
-            return { ok: true, added, error: null };
+            return { ok: true, added, error: 'Restored, but the wallpaper was too large to keep.' };
         };
 
         // Codes as CSV, for anyone who wants their data somewhere other than this app.
@@ -4968,27 +4994,78 @@
                 window.Layout.calculateGrid();
             }
 
+            // Redraw the picked image small enough to actually store.
+            //
+            // A photo from a phone camera is 3-8MB, and localStorage holds roughly 5MB in total
+            // — shared with every code the user owns. Stored at full resolution the picker
+            // failed for essentially every real photo, which is to say it never worked on the
+            // device it was built for.
+            //
+            // 1600px on the longest edge is far more than is visible behind blurred icons, and
+            // JPEG rather than PNG because a wallpaper has no transparency worth keeping. An
+            // 8MB photo comes out a few hundred KB. The quality ladder is a backstop for images
+            // that are still large after scaling (heavy noise, very wide panoramas).
+            fitWallpaper(img) {
+                const LONGEST = 1600;
+                const BUDGET = 1.5 * 1024 * 1024;
+                const scale = Math.min(1, LONGEST / Math.max(img.width, img.height));
+                const w = Math.max(1, Math.round(img.width * scale));
+                const h = Math.max(1, Math.round(img.height * scale));
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                let out = canvas.toDataURL('image/jpeg', 0.82);
+                for (const q of [0.65, 0.5]) {
+                    if (out.length <= BUDGET) break;
+                    out = canvas.toDataURL('image/jpeg', q);
+                }
+                return out;
+            }
+
             handleWallpaperUpload(e) {
                 const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (evt) => {
-                    const dataUrl = evt.target.result;
-                    window.OS_STATE.wallpaper = dataUrl;
-                    try {
-                        saveState();
-                    } catch (err) {
-                        window.OS_STATE.wallpaper = null;
-                        window.showToast('Image too large to save.');
-                        return;
-                    }
-                    document.body.style.backgroundImage = `url('${dataUrl}')`;
-                    this.resetWallpaperBtn.classList.remove('hidden');
-                    window.showToast('Wallpaper updated!');
-                };
-                reader.onerror = () => window.showToast('Failed to read image.');
-                reader.readAsDataURL(file);
+                // Cleared first, so picking the same file twice in a row still fires a change.
                 e.target.value = '';
+                if (!file) return;
+                if (!/^image\//.test(file.type)) {
+                    window.showToast('That file is not an image.');
+                    return;
+                }
+
+                // Kept so a failed replacement restores what was there rather than clearing it.
+                const previous = window.OS_STATE.wallpaper;
+
+                const reader = new FileReader();
+                reader.onerror = () => window.showToast('Failed to read image.');
+                reader.onload = (evt) => {
+                    const img = new Image();
+                    img.onerror = () => window.showToast('That image could not be read.');
+                    img.onload = () => {
+                        let dataUrl;
+                        try { dataUrl = this.fitWallpaper(img); }
+                        catch (err) {
+                            XanLogger.error('Wallpaper resize failed', err);
+                            window.showToast('That image could not be used.');
+                            return;
+                        }
+
+                        window.OS_STATE.wallpaper = dataUrl;
+                        if (!saveState({ quiet: true })) {
+                            // Leaving it in OS_STATE would poison every later save, so the
+                            // rollback matters more than the wallpaper does.
+                            window.OS_STATE.wallpaper = previous || null;
+                            saveState({ quiet: true });
+                            window.showToast('Not enough room to save that image.');
+                            return;
+                        }
+
+                        document.body.style.backgroundImage = `url('${dataUrl}')`;
+                        this.resetWallpaperBtn.classList.remove('hidden');
+                        window.showToast('Wallpaper updated!');
+                    };
+                    img.src = evt.target.result;
+                };
+                reader.readAsDataURL(file);
             }
 
             resetWallpaper() {

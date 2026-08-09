@@ -189,6 +189,36 @@ back up — passes either way, because the old code pushed unconditionally.)
 
 ---
 
+| # | Defect | Status |
+|---|---|---|
+| 29 | **A save that never happened, reported as success.** `saveState()` swallowed the quota error and returned nothing, while **two** call sites were written as `try { saveState() } catch` — expecting a throw that could never arrive. Both failure paths were dead code. | FIXED |
+
+Setting an oversized wallpaper toasted "Storage Limit Reached!" and then **"Wallpaper updated!"**
+straight over the top of it, applied the image to the screen and revealed the Reset button —
+every visible signal said it worked. Restoring a backup whose wallpaper pushed it past the quota
+returned `{ ok: true, error: null }`, "Restore complete", having written nothing at all: the whole
+backup was gone on the next launch.
+
+Worse than either: the unsaveable value stayed in `OS_STATE`, so **every later save hit the same
+quota and failed too**. Measured — after one oversized wallpaper, a code added afterwards did not
+persist, and the reload came back with neither. From that moment until the app was restarted,
+nothing the user did was kept, and it never said so.
+
+`saveState()` now returns whether the write landed, the same rule as `window.copyText()`.
+
+| # | Defect | Status |
+|---|---|---|
+| 30 | **The wallpaper picker never worked on a phone.** A camera photo is 3–8MB; localStorage holds about 5MB in total, shared with every code. Stored at full resolution it failed for essentially every real photo — on the one device the feature exists for. | FIXED |
+
+Now redrawn to 1600px on the longest edge and encoded as JPEG before saving. Measured: a
+4032×3024 photo (33MB of raw noise, the worst case) stores as 673KB and survives a reload. If it
+still will not fit, the previous wallpaper is restored rather than cleared, and the message says
+so. Non-image files are refused instead of stored.
+
+All five tests fail against the previous build.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
