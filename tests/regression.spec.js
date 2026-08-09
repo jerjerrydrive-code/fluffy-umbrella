@@ -3038,3 +3038,255 @@ test.describe('Guest sign-in failing does not take cloud sync down with it', () 
         expect(referer).toMatch(/not cleared for/);
     });
 });
+
+test.describe('Edit mode: entering it, and turning pages once you are in it', () => {
+    // Both reported from a phone: "tap and hold for edit only works when tapping very certain
+    // spots", and "when switching to page 2 in edit it changes the icon from page one then shows
+    // in 2 and its all weird".
+    const boot = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        return page.evaluate(() => {
+            const r = document.querySelector('#workspace-pager .app-icon-wrapper').getBoundingClientRect();
+            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+        });
+    };
+    const inEdit = (page) => page.evaluate(() => window.OS_STATE.isEditMode);
+
+    // A real finger, dispatched through the browser's own input pipeline rather than synthesised
+    // in the page. Two harness lessons are baked in here, both learned by getting a green tick
+    // for nothing.
+    //
+    // A mouse will not do: the old handler cancelled on `touchmove`, which a Playwright mouse
+    // move never fires, so the mouse version of this test passed against the broken build.
+    //
+    // And hand-built TouchEvents will not do either: dispatching them from page script produces
+    // touch events and NO pointer events, so a handler listening on pointerdown never runs and
+    // the test fails against a build that is actually fine. CDP Input.dispatchTouchEvent goes in
+    // at the same level as a real screen, so Chromium raises the whole family — pointer, touch
+    // and compatibility mouse events — exactly as a phone does.
+    const finger = async (page, type, x, y) => {
+        const cdp = page.__cdp || (page.__cdp = await page.context().newCDPSession(page));
+        await cdp.send('Input.dispatchTouchEvent', {
+            type,
+            touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 8, radiusY: 8, force: 1 }],
+        });
+    };
+
+    test('a held finger that drifts a few pixels still opens edit mode', async ({ page }) => {
+        // The old handler cancelled on ANY touchmove, with no tolerance. A finger resting on
+        // glass for 600ms always drifts, and every one of those pixels killed the timer — so
+        // whether it worked came down to how still you happened to be, which feels exactly like
+        // "only certain spots".
+        const box = await boot(page);
+        // HONEST LIMIT: this guards the current pointer-based handler, and it does NOT
+        // demonstrate the original phone bug. Measured, not assumed — headless Chromium
+        // delivers `pointermove` for a small drift but suppresses `touchmove` entirely, so the
+        // old zero-tolerance `touchmove` cancel never fired here and the broken build passes
+        // this test too. A real finger does fire touchmove, which is why the bug existed on a
+        // phone and cannot be reproduced in this harness. The fix stands on its own terms:
+        // pointer events are delivered, and a slop radius is what every platform uses.
+        await finger(page, 'touchStart', box.x, box.y);
+        for (const [dx, dy] of [[3, 2], [-2, 4], [5, -3], [-4, 1], [2, 5], [-3, -2]]) {
+            await finger(page, 'touchMove', box.x + dx, box.y + dy);
+            await page.waitForTimeout(110);
+        }
+        await page.waitForTimeout(250);
+        expect(await inEdit(page), 'a drifting finger did not open edit mode').toBe(true);
+        await finger(page, 'touchEnd', box.x, box.y);
+    });
+
+    test('a finger that travels a long way does not open edit mode', async ({ page }) => {
+        const box = await boot(page);
+        await finger(page, 'touchStart', box.x, box.y);
+        await page.waitForTimeout(150);
+        await finger(page, 'touchMove', box.x + 60, box.y);
+        await page.waitForTimeout(700);
+        expect(await inEdit(page), 'a swipe opened edit mode').toBe(false);
+        await finger(page, 'touchEnd', box.x + 60, box.y);
+    });
+
+    test('the empty part of a page can start edit mode too', async ({ page }) => {
+        // It used to require landing on an icon, which is the wrong place to insist on when a
+        // page is nearly empty.
+        await boot(page);
+        await page.mouse.move(206, 620);
+        await page.mouse.down();
+        await page.waitForTimeout(800);
+        expect(await inEdit(page)).toBe(true);
+        await page.mouse.up();
+    });
+
+    test('a press that turns into a real drag does not open edit mode', async ({ page }) => {
+        const box = await boot(page);
+        await page.mouse.move(box.x, box.y);
+        await page.mouse.down();
+        await page.waitForTimeout(200);
+        await page.mouse.move(box.x + 40, box.y);
+        await page.waitForTimeout(700);
+        expect(await inEdit(page), 'moving far still opened edit mode').toBe(false);
+        await page.mouse.up();
+    });
+
+    test('a quick tap does not open edit mode', async ({ page }) => {
+        const box = await boot(page);
+        await page.mouse.move(box.x, box.y);
+        await page.mouse.down();
+        await page.waitForTimeout(120);
+        await page.mouse.up();
+        await page.waitForTimeout(700);
+        expect(await inEdit(page)).toBe(false);
+    });
+
+    test('swiping across a page in edit mode turns the page instead of grabbing an icon', async ({ page }) => {
+        // On a full page every swipe starts on an icon — there is nowhere else to put a thumb.
+        // Engaging a drag after 5px in any direction meant that swipe picked the icon up, and
+        // nothing constrained where it could go, so it was dragged off the side of the screen.
+        const box = await boot(page);
+        await page.evaluate(() => {
+            const grid = window.OS_STATE.apps.filter(a => a.type === 'grid');
+            grid[grid.length - 1].page = 1; grid[grid.length - 1].order = 0;
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(600);
+        const before = await page.evaluate(() => window.OS_STATE.apps
+            .filter(a => a.type === 'grid').map(a => `${a.id}:${a.page}:${a.order}`).sort());
+
+        await page.mouse.move(box.x, box.y);
+        await page.mouse.down();
+        for (let i = 1; i <= 8; i++) {
+            await page.mouse.move(box.x - i * 40, box.y);
+            await page.waitForTimeout(12);
+        }
+        const engaged = await page.evaluate(() => window.DragEngine.isEngaged);
+        await page.mouse.up();
+        await page.waitForTimeout(1000);
+
+        expect(engaged, 'a page swipe was treated as picking the icon up').toBe(false);
+        expect(await page.evaluate(() => window.OS_STATE.apps
+            .filter(a => a.type === 'grid').map(a => `${a.id}:${a.page}:${a.order}`).sort()),
+            'swiping to another page rearranged the icons').toEqual(before);
+    });
+
+    test('a deliberate hold still picks the icon up, and it never leaves the screen', async ({ page }) => {
+        // The other half of the contract: making swipes safe must not make dragging harder. And
+        // whatever you are holding has to stay visible — an icon dragged off the edge is how one
+        // disappears from a page and turns up somewhere you did not put it.
+        const box = await boot(page);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(500);
+
+        await page.mouse.move(box.x, box.y);
+        await page.mouse.down();
+        await page.waitForTimeout(260);
+        await page.mouse.move(box.x + 14, box.y + 8);
+        await page.mouse.move(box.x + 20, box.y + 14);
+        expect(await page.evaluate(() => window.DragEngine.isEngaged),
+               'a deliberate hold-then-drag no longer picks the icon up').toBe(true);
+
+        // Drag far past the left edge.
+        await page.mouse.move(-400, box.y, { steps: 6 });
+        const held = await page.evaluate(() => {
+            const el = window.DragEngine.draggedEl;
+            const r = el.getBoundingClientRect();
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, w: r.width, h: r.height };
+        });
+        expect(held.right, 'the held icon was dragged off the left of the screen').toBeGreaterThan(0);
+        expect(held.left).toBeLessThan(await page.evaluate(() => window.innerWidth));
+        // Still substantially visible, not a one-pixel sliver.
+        expect(held.right, 'barely any of the held icon is on screen').toBeGreaterThan(held.w * 0.4);
+        await page.mouse.up();
+    });
+});
+
+test.describe('No dead ends in the dock', () => {
+    // The Library button was once a "coming soon" toast, and the WiFi button next to it was
+    // still one — a control sitting in the dock that does nothing when pressed. The dock is
+    // five buttons; every one of them has to do its job.
+    const boot = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+    };
+    const tapDock = async (page, id) => {
+        const box = await page.evaluate((i) => {
+            const el = document.querySelector(`#main-dock [data-id="${i}"]`);
+            const r = el.getBoundingClientRect();
+            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+        }, id);
+        await page.mouse.click(box.x, box.y);
+        await page.waitForTimeout(900);
+    };
+
+    test('every dock button opens something, and none says "coming soon"', async ({ page }) => {
+        await boot(page);
+        const toasts = [];
+        await page.exposeFunction('__toast', (t) => toasts.push(t));
+        await page.evaluate(() => {
+            const real = window.showToast;
+            window.showToast = (t, ...rest) => { window.__toast(String(t)); return real(t, ...rest); };
+        });
+
+        const opens = {
+            nav_gen: '#create-modal',
+            nav_wifi: '#create-modal',
+            nav_lib: '#library-overlay',
+        };
+        for (const [id, sel] of Object.entries(opens)) {
+            await tapDock(page, id);
+            expect(await page.evaluate((s) => document.querySelector(s)
+                     .classList.contains('pointer-events-auto'), sel),
+                   `${id} did not open ${sel}`).toBe(true);
+            await page.evaluate(() => history.back());
+            await page.waitForTimeout(600);
+        }
+        expect(toasts.filter(t => /coming soon/i.test(t)),
+               'a dock button is still a placeholder').toEqual([]);
+    });
+
+    test('the WiFi button opens the WiFi form, not just the picker', async ({ page }) => {
+        // Sharing a network is the commonest reason to make a QR code, which is why it has a
+        // dock slot at all. Landing on the generic picker would make the slot pointless.
+        await boot(page);
+        await tapDock(page, 'nav_wifi');
+        expect(await page.evaluate(() => window.CodeGenerator.activeTemplate)).toBe('wifi');
+        // The SSID field is the proof the form itself is up, not just the flag being set.
+        // Field ids follow fieldId(): `tpl-<template>-<field>`.
+        await expect(page.locator('#tpl-wifi-ssid')).toBeVisible();
+        await expect(page.locator('#tpl-wifi-pass')).toBeVisible();
+    });
+
+    test('dock badges count something real, and disappear when there is nothing to count', async ({ page }) => {
+        // A '2' on WiFi and a '!' on Scan were carried over from the mock-up: fixed strings that
+        // counted nothing and never changed, telling you a notification was waiting when none was.
+        await boot(page);
+        const badges = () => page.evaluate(() =>
+            [...document.querySelectorAll('#main-dock .app-icon-wrapper')].map(el => {
+                const b = el.querySelector('[class*="bg-red"]');
+                return { id: el.dataset.id, badge: b ? b.textContent.trim() : null };
+            }));
+
+        const before = await badges();
+        const saved = await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'grid').length);
+        expect(before.find(b => b.id === 'nav_lib').badge,
+               'the Library badge does not match the number of saved codes').toBe(String(saved));
+        for (const id of ['nav_wifi', 'nav_scan', 'nav_home', 'nav_gen']) {
+            expect(before.find(b => b.id === id).badge, `${id} still carries a fake badge`).toBeNull();
+        }
+
+        // Remove every code; the badge must go with them rather than showing a stale number.
+        await page.evaluate(() => {
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type !== 'grid');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+        expect((await badges()).find(b => b.id === 'nav_lib').badge,
+               'the Library badge survived its codes being deleted').toBeNull();
+    });
+});
