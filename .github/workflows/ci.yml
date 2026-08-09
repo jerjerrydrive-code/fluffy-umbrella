@@ -1,0 +1,104 @@
+# Runs the regression suite and the motion audit on every push and pull request.
+#
+# Until now nothing ran automatically: the suite existed and was only ever executed by hand,
+# which means "126 passing" was a claim about one machine at one moment rather than a property
+# of the branch. Several defects in this repo were found only because somebody happened to look.
+# This makes looking automatic.
+#
+# The motion audit runs too, and its output is uploaded whether it passes or not. It is
+# deliberately NOT allowed to fail the build: its findings need a person to look at a filmstrip
+# and judge, and three times so far it has accused the app when the tool was the thing that was
+# wrong. A check that cries wolf gets ignored, and an ignored check is worse than no check.
+# The Playwright suite is the gate; the audit is evidence to read.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # Only Chromium: that is what playwright.config.js targets, and pulling the other two
+      # engines costs minutes to install for browsers no test ever opens.
+      - run: npx playwright install --with-deps chromium
+
+      - name: Regression suite
+        run: npm test
+
+      # Only on pull requests and by hand. The full sweep is 13 scenes, 3 gestures, 6 skins and
+      # 3 screen sizes — a lot of page loads — and its value is in the filmstrips, which someone
+      # has to actually open. Running it on every push would spend the minutes and produce
+      # artefacts nobody reads.
+      - name: Motion audit
+        if: github.event_name != 'push'
+        run: npm run audit:motion -- --out motion-audit
+        continue-on-error: true
+
+      - name: Upload audit filmstrips
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: motion-audit
+          path: motion-audit/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # The app's whole premise is that it runs from a single self-contained directory with no CDN.
+  # That is easy to break by adding one convenient <script src="https://..."> and never noticing,
+  # because a machine with network access will happily load it. This fails the build instead.
+  self-contained:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: No remote assets in index.html
+        run: |
+          # Firebase is the one allowed exception: a dynamic import inside try/catch, optional by
+          # design, and the app is built to carry on without it.
+          if grep -nE '<(script|link)[^>]+(src|href)="https?://' index.html \
+             | grep -v 'gstatic.com/firebasejs'; then
+            echo "::error::index.html loads a remote asset. Vendor it under ./vendor instead."
+            exit 1
+          fi
+          echo "index.html loads no remote scripts or stylesheets."
+
+      - name: Vendored assets are present
+        run: |
+          missing=0
+          for f in vendor/tailwind.css vendor/bwip-js.min.js vendor/lucide.min.js vendor/html5-qrcode.min.js; do
+            [ -s "$f" ] || { echo "::error::missing or empty: $f"; missing=1; }
+          done
+          exit $missing

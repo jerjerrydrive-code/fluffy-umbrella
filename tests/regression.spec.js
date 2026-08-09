@@ -2988,3 +2988,53 @@ test.describe('Arming a folder merge is visible, not only felt', () => {
                 .filter(el => +getComputedStyle(el).opacity < 0.9).length)).toBe(0);
     });
 });
+
+test.describe('Guest sign-in failing does not take cloud sync down with it', () => {
+    // CI runs the motion audit with real outbound network — this development machine has none,
+    // so it can never see this — and every page load there reports HTTP 400 from
+    // identitytoolkit accounts:signUp, which is the anonymous sign-in call. That used to sit
+    // bare in the init try block, so its failure marked ALL of cloud sync unavailable and the
+    // Account sheet then refused Google sign-in with "offline or blocked": wrong, and
+    // impossible to act on.
+    //
+    // The init path itself cannot be exercised here (Firebase never loads without network), so
+    // what is pinned is the structure that made the failure fatal, plus the messages.
+
+    test('the anonymous call is caught on its own, not by the outer handler', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(800);
+        const src = await page.evaluate(() => document.documentElement.outerHTML);
+
+        const init = src.slice(src.indexOf('async init() {'));
+        const anon = init.indexOf('signInAnonymously');
+        const readyTrue = init.indexOf('this.ready = true;');
+        expect(anon, 'signInAnonymously not found in init').toBeGreaterThan(-1);
+
+        // It must be wrapped, and the wrapper must sit before ready is set — otherwise a throw
+        // skips straight past it to the outer catch.
+        const around = init.slice(Math.max(0, anon - 260), anon + 260);
+        expect(around, 'signInAnonymously is not individually caught').toMatch(/try\s*\{[^}]*signInAnonymously/);
+        expect(around).toContain('catch');
+        expect(anon).toBeLessThan(readyTrue);
+    });
+
+    test('each owner-fixable failure explains itself and names what still works', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const say = (code, message) => page.evaluate(
+            ([c, m]) => window.CloudSync.describeAuthError({ code: c, message: m }), [code, message]);
+
+        const anon = await say('auth/admin-restricted-operation', 'Firebase: blah.');
+        expect(anon).toMatch(/Anonymous/);
+        expect(anon, 'does not say the app still works').toMatch(/still works|safe on this device/i);
+        expect(anon).not.toContain('auth/admin-restricted-operation');
+
+        const key = await say('auth/api-key-not-valid', 'Firebase: bad key.');
+        expect(key).toContain('localhost');
+        expect(key).toMatch(/API key restrictions/);
+
+        // A referrer rejection can arrive under a different code, so the message is matched too.
+        const referer = await say('auth/internal-error', 'Requests from referer http://x are blocked.');
+        expect(referer).toMatch(/not cleared for/);
+    });
+});

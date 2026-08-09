@@ -102,6 +102,18 @@ async function boot(browser) {
     const note = (s) => { if (!ENVIRONMENTAL.test(s)) errors.push(s); };
     page.on('pageerror', e => note(String(e.message)));
     page.on('console', m => { if (m.type() === 'error') note('console: ' + m.text()); });
+
+    // Console alone says "Failed to load resource: the server responded with a status of 400"
+    // and not a word about WHICH resource, which is useless for acting on. This machine has no
+    // outbound network so it never sees these at all; CI does, and that difference is exactly
+    // why the URL has to be in the report rather than left to be guessed at.
+    page.on('response', (r) => {
+        if (r.status() >= 400) note(`HTTP ${r.status()} ${r.request().method()} ${r.url().slice(0, 160)}`);
+    });
+    page.on('requestfailed', (r) => {
+        const why = (r.failure() && r.failure().errorText) || 'failed';
+        note(`request failed (${why}) ${r.url().slice(0, 160)}`);
+    });
     await page.goto(BASE);
     await page.waitForFunction(() => window.Renderer && window.OS_STATE, null, { timeout: 15000 });
     await page.waitForTimeout(900);
