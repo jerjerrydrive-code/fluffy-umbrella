@@ -4725,3 +4725,75 @@ test.describe('Restoring accepts the file you actually have', () => {
         expect(r.accent).toBe('#ff0000');
     });
 });
+
+test.describe('No skin costs the app its frame rate', () => {
+    // The aurora skin ran at 17fps while every other skin ran at 61 — not during a transition,
+    // but permanently, for as long as it was selected. Every tap, swipe and animation in the app
+    // inherited it, and nothing in the interface said why.
+    //
+    // The cause was a `position: fixed`, larger-than-viewport pseudo-element carrying
+    // `filter: blur(46px)` and a 38-second drift animation. It cannot be composited, so every
+    // frame re-rasterised and re-blurred a full-screen surface. Measured one variable at a time:
+    // translate+scale 14-17fps, translate only 17, translate + will-change 17, opacity only 23,
+    // no animation 61. It was never the scale, and will-change does not rescue it.
+
+    test('every skin holds a usable frame rate at rest', async ({ page }) => {
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => {
+            for (let i = 0; i < 40; i++) {
+                window.OS_STATE.apps.push({ id: 'fps' + i, title: 'F' + i, type: 'grid',
+                    page: Math.floor(i / 24), order: i % 24, bcid: 'qrcode', data: 'f' + i });
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(900);
+
+        const slow = [];
+        for (const skin of ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic']) {
+            await page.evaluate((s) => document.body.setAttribute('data-skin', s), skin);
+            await page.waitForTimeout(800);
+            const frames = await page.evaluate(async () => {
+                const t0 = performance.now(); let n = 0;
+                await new Promise(res => {
+                    const tick = () => { n++; performance.now() - t0 < 1000 ? requestAnimationFrame(tick) : res(); };
+                    requestAnimationFrame(tick);
+                });
+                return n;
+            });
+            // 40 is deliberately far below 60: this must catch a skin that costs 3-4x the frame
+            // budget, not police normal variation on a loaded machine. The broken case was 17.
+            if (frames < 40) slow.push(`${skin}: ${frames}fps`);
+        }
+        expect(slow, `skins that cost the app its frame rate:\n${slow.join('\n')}`).toEqual([]);
+    });
+
+    test('no launcher-wide layer animates a large blur', async ({ page }) => {
+        // The rule behind the number above, stated where it can be checked directly. A filter
+        // this heavy on a viewport-sized fixed layer cannot be composited, so animating it at
+        // all costs the whole frame budget however the animation is written.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        const offenders = await page.evaluate(() => {
+            const bad = [];
+            for (const skin of ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic']) {
+                document.body.setAttribute('data-skin', skin);
+                for (const el of [document.body, document.documentElement]) {
+                    for (const pseudo of ['::before', '::after']) {
+                        const cs = getComputedStyle(el, pseudo);
+                        if (!cs.content || cs.content === 'none') continue;
+                        const m = /blur\((\d+(?:\.\d+)?)px\)/.exec(cs.filter || '');
+                        const blur = m ? parseFloat(m[1]) : 0;
+                        const animated = cs.animationName && cs.animationName !== 'none';
+                        if (blur >= 20 && animated) {
+                            bad.push(`${skin} ${el.tagName.toLowerCase()}${pseudo}: blur(${blur}px) + ${cs.animationName}`);
+                        }
+                    }
+                }
+            }
+            return bad;
+        });
+        expect(offenders, `an animated heavy blur is back:\n${offenders.join('\n')}`).toEqual([]);
+    });
+});

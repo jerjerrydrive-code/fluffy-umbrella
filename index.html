@@ -765,12 +765,31 @@
                 radial-gradient(46% 32% at 12% 78%, var(--aur-bloom-b) 0%, transparent 58%),
                 var(--aur-ink);
             filter: blur(46px) saturate(150%);
-            animation: aurora-drift 38s ease-in-out infinite;
-        }
-        @keyframes aurora-drift {
-            0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-            33%      { transform: translate3d(-2.5%, 1.8%, 0) scale(1.06); }
-            66%      { transform: translate3d(2%, -1.5%, 0) scale(1.03); }
+            /* The slow drift that used to live here made this skin unusable, and nothing said so.
+             *
+             * Measured at 412x892 with 40 codes: aurora ran at 17fps while every other skin ran
+             * at 61. Not during a transition — at rest, permanently, for as long as the skin was
+             * selected. Every tap, swipe and animation in the app inherited it.
+             *
+             * The cause is this element, not the animation's contents. It is `position: fixed`,
+             * `inset: -12%`, and carries `filter: blur(46px)`, so it cannot be composited: any
+             * change re-rasterises a larger-than-viewport surface and re-blurs it every frame.
+             * Measured, one variable at a time:
+             *
+             *     translate + scale (as shipped)   14-17 fps
+             *     translate only                   17 fps
+             *     translate only + will-change     17 fps
+             *     opacity only                     23 fps
+             *     no animation                     61 fps
+             *
+             * So it is not the scale, and will-change does not rescue it. Any animation at all on
+             * a blurred full-viewport layer costs the whole frame budget.
+             *
+             * The field itself — four radial blooms under a heavy blur — is what the skin looks
+             * like, and it is kept in full. What is gone is a 38-second ambient drift that almost
+             * nobody would notice, traded for three and a half times the frame rate everywhere.
+             * Reinstating motion here needs a different structure: something that can live on its
+             * own compositor layer, e.g. a pre-blurred bitmap rather than a live filter. */
         }
 
         body[data-skin="aurora"] .ios-glass {

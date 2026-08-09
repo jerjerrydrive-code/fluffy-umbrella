@@ -371,6 +371,41 @@ again from scratch.
 
 ---
 
+## Found by chasing the skin morph
+
+| # | Defect | Status |
+|---|---|---|
+| 43 | **The aurora skin ran the whole app at 17fps.** Not during a transition — at rest, permanently, for as long as it was selected. Every other skin ran at 61. Every tap, swipe and animation in the app inherited it, and nothing in the interface said why. | FIXED |
+
+Found while investigating #42, and much larger than the thing being investigated.
+
+The cause is a `position: fixed`, `inset: -12%` pseudo-element carrying `filter: blur(46px)` and
+a 38-second drift animation. A layer that size with a filter that heavy cannot be composited, so
+every frame re-rasterises and re-blurs a larger-than-viewport surface. Measured one variable at a
+time, at 412×892 with 40 codes:
+
+| variant | fps |
+|---|---|
+| translate + scale (as shipped) | 14–17 |
+| translate only | 17 |
+| translate only + `will-change: transform` | 17 |
+| opacity only | 23 |
+| **no animation** | **61** |
+
+So it was never the `scale()`, and `will-change` does not rescue it — *any* animation on a
+blurred full-viewport layer costs the entire frame budget. The field itself, four radial blooms
+under a heavy blur, is what the skin looks like and is kept in full; what is gone is an ambient
+drift almost nobody would notice, traded for three and a half times the frame rate everywhere.
+
+Result: **17fps → 60fps**, with all six skins now between 59 and 61.
+
+Two tests, both failing against the previous build: one measures every skin's frame rate at rest
+with a threshold far below 60, so it catches a skin costing 3–4× the budget rather than policing
+normal variation; the other states the rule directly, so a heavy animated blur cannot come back
+under a different name.
+
+---
+
 ## Open
 
 | # | Defect | Status |
