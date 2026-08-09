@@ -4725,3 +4725,130 @@ test.describe('Restoring accepts the file you actually have', () => {
         expect(r.accent).toBe('#ff0000');
     });
 });
+
+test.describe('No skin costs the app its frame rate', () => {
+    // The aurora skin ran at 17fps while every other skin ran at 61 — not during a transition,
+    // but permanently, for as long as it was selected. Every tap, swipe and animation in the app
+    // inherited it, and nothing in the interface said why.
+    //
+    // The cause was a `position: fixed`, larger-than-viewport pseudo-element carrying
+    // `filter: blur(46px)` and a 38-second drift animation. It cannot be composited, so every
+    // frame re-rasterised and re-blurred a full-screen surface. Measured one variable at a time:
+    // translate+scale 14-17fps, translate only 17, translate + will-change 17, opacity only 23,
+    // no animation 61. It was never the scale, and will-change does not rescue it.
+
+    test('every skin holds a usable frame rate at rest', async ({ page }) => {
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => {
+            for (let i = 0; i < 40; i++) {
+                window.OS_STATE.apps.push({ id: 'fps' + i, title: 'F' + i, type: 'grid',
+                    page: Math.floor(i / 24), order: i % 24, bcid: 'qrcode', data: 'f' + i });
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(900);
+
+        const slow = [];
+        for (const skin of ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic']) {
+            await page.evaluate((s) => document.body.setAttribute('data-skin', s), skin);
+            await page.waitForTimeout(800);
+            const frames = await page.evaluate(async () => {
+                const t0 = performance.now(); let n = 0;
+                await new Promise(res => {
+                    const tick = () => { n++; performance.now() - t0 < 1000 ? requestAnimationFrame(tick) : res(); };
+                    requestAnimationFrame(tick);
+                });
+                return n;
+            });
+            // 40 is deliberately far below 60: this must catch a skin that costs 3-4x the frame
+            // budget, not police normal variation on a loaded machine. The broken case was 17.
+            if (frames < 40) slow.push(`${skin}: ${frames}fps`);
+        }
+        expect(slow, `skins that cost the app its frame rate:\n${slow.join('\n')}`).toEqual([]);
+    });
+
+    test('no launcher-wide layer animates a large blur', async ({ page }) => {
+        // The rule behind the number above, stated where it can be checked directly. A filter
+        // this heavy on a viewport-sized fixed layer cannot be composited, so animating it at
+        // all costs the whole frame budget however the animation is written.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        const offenders = await page.evaluate(() => {
+            const bad = [];
+            for (const skin of ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic']) {
+                document.body.setAttribute('data-skin', skin);
+                for (const el of [document.body, document.documentElement]) {
+                    for (const pseudo of ['::before', '::after']) {
+                        const cs = getComputedStyle(el, pseudo);
+                        if (!cs.content || cs.content === 'none') continue;
+                        const m = /blur\((\d+(?:\.\d+)?)px\)/.exec(cs.filter || '');
+                        const blur = m ? parseFloat(m[1]) : 0;
+                        const animated = cs.animationName && cs.animationName !== 'none';
+                        if (blur >= 20 && animated) {
+                            bad.push(`${skin} ${el.tagName.toLowerCase()}${pseudo}: blur(${blur}px) + ${cs.animationName}`);
+                        }
+                    }
+                }
+            }
+            return bad;
+        });
+        expect(offenders, `an animated heavy blur is back:\n${offenders.join('\n')}`).toEqual([]);
+    });
+});
+
+test.describe('The page never scrolls sideways', () => {
+    // Deriving the grid icon size from the cell made the icons right and the DOCK wrong: its
+    // five icons shared --app-size, went from 60px to 74px inside a 380px bar, and pushed the
+    // document 7px wider than the screen. The motion audit reported it as
+    // "page scrolls horizontally: 419px of content in 412px" — 63 findings, on every skin and
+    // every size, because a document that scrolls sideways affects every layer drawn on it.
+    //
+    // Nothing in the suite was watching for this, which is why it took the audit to find it.
+
+    for (const [w, h] of [[360, 640], [390, 844], [412, 892], [430, 932], [768, 1024]]) {
+        test(`no horizontal overflow at ${w}x${h}`, async ({ page }) => {
+            await page.setViewportSize({ width: w, height: h });
+            await page.goto('/index.html');
+            await page.waitForTimeout(1000);
+            await page.evaluate(() => {
+                for (let i = 0; i < 20; i++) {
+                    window.OS_STATE.apps.push({ id: 'ov' + i, title: 'Code ' + i, type: 'grid',
+                        page: 0, order: i, bcid: 'qrcode', data: 'ov' + i });
+                }
+                window.Renderer.render();
+                window.Layout.calculateGrid();
+            });
+            await page.waitForTimeout(700);
+
+            const r = await page.evaluate(() => ({
+                vw: document.documentElement.clientWidth,
+                scrollW: document.documentElement.scrollWidth,
+                dockRight: document.getElementById('main-dock').getBoundingClientRect().right,
+                grid: getComputedStyle(document.documentElement).getPropertyValue('--app-size').trim(),
+                dock: getComputedStyle(document.documentElement).getPropertyValue('--dock-size').trim(),
+            }));
+            expect(r.scrollW,
+                   `the document scrolls sideways (grid ${r.grid}, dock ${r.dock})`)
+                .toBeLessThanOrEqual(r.vw);
+            expect(r.dockRight, 'the dock runs off the right edge').toBeLessThanOrEqual(r.vw);
+        });
+    }
+
+    test('an icon fills its cell the way a launcher does', async ({ page }) => {
+        // The point of the change: --app-size was a hardcoded 60px on every phone, so at 412px
+        // wide with four columns the icon used 63% of its 94.8px cell and floated in the middle.
+        // A real home screen fills about three quarters, which is what makes rows read as dense.
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1100);
+        const fill = await page.evaluate(() => {
+            const icon = document.querySelector('#workspace-pager .app-icon').getBoundingClientRect();
+            const cols = getComputedStyle(document.querySelector('.os-grid')).gridTemplateColumns.split(' ');
+            return icon.width / parseFloat(cols[0]);
+        });
+        expect(fill, 'the icon no longer fills its cell').toBeGreaterThan(0.7);
+        expect(fill, 'the icon has outgrown its cell').toBeLessThanOrEqual(0.85);
+    });
+});
