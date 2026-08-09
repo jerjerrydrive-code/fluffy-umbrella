@@ -371,6 +371,34 @@ again from scratch.
 
 ---
 
+## Open
+
+| # | Defect | Status |
+|---|---|---|
+| 42 | **The skin morph occasionally leaves the screen illegible for ~660ms.** `#workspace-container: unreadable (blur ≥4px) for 661ms`, against a 500ms budget. Intermittent: **1 run in 4** on the currently-live build, 1 in 2 on the working branch — small samples, and present at baseline either way. | OPEN |
+
+This is defect #5 coming back part-time. The timings say it should not: the blur eases in over
+220ms, `morph-pulse` is removed at 260ms, and the ease-out finishes around 480ms — a span above
+4px of roughly **334ms**. Measured, it is sometimes double that.
+
+Ruled out, by measurement rather than reasoning:
+- Not main-thread blocking from rendering — `Renderer.render()` is 7.5ms and `SkinManager.render()`
+  is 4.2ms with 40 codes on the page.
+- Not caused by any of the launcher, TouchTap, inert, or icon-cache work — it reproduces on the
+  build that was already live before any of it.
+
+The likely mechanism, not yet confirmed: the morph is sequenced by wall-clock `setTimeout`, and
+at 150ms it flips `data-skin`, which invalidates essentially every rule in the stylesheet. A slow
+style recalc there delays the 260ms timer that removes the blur, and the blur simply sits. If so
+the fix is to stop sequencing a visual transition on wall-clock timers — drive it from
+`transitionend` or the Web Animations API, the same reasoning that fixed the toast in #19.
+
+Not shipped as part of this round deliberately: it is pre-existing, so holding the other fixes
+back does not protect anyone from it, and changing the morph deserves its own audit cycle rather
+than being bundled into a deploy.
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.
