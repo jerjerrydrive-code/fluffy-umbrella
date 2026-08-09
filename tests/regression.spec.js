@@ -3691,3 +3691,113 @@ test.describe('Exported CSV cannot run in a spreadsheet', () => {
         expect(usesHelper, 'an export path still has its own escaper').toBeGreaterThanOrEqual(2);
     });
 });
+
+test.describe('Signing in never destroys what is already on the device', () => {
+    // The worst defect found. applyRemoteState did `OS_STATE.apps = data.apps` unconditionally,
+    // so signing in on a phone used as a guest replaced everything on it with whatever the
+    // account happened to hold — then queueSave pushed that result up and made it permanent.
+    // Silent, irreversible, and on the most ordinary action there is.
+    //
+    // Restoring a backup already refuses to delete ("Restoring only ever adds"). Signing in is
+    // the same promise.
+    const boot = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForFunction(() => window.CloudSync && window.OS_STATE, null, { timeout: 20000 });
+        await page.waitForTimeout(900);
+    };
+    const seed = (page, n, prefix) => page.evaluate(([n, prefix]) => {
+        window.CloudSync.reconciled = false;
+        window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type === 'dock');
+        for (let i = 0; i < n; i++) {
+            window.OS_STATE.apps.push({ id: prefix + i, title: prefix + i, type: 'grid',
+                page: Math.floor(i / 20), order: i % 20, bcid: 'qrcode', data: 'd' + i });
+        }
+    }, [n, prefix]);
+    const grid = (page) => page.evaluate(() =>
+        window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.id));
+
+    test('local codes survive a sign-in that finds a smaller account', async ({ page }) => {
+        await boot(page);
+        await seed(page, 50, 'mine_');
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'other_1', title: 'T1', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'a' },
+            { id: 'other_2', title: 'T2', type: 'grid', page: 0, order: 1, bcid: 'qrcode', data: 'b' },
+        ] }));
+
+        const ids = await grid(page);
+        expect(ids.filter(i => i.startsWith('mine_')).length,
+               'signing in destroyed codes that were on the device').toBe(50);
+        expect(ids.filter(i => i.startsWith('other_')).length,
+               'the account\'s own codes did not arrive').toBe(2);
+    });
+
+    test('an empty cloud document does not wipe the device', async ({ page }) => {
+        // Array.isArray([]) is true, so an empty document passed the old guard and erased
+        // everything.
+        await boot(page);
+        await seed(page, 10, 'keep_');
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [] }));
+        expect((await grid(page)).length, 'an empty cloud document erased the device').toBe(10);
+    });
+
+    test('merged codes each get their own slot', async ({ page }) => {
+        // Keeping them is not enough — two codes on the same page and order hide one another.
+        await boot(page);
+        await seed(page, 12, 'mine_');
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'r1', title: 'r1', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'a' },
+            { id: 'r2', title: 'r2', type: 'grid', page: 0, order: 1, bcid: 'qrcode', data: 'b' },
+        ] }));
+        const slots = await page.evaluate(() => window.OS_STATE.apps
+            .filter(a => a.type === 'grid').map(a => `${a.page || 0}:${a.order}`));
+        expect(slots.length - new Set(slots).size, 'two codes were placed on the same slot').toBe(0);
+    });
+
+    test('a later snapshot is still authoritative, so deletions propagate', async ({ page }) => {
+        // The other half of the contract. If every snapshot merged, nothing could ever be
+        // deleted from another device.
+        await boot(page);
+        await seed(page, 10, 'keep_');
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'keep_0', title: 'k0', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'k' },
+        ] }));
+        const afterFirst = (await grid(page)).length;
+        expect(afterFirst).toBe(10);   // first snapshot merged
+
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'keep_0', title: 'k0', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'k' },
+        ] }));
+        expect((await grid(page)).length,
+               'a deletion made on another device did not reach this one').toBe(1);
+    });
+
+    test('switching accounts reconciles again rather than wiping', async ({ page }) => {
+        await boot(page);
+        await seed(page, 5, 'acctB_');
+        // attachStateListener resets the flag on each sign-in; seed() mirrors that.
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'z', title: 'z', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'z' },
+        ] }));
+        const ids = await grid(page);
+        expect(ids.filter(i => i.startsWith('acctB_')).length,
+               'switching accounts wiped the device').toBe(5);
+        expect(ids).toContain('z');
+    });
+
+    test('the merge is pushed back up, so the other device gains what only this one had', async ({ page }) => {
+        // Without this the union is local-only, and the next snapshot from the other device
+        // deletes everything again — the bug would simply take one extra round trip.
+        await boot(page);
+        await page.evaluate(() => {
+            window.CloudSync.pushed = 0;
+            window.CloudSync.pushStateNow = function () { this.pushed++; };
+        });
+        await seed(page, 5, 'mine_');
+        await page.evaluate(() => window.CloudSync.applyRemoteState({ apps: [
+            { id: 'r1', title: 'r1', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'a' },
+        ] }));
+        await page.waitForTimeout(300);
+        expect(await page.evaluate(() => window.CloudSync.pushed),
+               'the merged result was never sent to the cloud').toBeGreaterThan(0);
+    });
+});

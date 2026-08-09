@@ -5425,6 +5425,10 @@
             }
 
             attachStateListener(uid) {
+                // Each sign-in reconciles once. Without this reset, signing out and into a
+                // different account would treat that account's first snapshot as authoritative
+                // and wipe whatever was on the device.
+                this.reconciled = false;
                 const { doc, onSnapshot, db } = this.fb;
                 const ref = doc(db, 'xancode_users', uid, 'state', 'home');
                 this.unsubscribeState = onSnapshot(ref, (snap) => {
@@ -5436,10 +5440,53 @@
                 });
             }
 
+            // Union of what is here and what is in the cloud. Remote wins for anything both
+            // sides have; anything only this device has is kept and given a free slot, so two
+            // codes never land on the same square and silently hide one another.
+            mergeApps(local, remote) {
+                const remoteIds = new Set(remote.map(a => a && a.id).filter(Boolean));
+                const merged = remote.slice();
+                const highestOrder = {};
+                merged.forEach(a => {
+                    if (!a || a.type !== 'grid') return;
+                    const pg = a.page || 0;
+                    highestOrder[pg] = Math.max(highestOrder[pg] === undefined ? -1 : highestOrder[pg],
+                                                a.order === undefined ? -1 : a.order);
+                });
+                (local || []).forEach(a => {
+                    if (!a || !a.id || remoteIds.has(a.id)) return;
+                    if (a.type !== 'grid') { merged.push(a); return; }
+                    const pg = a.page || 0;
+                    highestOrder[pg] = (highestOrder[pg] === undefined ? -1 : highestOrder[pg]) + 1;
+                    merged.push(Object.assign({}, a, { order: highestOrder[pg] }));
+                });
+                return merged;
+            }
+
             applyRemoteState(data) {
                 if (!data || !Array.isArray(data.apps)) return;
                 this.applyingRemote = true;
-                window.OS_STATE.apps = data.apps;
+
+                // The FIRST snapshot after signing in is a reconciliation, not an instruction.
+                //
+                // It used to be `OS_STATE.apps = data.apps` unconditionally, which meant signing
+                // in on a phone you had been using as a guest replaced everything on it with
+                // whatever the account happened to hold. Measured: 50 local codes became 2, and
+                // an account whose document existed but was empty took all 10 of them to zero —
+                // then queueSave pushed that result back up and made it permanent. Silent, and
+                // on the most ordinary action there is.
+                //
+                // Restoring a backup already refuses to delete anything ("Restoring only ever
+                // adds"). Signing in is the same promise and now keeps it. Later snapshots in
+                // the session ARE authoritative, so deleting a code on another device still
+                // propagates here — otherwise nothing could ever be deleted.
+                const firstReconcile = !this.reconciled;
+                this.reconciled = true;
+                window.OS_STATE.apps = firstReconcile
+                    ? this.mergeApps(window.OS_STATE.apps, data.apps)
+                    : data.apps;
+                this.mergedOnSignIn = firstReconcile &&
+                    window.OS_STATE.apps.length !== data.apps.length;
                 if (Array.isArray(data.pageNames)) window.OS_STATE.pageNames = data.pageNames;
                 if (data.gridSize) window.OS_STATE.gridSize = data.gridSize;
                 if (data.autoArrange !== undefined) window.OS_STATE.autoArrange = data.autoArrange;
@@ -5461,6 +5508,13 @@
                 window.Renderer.render();
                 if (window.Layout) window.Layout.calculateGrid();
                 this.applyingRemote = false;
+
+                // Anything this device had and the cloud did not has to go up, or the other
+                // device never learns about it and the next snapshot deletes it again.
+                if (this.mergedOnSignIn) {
+                    this.mergedOnSignIn = false;
+                    this.pushStateNow();
+                }
             }
 
             queueSave() {

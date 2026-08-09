@@ -120,6 +120,27 @@ miss the other. A test checks ordinary URLs and WiFi strings export unchanged.
 
 ---
 
+## Data loss
+
+| # | Defect | Status |
+|---|---|---|
+| 25 | **Signing in destroyed everything on the device.** `applyRemoteState` did `OS_STATE.apps = data.apps` unconditionally, so the account's contents replaced the phone's. Measured: 50 local codes became 2. An account whose document existed but was empty took 10 local codes to **zero** — `Array.isArray([])` is true, so an empty document passed the guard. `queueSave` then pushed that result up and made it permanent. | FIXED |
+
+The worst defect found: silent, irreversible, and triggered by the most ordinary action there is.
+Restoring a backup already refused to delete anything ("Restoring only ever adds"); signing in is
+the same promise and now keeps it.
+
+The **first** snapshot after sign-in is a reconciliation — a union by id, remote winning on
+conflict, local-only codes kept and given free slots so two never share one square — and the
+result is pushed back up so the other device gains them too. Every **later** snapshot stays
+authoritative, so deleting a code on another device still propagates; otherwise nothing could
+ever be deleted. Switching accounts reconciles again rather than wiping.
+
+Six tests, five of which fail against the previous build. (The sixth — that the merge is pushed
+back up — passes either way, because the old code pushed unconditionally.)
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
