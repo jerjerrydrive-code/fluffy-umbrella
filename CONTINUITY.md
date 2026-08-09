@@ -147,10 +147,22 @@ real time and failed only under parallel load, the other measured panels mid-tra
 
 ## 5. Only the owner can do these
 
-- **Firebase authorized domains.** `auth/unauthorized-domain` means
-  `jerjerrydrive-code.github.io` is not listed under Authentication → Settings → Authorized
-  domains in the Firebase console. No code change can fix it. The app now explains this in words
-  instead of printing the error code.
+Both are Firebase console settings. No code change reaches them, and the app now explains each
+one in words instead of printing an error code.
+
+- **Authorized domains.** `auth/unauthorized-domain` means `jerjerrydrive-code.github.io` is not
+  listed under Authentication → Settings → Authorized domains. Google sign-in will not run on
+  the live site until it is.
+- **Anonymous sign-in returns HTTP 400.** Found by CI, which has real outbound network — this
+  development machine has none and structurally cannot see it. Every page load POSTs to
+  `identitytoolkit.googleapis.com/v1/accounts:signUp` and gets a 400. Two candidate causes and
+  it is not worth guessing between them: the Anonymous provider is off under Authentication →
+  Sign-in method, or the API key carries a referrer restriction the origin does not satisfy
+  (Google Cloud console → Credentials). Either way the app no longer lets it take cloud sync
+  down; Google sign-in is still offered and everything local is unaffected.
+
+**The lesson worth keeping:** the difference between the two environments is a feature, not an
+annoyance. Anything network-dependent is invisible here and visible in CI. Read CI's audit log.
 
 ---
 

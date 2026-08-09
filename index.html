@@ -5206,7 +5206,28 @@
                         XanLogger.warn('Sign-in redirect returned an error', e);
                     }
                     authMod.onAuthStateChanged(auth, (user) => this.handleAuthChange(user));
-                    if (!auth.currentUser) await authMod.signInAnonymously(auth);
+
+                    // Anonymous sign-in is a convenience, not a prerequisite: it gives a guest a
+                    // uid for local state to hang off, and Google sign-in neither needs it nor
+                    // is affected by it. It used to sit bare in the outer try, so when it failed
+                    // the WHOLE of cloud sync was marked unavailable and the Account sheet then
+                    // refused Google sign-in with "offline or blocked" — wrong on both counts,
+                    // and impossible to act on.
+                    //
+                    // This is not hypothetical. CI runs the motion audit with real network (this
+                    // development machine has none, so it can never see it) and every page load
+                    // reports HTTP 400 from identitytoolkit accounts:signUp. That is a project
+                    // setting rather than a code fault — either the Anonymous provider is off,
+                    // or the API key has a referrer restriction the origin does not satisfy —
+                    // and nothing here can fix it. So it is recorded, reported in words, and
+                    // stepped over instead of taking the feature down with it.
+                    if (!auth.currentUser) {
+                        try { await authMod.signInAnonymously(auth); }
+                        catch (e) {
+                            if (!this.pendingAuthError) this.pendingAuthError = this.describeAuthError(e);
+                            XanLogger.warn('Guest sign-in unavailable — Google sign-in still offered', e);
+                        }
+                    }
 
                     this.ready = true;
                 } catch (e) {
@@ -5363,6 +5384,17 @@
                 if (code === 'auth/operation-not-allowed') {
                     return 'Google sign-in is switched off for this Firebase project. '
                          + 'Turn it on under Authentication → Sign-in method.';
+                }
+                // Anonymous sign-in refused. Everything local keeps working, so this says what
+                // is off rather than presenting itself as a failure of the app.
+                if (code === 'auth/admin-restricted-operation') {
+                    return 'Guest cloud backup is switched off for this Firebase project '
+                         + '(Authentication → Sign-in method → Anonymous). '
+                         + 'Signing in with Google still works, and your codes are safe on this device either way.';
+                }
+                if (code === 'auth/api-key-not-valid' || /referer|referrer/i.test(String((e && e.message) || ''))) {
+                    return `This site's key is not cleared for ${location.hostname}. `
+                         + 'Check the API key restrictions in the Google Cloud console.';
                 }
                 if (code === 'auth/network-request-failed') {
                     return 'Could not reach the sign-in service. Check your connection and try again.';
