@@ -228,3 +228,38 @@ Two things that bit while building it, both worth not rediscovering:
   "pushed" is not delivered; Pages serves the default branch.
 - **Report what was verified and how.** "Tests pass" and "I used it" are different claims. The
   owner has already been burned by the first being presented as the second.
+
+## The launcher's input is not the app's to assume
+
+Three rounds of threshold tuning (bugs #2, #6, #7) each shipped and each came back as "still
+broken on my phone". The reason took a measurement, not more reading:
+
+**The browser decides what a touch was, and it does not ask.** Two hard numbers, both measured
+in `tests/regression.spec.js`:
+
+- A native scroll container claims the gesture at **16px** of drift: `pointercancel` fires and
+  no `click` is ever dispatched.
+- With the scroller disabled, `click` *still* does not arrive past **~15px** — Chrome's own tap
+  slop, not configurable.
+
+16 CSS px is 2.5mm. Any launcher that activates on `click` is broken in the hand and fine on a
+desk, which is exactly why it survived so long: **every mouse-driven test passed.** Playwright's
+`.click()` targets an element, not a coordinate, so it cannot see this class of bug at all.
+
+Rules that follow:
+
+1. **Touch behaviour is only proven by dispatched touch.** `Input.dispatchTouchEvent` over CDP,
+   at coordinates. A passing `page.click()` says nothing about a phone.
+2. **Never activate a launcher control from `click`.** Own the gesture: `touch-action: none`,
+   one state machine, dispatch on pointerup.
+3. **If you act on pointerup, swallow the click that follows** — for *every* gesture, not just
+   taps. The screen has already changed; that click lands on whatever is there now. It cost two
+   separate defects here: the viewer closing itself, and a long press opening Rename.
+4. **A browser smooth scroll cannot be cancelled and it wins.** Animate snaps yourself, and route
+   every page move through the one animation you can cancel.
+5. **One threshold, one meaning.** Two thresholds (lock the axis at 12px, allow taps to 24px)
+   created a dead band where a 16px touch became a 16px pan that snapped back — indistinguishable
+   from the bug being fixed.
+
+Three of the five defects in that revamp were in the *new* code and were caught by probing it
+before release rather than by reading it. Write the probe.

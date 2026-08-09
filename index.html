@@ -331,6 +331,13 @@
         body.edit-mode .app-icon-wrapper:nth-child(even) .jiggle-target { animation-duration: 0.32s; animation-direction: reverse; } 
         body.edit-mode .app-icon-wrapper:nth-child(3n) .jiggle-target { animation-duration: 0.28s; animation-delay: 0.05s; }
 
+        /* The launcher surfaces never hand a gesture to the browser. See LauncherInput
+           for the measurements behind this; in short, a native scroller claims the touch at
+           16px of drift and the app is simply not told. Paging is driven from the pointer
+           instead, so scroll-snap has nothing left to snap. */
+        #workspace-pager { touch-action: none; scroll-snap-type: none; overscroll-behavior: contain; }
+        #main-dock       { touch-action: none; }
+
         .modal-spring { transition: transform 0.5s var(--spring-snappy), opacity 0.4s ease, backdrop-filter 0.4s ease; }
 
         /* A closed layer must be closed all the way down.
@@ -1800,11 +1807,38 @@
             }
         } catch(e) { window.OS_STATE = DEFAULT_STATE; }
 
-        function saveState() {
+        // Returns whether the write actually landed.
+        //
+        // It used to swallow the quota error and return nothing, and TWO call sites were
+        // written as `try { saveState() } catch` — expecting a throw that could never arrive.
+        // Both failure paths were dead code:
+        //
+        //   · Setting an oversized wallpaper toasted "Storage Limit Reached!" and then
+        //     "Wallpaper updated!" straight over the top of it, applied the image to the
+        //     screen and showed the Reset button. Every visible signal said it worked.
+        //   · Restoring a backup whose wallpaper pushed it past the quota returned
+        //     `{ ok: true, error: null }` — "Restore complete" — having saved nothing at all.
+        //     The whole restored backup was gone on reload.
+        //
+        // Worse than either: the unsaveable value stayed in OS_STATE, so every LATER save hit
+        // the same quota and failed too. Measured — after one oversized wallpaper, adding a
+        // code did not persist, and the reload came back with neither. From that moment until
+        // you restarted the app, nothing you did was kept, and it never said so.
+        //
+        // Same rule as window.copyText(): an operation the user asked for reports what it did.
+        // `quiet` is for the two callers that report the failure themselves, so the generic
+        // toast does not fight with a specific one.
+        function saveState(opts) {
+            let ok = true;
             try { localStorage.setItem('xancode_v2_state', JSON.stringify(window.OS_STATE)); }
-            catch(e) { console.warn("Local storage write failed."); window.showToast("Storage Limit Reached!"); }
+            catch (e) {
+                ok = false;
+                console.warn("Local storage write failed.");
+                if (!(opts && opts.quiet)) window.showToast("Storage Limit Reached!");
+            }
             // Cloud sync is a mirror layered on top of local save, never a dependency of it — see HARD RULE 1.
             if (window.CloudSync) window.CloudSync.queueSave();
+            return ok;
         }
 
         const XanLogger = {
@@ -2205,9 +2239,15 @@
                     wrapper.appendChild(label);
                 }
 
-                wrapper.addEventListener('click', (e) => {
-                    if (window.DragEngine && window.DragEngine.wasDragging) return; 
-                    
+                // Activation is a named function, not an event handler, because the launcher
+                // dispatches it from LauncherInput on a real tap. It is NOT reachable through
+                // the synthesized `click` alone: Chrome refuses to synthesize one once a touch
+                // has drifted about 15px, which is roughly 2.5mm and less than a thumb moves
+                // just resting on glass. See LauncherInput for the measurement.
+                const activate = (tapTarget) => {
+                    const e = { target: tapTarget || wrapper };
+                    if (window.DragEngine && window.DragEngine.wasDragging) return;
+
                     if (window.OS_STATE.isEditMode || e.target.closest('.edit-only')) {
                         if(window.OS_STATE.isEditMode && !e.target.closest('.edit-only') && (itemData.type === 'grid' || itemData.type === 'folder')) {
                             window.InteractionManager.openRename(itemData);
@@ -2222,7 +2262,7 @@
                     } else if (itemData.id === 'nav_gen') {
                         if (window.CodeGenerator) window.CodeGenerator.open();
                     } else if (itemData.id === 'nav_home') {
-                        document.getElementById('workspace-pager').scrollTo({ left: 0, behavior: 'smooth' });
+                        window.LauncherInput.goTo(0);
                     } else if (itemData.id === 'nav_scan') {
                         if (window.ScannerEngine) window.ScannerEngine.start();
                     } else if (itemData.id === 'nav_lib') {
@@ -2239,6 +2279,15 @@
                     } else {
                         window.showToast(`${itemData.title} coming soon.`);
                     }
+                };
+                wrapper.__activate = activate;
+
+                // The click path stays for a mouse, and for a touch small enough that the
+                // browser still synthesizes one — but LauncherInput has already acted on that
+                // same gesture, so this must not fire a second time.
+                wrapper.addEventListener('click', (e) => {
+                    if (performance.now() - (window.__launcherTapAt || 0) < 700) return;
+                    activate(e.target);
                 });
 
                 if (itemData.type === 'folder') {
@@ -2256,8 +2305,8 @@
                 
                 const removeBtn = wrapper.querySelector('.edit-only');
                 if (removeBtn) {
-                    removeBtn.addEventListener('click', (e) => {
-                        e.stopPropagation();
+                    const removeItem = (e) => {
+                        if (e && e.stopPropagation) e.stopPropagation();
                         if (itemData.type === 'folder') {
                             // Deleting the folder must not delete what is in it — the codes
                             // return to the page the folder occupied.
@@ -2272,7 +2321,15 @@
                         wrapper.style.transition = 'transform 0.3s var(--spring-snappy), opacity 0.2s ease';
                         wrapper.style.transform = 'scale(0.5)';
                         wrapper.style.opacity = '0';
-                        setTimeout(() => this.render(), 300); 
+                        setTimeout(() => this.render(), 300);
+                    };
+                    removeBtn.__activate = removeItem;
+                    removeBtn.addEventListener('click', (e) => {
+                        if (performance.now() - (window.__launcherTapAt || 0) < 700) {
+                            e.stopPropagation();
+                            return;
+                        }
+                        removeItem(e);
                     });
                 }
                 return wrapper;
@@ -2334,7 +2391,7 @@
                 for (let i = 0; i < totalPages; i++) {
                     const dot = document.createElement('div');
                     dot.className = `pagination-dot pointer-events-auto ${i === state.currentPage ? 'active' : ''}`;
-                    dot.onclick = () => this.pager.scrollTo({ left: i * this.pager.clientWidth, behavior: 'smooth' });
+                    dot.onclick = () => window.LauncherInput.goTo(i);
                     this.pagination.appendChild(dot);
                 }
                 
@@ -2534,6 +2591,12 @@
             destroy() {
                 this.clearFolderDwell();
                 this.cleanupListeners();
+                // Leaving these set outlives the drag they describe. Anything that asks "is a
+                // drag in progress" then gets yes forever, which is how leaving edit mode used
+                // to make the whole launcher stop responding.
+                this.targetEl = null;
+                this.isEngaged = false;
+                this.wasDragging = false;
             }
 
             onPointerDown(e) {
@@ -2659,11 +2722,11 @@
                 if (!this.isPageFlipping) {
                     if (e.clientX < edgeThreshold && window.OS_STATE.currentPage > 0) {
                         this.isPageFlipping = true;
-                        pager.scrollTo({ left: (window.OS_STATE.currentPage - 1) * clientWidth, behavior: 'smooth' });
+                        window.LauncherInput.goTo(window.OS_STATE.currentPage - 1);
                         setTimeout(() => { this.isPageFlipping = false; }, 600);
                     } else if (e.clientX > window.innerWidth - edgeThreshold && window.OS_STATE.currentPage < maxPages - 1) {
                         this.isPageFlipping = true;
-                        pager.scrollTo({ left: (window.OS_STATE.currentPage + 1) * clientWidth, behavior: 'smooth' });
+                        window.LauncherInput.goTo(window.OS_STATE.currentPage + 1);
                         setTimeout(() => { this.isPageFlipping = false; }, 600);
                     }
                 }
@@ -3681,18 +3744,17 @@
                 .forEach(k => { if (incoming[k] !== undefined) st[k] = incoming[k]; });
             if (incoming.wallpaper) st.wallpaper = incoming.wallpaper;
 
-            try {
-                saveState();
-            } catch (e) {
-                // A wallpaper can push the payload past the localStorage quota. Dropping it is
-                // far better than losing the codes that were just restored.
-                st.wallpaper = null;
-                try { saveState(); } catch (e2) {
-                    return { ok: false, added, error: 'Not enough storage to save that backup.' };
-                }
-                return { ok: true, added, error: 'Restored, but the wallpaper was too large to keep.' };
+            // A wallpaper can push the payload past the localStorage quota. Dropping it is
+            // far better than losing the codes that were just restored. This used to be a
+            // try/catch around a saveState() that never threw, so a restore that saved nothing
+            // still reported success and was gone on the next launch.
+            if (saveState({ quiet: true })) return { ok: true, added, error: null };
+
+            st.wallpaper = null;
+            if (!saveState({ quiet: true })) {
+                return { ok: false, added, error: 'Not enough storage to save that backup.' };
             }
-            return { ok: true, added, error: null };
+            return { ok: true, added, error: 'Restored, but the wallpaper was too large to keep.' };
         };
 
         // Codes as CSV, for anyone who wants their data somewhere other than this app.
@@ -4323,10 +4385,7 @@
                 this.close();
                 window.showToast('Added to Grid!');
 
-                document.getElementById('workspace-pager').scrollTo({
-                    left: targetPage * document.getElementById('workspace-pager').clientWidth,
-                    behavior: 'smooth'
-                });
+                window.LauncherInput.goTo(targetPage);
 
                 setTimeout(() => window.Renderer.render(), 300);
             }
@@ -4968,27 +5027,78 @@
                 window.Layout.calculateGrid();
             }
 
+            // Redraw the picked image small enough to actually store.
+            //
+            // A photo from a phone camera is 3-8MB, and localStorage holds roughly 5MB in total
+            // — shared with every code the user owns. Stored at full resolution the picker
+            // failed for essentially every real photo, which is to say it never worked on the
+            // device it was built for.
+            //
+            // 1600px on the longest edge is far more than is visible behind blurred icons, and
+            // JPEG rather than PNG because a wallpaper has no transparency worth keeping. An
+            // 8MB photo comes out a few hundred KB. The quality ladder is a backstop for images
+            // that are still large after scaling (heavy noise, very wide panoramas).
+            fitWallpaper(img) {
+                const LONGEST = 1600;
+                const BUDGET = 1.5 * 1024 * 1024;
+                const scale = Math.min(1, LONGEST / Math.max(img.width, img.height));
+                const w = Math.max(1, Math.round(img.width * scale));
+                const h = Math.max(1, Math.round(img.height * scale));
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                let out = canvas.toDataURL('image/jpeg', 0.82);
+                for (const q of [0.65, 0.5]) {
+                    if (out.length <= BUDGET) break;
+                    out = canvas.toDataURL('image/jpeg', q);
+                }
+                return out;
+            }
+
             handleWallpaperUpload(e) {
                 const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (evt) => {
-                    const dataUrl = evt.target.result;
-                    window.OS_STATE.wallpaper = dataUrl;
-                    try {
-                        saveState();
-                    } catch (err) {
-                        window.OS_STATE.wallpaper = null;
-                        window.showToast('Image too large to save.');
-                        return;
-                    }
-                    document.body.style.backgroundImage = `url('${dataUrl}')`;
-                    this.resetWallpaperBtn.classList.remove('hidden');
-                    window.showToast('Wallpaper updated!');
-                };
-                reader.onerror = () => window.showToast('Failed to read image.');
-                reader.readAsDataURL(file);
+                // Cleared first, so picking the same file twice in a row still fires a change.
                 e.target.value = '';
+                if (!file) return;
+                if (!/^image\//.test(file.type)) {
+                    window.showToast('That file is not an image.');
+                    return;
+                }
+
+                // Kept so a failed replacement restores what was there rather than clearing it.
+                const previous = window.OS_STATE.wallpaper;
+
+                const reader = new FileReader();
+                reader.onerror = () => window.showToast('Failed to read image.');
+                reader.onload = (evt) => {
+                    const img = new Image();
+                    img.onerror = () => window.showToast('That image could not be read.');
+                    img.onload = () => {
+                        let dataUrl;
+                        try { dataUrl = this.fitWallpaper(img); }
+                        catch (err) {
+                            XanLogger.error('Wallpaper resize failed', err);
+                            window.showToast('That image could not be used.');
+                            return;
+                        }
+
+                        window.OS_STATE.wallpaper = dataUrl;
+                        if (!saveState({ quiet: true })) {
+                            // Leaving it in OS_STATE would poison every later save, so the
+                            // rollback matters more than the wallpaper does.
+                            window.OS_STATE.wallpaper = previous || null;
+                            saveState({ quiet: true });
+                            window.showToast('Not enough room to save that image.');
+                            return;
+                        }
+
+                        document.body.style.backgroundImage = `url('${dataUrl}')`;
+                        this.resetWallpaperBtn.classList.remove('hidden');
+                        window.showToast('Wallpaper updated!');
+                    };
+                    img.src = evt.target.result;
+                };
+                reader.readAsDataURL(file);
             }
 
             resetWallpaper() {
@@ -6385,7 +6495,7 @@
                 // Follow the page you just moved, so the thing being rearranged stays
                 // under your eye instead of sliding away from it.
                 const pager = document.getElementById('workspace-pager');
-                pager.scrollTo({ left: (from + dir) * pager.clientWidth, behavior: 'smooth' });
+                window.LauncherInput.goTo(from + dir);
             });
         });
 
@@ -6421,53 +6531,287 @@
             }
         }, { passive: true });
 
-        // Long press to enter edit mode.
-        //
-        // This used to cancel on ANY touchmove, with no tolerance at all. A finger resting on
-        // glass for 600ms always drifts a pixel or two, and every one of those fired a move
-        // event and killed the timer — so whether it worked came down to how still you happened
-        // to be holding, which feels exactly like "it only works on certain spots". A slop
-        // radius is what every platform uses for precisely this reason.
-        //
-        // It also required the press to land on an icon, so the empty part of a page could not
-        // start edit mode even though that is the obvious place to press when a page is nearly
-        // empty. Now anywhere on the workspace works, as long as it is not a control.
-        const PRESS_SLOP = 12;
-        let pressTimer = null, pressX = 0, pressY = 0;
+        /* ==================================================================================
+           LauncherInput — the launcher decides what a gesture was, not the browser.
 
-        const pointOf = (e) => (e.touches && e.touches[0]) || e;
+           WHY THIS REPLACED THE PREVIOUS APPROACH (measured, not assumed):
 
-        const startPress = (e) => {
-            if (window.OS_STATE.isEditMode || e.target.closest('button')) return;
-            const pt = pointOf(e);
-            pressX = pt.clientX; pressY = pt.clientY;
-            clearTimeout(pressTimer);
-            pressTimer = setTimeout(() => {
-                pressTimer = null;
-                window.OS_STATE.isEditMode = true;
-                document.body.classList.add('edit-mode');
-                haptic([10, 30, 10]);
-                window.Renderer.render();
-            }, 600);
+           The home grid lived in a native horizontally-scrolling, snap-mandatory container,
+           and icons were activated by the synthesized `click` event. Both hand control of the
+           gesture to the browser, and the browser is not generous with it:
+
+             · At 16px of horizontal drift the scroller claimed the touch, fired
+               `pointercancel`, and no `click` was ever dispatched. Measured exactly —
+               0px, 4px, 8px, 12px opened the code; 16px and beyond did nothing at all.
+             · Turning the scroller off (`touch-action: none`) removed the `pointercancel`,
+               and `click` STILL did not arrive past ~15px, because Chrome applies its own
+               tap slop to touch. It is not configurable.
+
+           16 CSS px is about 2.5mm. A thumb drifts further than that on a bus, while walking,
+           or just resting on glass. Meanwhile the haptics and the long-press timer ran on
+           pointer events, which fire regardless — so the phone buzzed on essentially every
+           touch while nothing happened. That is the report in the user's own words:
+           "I get vibration feedback anywhere I tap tho but nothing happens."
+
+           No amount of threshold tuning fixes that, because the thresholds that decided it
+           belonged to the browser. Three earlier attempts tuned the app's own numbers and the
+           report came back each time. So the launcher now arbitrates its own gestures:
+
+             · `touch-action: none` on both launcher surfaces, so nothing is ever stolen.
+             · One state machine per gesture. Tap, long press, page pan or drag is decided
+               once, past a slop radius, and never revisited — an axis that can flip
+               mid-gesture is what makes a launcher feel like it is fighting you.
+             · Activation dispatched here on pointerup, never by `click`.
+             · Paging driven from the pointer and snapped on release, with a flick moving one
+               page even when the finger never travelled half a screen.
+             · Haptics fire only where something commits, so a buzz means the launcher acted.
+
+           The slop is 24px rather than the browser's 15: an icon is 90px wide, so 24px is
+           still unambiguously "on the icon", and it is the difference between working in the
+           hand and working only on a desk.
+           ================================================================================== */
+        const LauncherInput = {
+            // ONE threshold, with one meaning: below it the gesture is still undecided and
+            // could be a tap or a long press; above it, it is a pan or a drag and never a tap
+            // again. Two thresholds were tried first — lock the axis at 12px, allow taps to
+            // 24px — and it produced a dead band: a 16px touch became a 16px page pan that
+            // settled straight back where it started, so it looked and felt exactly like the
+            // bug being fixed. A launcher must not have a range of movement that means nothing.
+            //
+            // 24px is ~4mm. Paging therefore begins 12px later than it might; that is not
+            // perceptible, and it is what makes a tap survive a thumb on a moving bus.
+            SLOP: 24,
+            TAP_MS: 700,
+            PRESS_MS: 450,         // long press -> edit mode
+            FLING: 0.45,           // px/ms past which a flick changes page on its own
+
+            init(surfaces) {
+                this.pager = document.getElementById('workspace-pager');
+                this.active = null;
+                this.pressTimer = null;
+                this.onMove = this.onMove.bind(this);
+                this.onUp = this.onUp.bind(this);
+                this.onCancel = this.onCancel.bind(this);
+                surfaces.filter(Boolean).forEach(s =>
+                    s.addEventListener('pointerdown', (e) => this.onDown(e, s)));
+            },
+
+            pageWidth() { return this.pager.clientWidth || 1; },
+            pageCount() { return Math.max(1, Math.round(this.pager.scrollWidth / this.pageWidth())); },
+
+            onDown(e, surface) {
+                if (e.button) return;                  // right or middle button
+                if (this.active) return;               // the first finger down decides
+                // Real controls keep their own behaviour. The per-icon remove button is inside
+                // a wrapper and is handled as part of the launcher, not excluded here.
+                if (e.target.closest('button') && !e.target.closest('.app-icon-wrapper')) return;
+
+                // Whatever the launcher was still animating, the finger outranks it.
+                this.cancelSnap();
+
+                this.active = {
+                    id: e.pointerId, surface, target: e.target,
+                    x0: e.clientX, y0: e.clientY,
+                    lastX: e.clientX, lastT: performance.now(), vx: 0,
+                    t0: performance.now(),
+                    scroll0: this.pager.scrollLeft,
+                    mode: 'undecided', pressed: false,
+                };
+
+                // Armed here, and only a decision of ours cancels it — never the browser,
+                // which is exactly what used to kill it.
+                clearTimeout(this.pressTimer);
+                if (!window.OS_STATE.isEditMode && surface === this.pager) {
+                    this.pressTimer = setTimeout(() => {
+                        const g = this.active;
+                        if (!g || g.mode !== 'undecided') return;
+                        g.pressed = true;
+                        window.OS_STATE.isEditMode = true;
+                        document.body.classList.add('edit-mode');
+                        haptic([10, 30, 10]);
+                        window.Renderer.render();
+                    }, this.PRESS_MS);
+                }
+
+                document.addEventListener('pointermove', this.onMove, { passive: false });
+                document.addEventListener('pointerup', this.onUp);
+                document.addEventListener('pointercancel', this.onCancel);
+            },
+
+            onMove(e) {
+                const g = this.active;
+                if (!g || e.pointerId !== g.id) return;
+
+                const now = performance.now();
+                const dt = now - g.lastT;
+                if (dt > 0) g.vx = (e.clientX - g.lastX) / dt;
+                g.lastX = e.clientX; g.lastT = now;
+
+                const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
+                if (g.mode === 'undecided') {
+                    if (Math.hypot(dx, dy) < this.SLOP) return;
+                    clearTimeout(this.pressTimer);
+                    // Panning is measured from HERE, not from the origin, so the grid does not
+                    // jump a slop's width the instant it engages.
+                    g.panFrom = e.clientX;
+                    // Only an ACTUALLY engaged drag takes the gesture. `targetEl` was tried
+                    // here first and was wrong twice over: destroy() never cleared it, so after
+                    // one edit-mode session every later gesture was classified as a drag and
+                    // the launcher stopped responding entirely — and even when fresh it is set
+                    // on any press over an icon, which would have stolen the edit-mode page
+                    // swipe that bug #7 exists to preserve. The drag engine engages at 5px and
+                    // this decides at 24, so a real drag is always already engaged by now,
+                    // while a quick flick across a full page is not — and pages, as it should.
+                    if (window.DragEngine && window.DragEngine.isEngaged) {
+                        g.mode = 'drag';
+                    } else if (Math.abs(dx) > Math.abs(dy)) {
+                        g.mode = 'page';
+                    } else {
+                        g.mode = 'vertical';           // GestureManager's pull-down-to-search
+                    }
+                }
+
+                if (g.mode === 'page') {
+                    this.pager.scrollLeft = g.scroll0 - (e.clientX - g.panFrom);
+                    if (e.cancelable) e.preventDefault();
+                }
+            },
+
+            onUp(e) {
+                const g = this.active;
+                if (!g || e.pointerId !== g.id) return;
+                this.finish();
+
+                if (g.mode === 'page') { this.settlePage(g); return; }
+                if (g.mode !== 'undecided') return;    // drag or vertical belong elsewhere
+                if (g.pressed) return;                 // the long press WAS the gesture
+
+                if (Math.hypot(e.clientX - g.x0, e.clientY - g.y0) > this.SLOP) return;
+                if (performance.now() - g.t0 > this.TAP_MS) return;
+                if (window.DragEngine && (window.DragEngine.isEngaged || window.DragEngine.wasDragging)) return;
+
+                this.tap(g.target);
+            },
+
+            onCancel(e) {
+                const g = this.active;
+                if (!g || e.pointerId !== g.id) return;
+                this.finish();
+                // A cancelled gesture is not a tap — the system took the touch away. Any page
+                // pan already in flight still settles, so the grid is never left mid-page.
+                if (g.mode === 'page') this.settlePage(g);
+            },
+
+            finish() {
+                clearTimeout(this.pressTimer);
+                this.active = null;
+                document.removeEventListener('pointermove', this.onMove);
+                document.removeEventListener('pointerup', this.onUp);
+                document.removeEventListener('pointercancel', this.onCancel);
+                // EVERY gesture the launcher took, not only the ones that ended in a tap.
+                //
+                // Armed in tap() alone at first, and a long press then shipped this: press to
+                // enter edit mode, and the click the browser synthesizes a frame later lands on
+                // the icon still under your finger — which in edit mode means Rename. Long-press
+                // to rearrange, get a rename box. Caught by a probe before release, and it is
+                // the same shape as the click-through onto the viewer's backdrop: once the
+                // launcher decides a gesture, the browser's opinion about it is not wanted.
+                this.swallowNextClick();
+            },
+
+            tap(target) {
+                // The synthesized click is swallowed in finish(), which runs for every gesture.
+                // Acting on pointerup means the screen has already changed by the time the
+                // browser dispatches `click`, so that click lands on whatever is NOW under the
+                // finger. Measured: tapping a code opened the viewer, and the click arrived a
+                // frame later on the viewer's own backdrop — whose handler closes it. The code
+                // opened and shut again, every time, on a phone-sized screen.
+                window.__launcherTapAt = performance.now();
+                if (!target || !target.closest) return;
+
+                const remove = target.closest('.edit-only');
+                if (remove && remove.__activate) { haptic(12); remove.__activate(); return; }
+
+                const wrapper = target.closest('.app-icon-wrapper');
+                if (wrapper && wrapper.__activate) { wrapper.__activate(target); return; }
+
+                // Background. In edit mode that means "done rearranging"; it is also the only
+                // way out for someone who never learned that Back works.
+                if (window.OS_STATE.isEditMode) window.exitEditMode();
+            },
+
+            // Capture phase, so it is gone before any handler in the page sees it.
+            swallowNextClick() {
+                if (this._swallow) return;
+                const done = () => {
+                    document.removeEventListener('click', this._swallow, true);
+                    clearTimeout(this._swallowTimer);
+                    this._swallow = null;
+                };
+                this._swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); done(); };
+                document.addEventListener('click', this._swallow, true);
+                this._swallowTimer = setTimeout(done, 400);
+            },
+
+            // Distance OR speed commits the page. Either alone is not enough.
+            //
+            // Snapping to the nearest page was tried first — `round(scrollLeft / pageWidth)` —
+            // and it needs the finger past HALF the screen, minus the slop the pan does not
+            // count. Measured: a 200px swipe on a 390px page moved the grid 175px, 45%, and
+            // snapped straight back. Whether the page turned then came down entirely to
+            // whether the flick happened to clear the velocity threshold, which is why the
+            // test failed three runs in eight — a user being ignored at the same rate.
+            //
+            // A quarter of a page is the commit point, which is what both mobile platforms
+            // use, and a quick flick still turns the page from anywhere.
+            settlePage(g) {
+                const w = this.pageWidth();
+                const from = Math.round(g.scroll0 / w);
+                const moved = this.pager.scrollLeft - from * w;
+                const COMMIT = w * 0.25;
+
+                let to = from;
+                if (Math.abs(g.vx) > this.FLING) to = g.vx < 0 ? from + 1 : from - 1;
+                else if (moved > COMMIT) to = from + 1;
+                else if (moved < -COMMIT) to = from - 1;
+
+                to = Math.max(0, Math.min(this.pageCount() - 1, to));
+                if (to !== from) haptic(8);
+                this.goTo(to);
+            },
+
+            // The snap is animated here rather than by scrollTo({behavior:'smooth'}), for one
+            // reason: a browser smooth scroll cannot be cancelled, and it WINS. Flick to the
+            // next page and flick again before it settles — which is simply how anyone moves
+            // through pages — and the second gesture was overwritten by the first one's
+            // animation finishing on top of it. The page snapped back and the swipe was gone.
+            //
+            // Found as a 3-in-6 flaky test, not by reading. That is the whole argument for
+            // never retrying a flake away: the same intermittency in a test is a user
+            // occasionally being ignored.
+            goTo(index) {
+                this.cancelSnap();
+                const w = this.pageWidth();
+                const to = Math.max(0, Math.min(this.pageCount() - 1, index)) * w;
+                const from = this.pager.scrollLeft;
+                if (Math.abs(to - from) < 0.5) { this.pager.scrollLeft = to; return; }
+
+                const t0 = performance.now(), DUR = 260;
+                const ease = (t) => 1 - Math.pow(1 - t, 3);      // out-cubic: quick, then settles
+                const step = () => {
+                    const t = Math.min(1, (performance.now() - t0) / DUR);
+                    this.pager.scrollLeft = from + (to - from) * ease(t);
+                    this.snapRaf = t < 1 ? requestAnimationFrame(step) : null;
+                };
+                this.snapRaf = requestAnimationFrame(step);
+            },
+
+            cancelSnap() {
+                if (this.snapRaf) { cancelAnimationFrame(this.snapRaf); this.snapRaf = null; }
+            },
         };
-        const cancelPress = () => { clearTimeout(pressTimer); pressTimer = null; };
-        const movePress = (e) => {
-            if (!pressTimer) return;
-            const pt = pointOf(e);
-            if (Math.hypot(pt.clientX - pressX, pt.clientY - pressY) > PRESS_SLOP) cancelPress();
-        };
-
-        // Pointer events rather than a mouse set and a touch set. Two reasons beyond tidiness.
-        // They unify a finger and a cursor, so the behaviour tested on a desktop is the behaviour
-        // shipped to a phone. And the old mouse path cancelled on `mouseleave`, which fires on
-        // the pager spuriously as soon as the pointer moves within an icon — measured, not
-        // guessed — so a press could be killed a few milliseconds after it began.
-        pager.addEventListener('pointerdown', startPress);
-        pager.addEventListener('pointermove', movePress, { passive: true });
-        pager.addEventListener('pointerup', cancelPress);
-        pager.addEventListener('pointercancel', cancelPress);
-        // Scrolling to another page is not a long press, however still the finger was.
-        pager.addEventListener('scroll', cancelPress, { passive: true });
+        window.LauncherInput = LauncherInput;
+        LauncherInput.init([pager, document.getElementById('dock-container')]);
 
         window.exitEditMode = () => {
             if (!window.OS_STATE.isEditMode) return;
@@ -6479,13 +6823,10 @@
             setTimeout(() => { window.Renderer.render(); }, 400);
         };
 
-        pager.addEventListener('click', (e) => {
-            // A drag that ends over an empty slot synthesises a click on that slot, and without
-            // this guard that click read as "tapped the background" and ended edit mode. Which
-            // is why moving a second icon meant long-pressing all over again.
-            if (window.DragEngine && (window.DragEngine.isEngaged || window.DragEngine.wasDragging)) return;
-            if (!e.target.closest('.app-icon-wrapper')) window.exitEditMode();
-        });
+        // Leaving edit mode by tapping the background is LauncherInput.tap()'s job now. It
+        // used to be a `click` listener here, which had to guard against the click a settling
+        // drag synthesises over an empty slot — the "I have to re-tap to move another one"
+        // report. A gesture arbiter that knows the drop was a drag cannot make that mistake.
 
         // Lock to portrait so the home-screen layout never has to reflow mid-use.
         // Browsers require a user gesture before granting the lock, so we retry on first touch/click too.

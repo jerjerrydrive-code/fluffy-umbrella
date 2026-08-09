@@ -189,6 +189,80 @@ back up — passes either way, because the old code pushed unconditionally.)
 
 ---
 
+| # | Defect | Status |
+|---|---|---|
+| 29 | **A save that never happened, reported as success.** `saveState()` swallowed the quota error and returned nothing, while **two** call sites were written as `try { saveState() } catch` — expecting a throw that could never arrive. Both failure paths were dead code. | FIXED |
+
+Setting an oversized wallpaper toasted "Storage Limit Reached!" and then **"Wallpaper updated!"**
+straight over the top of it, applied the image to the screen and revealed the Reset button —
+every visible signal said it worked. Restoring a backup whose wallpaper pushed it past the quota
+returned `{ ok: true, error: null }`, "Restore complete", having written nothing at all: the whole
+backup was gone on the next launch.
+
+Worse than either: the unsaveable value stayed in `OS_STATE`, so **every later save hit the same
+quota and failed too**. Measured — after one oversized wallpaper, a code added afterwards did not
+persist, and the reload came back with neither. From that moment until the app was restarted,
+nothing the user did was kept, and it never said so.
+
+`saveState()` now returns whether the write landed, the same rule as `window.copyText()`.
+
+| # | Defect | Status |
+|---|---|---|
+| 30 | **The wallpaper picker never worked on a phone.** A camera photo is 3–8MB; localStorage holds about 5MB in total, shared with every code. Stored at full resolution it failed for essentially every real photo — on the one device the feature exists for. | FIXED |
+
+Now redrawn to 1600px on the longest edge and encoded as JPEG before saving. Measured: a
+4032×3024 photo (33MB of raw noise, the worst case) stores as 673KB and survives a reload. If it
+still will not fit, the previous wallpaper is restored rather than cleared, and the message says
+so. Non-image files are refused instead of stored.
+
+All five tests fail against the previous build.
+
+---
+
+## The launcher revamp
+
+> "the edit function is hard to find the right spot to activate it. I response via vibration
+> feedback anywhere I tap tho but nothing happens ... we continue to fail that section and need
+> to work on a full revamp of that section because patches and patches doesn't work"
+
+The user was right that patching had failed — three separate rounds of threshold tuning
+(bugs #2, #6, #7) had each been reported broken again. The reason is that **the thresholds that
+decided the outcome were the browser's, not the app's.**
+
+| # | Defect | Status |
+|---|---|---|
+| 31 | **A tap that drifted more than ~15px did nothing at all.** The grid lived in a native scroll-snap container and icons were activated by the synthesized `click`. Measured: 0px, 4px, 8px, 12px of horizontal drift opened a code; **16px and beyond did nothing**, with `pointercancel` fired and no `click` ever dispatched. Disabling the scroller (`touch-action: none`) removed the `pointercancel` — and `click` *still* did not arrive past ~15px, because that is Chrome's own tap slop and it is not configurable. | FIXED |
+
+16 CSS px is about **2.5mm**. Meanwhile the haptics and the long-press timer ran on pointer
+events, which fire regardless — so the phone buzzed on essentially every touch while nothing
+happened. That is the report exactly: *vibration anywhere, action almost nowhere.*
+
+`LauncherInput` now arbitrates every gesture on the launcher surfaces: one state machine,
+`touch-action: none` so nothing is ever stolen, activation dispatched on pointerup, paging
+driven from the pointer, and haptics only where something commits.
+
+### Four more defects found while building it — three of them in the new code, before release
+
+| # | Defect | Status |
+|---|---|---|
+| 32 | **Click-through.** Acting on pointerup means the screen has already changed when `click` is dispatched, so it landed on the viewer's own backdrop — whose handler closes it. Every tap opened a code and shut it again. | FIXED |
+| 33 | **A long press opened the rename dialog.** The click synthesized after the press landed on the icon still under the finger, which in edit mode means Rename. Long-press to rearrange, get a rename box. | FIXED |
+| 34 | **`PhysicsDragEngine.destroy()` never cleared `targetEl`.** Anything asking "is a drag in progress" got yes forever after. One trip through edit mode killed every tap and every swipe until reload. Pre-existing; only exposed because the arbiter asks that question. | FIXED |
+| 35 | **A page turn depended on luck.** Snapping to the *nearest* page needs the finger past half the screen, minus the slop the pan does not count: a 200px swipe on a 390px page moved the grid 175px — 45% — and snapped straight back. Whether the page turned rested entirely on whether the flick happened to clear the velocity threshold. | FIXED |
+
+\#35 surfaced as a test failing **three runs in eight**, and was fixed by making the behaviour
+correct rather than by retrying: distance *or* speed commits, with a quarter of a page as the
+commit point. Ten of ten after. This is the second time the "never retry a flake away" rule has
+paid for itself — an intermittent test is a user being ignored at the same rate.
+
+A browser smooth scroll cannot be cancelled and it *wins*, so the snap is animated in
+`requestAnimationFrame` and every page move in the app routes through it. Otherwise a second
+swipe during the first one's animation was simply overwritten.
+
+Twelve tests, five of which fail against the previous build.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
