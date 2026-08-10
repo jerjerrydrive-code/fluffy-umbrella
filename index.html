@@ -1825,10 +1825,54 @@
             ]
         };
 
+        // Lift whatever complete records survive in an unreadable payload.
+        //
+        // A truncated state is not an empty one. `{"apps":[{...},{...},{...` still holds most of
+        // the codes as text, and every complete object in the prefix can be parsed on its own —
+        // so a half-finished write costs the last code or two rather than all of them. Walks the
+        // string tracking brace depth and string state, because a regex cannot tell a `}` inside
+        // a code's data from the one that ends the object.
+        window.salvageApps = function(raw) {
+            const out = [];
+            if (typeof raw !== 'string') return out;
+            const key = raw.indexOf('"apps"');
+            if (key < 0) return out;
+            const arr = raw.indexOf('[', key);
+            if (arr < 0) return out;
+
+            let depth = 0, inStr = false, esc = false, objStart = -1;
+            for (let i = arr + 1; i < raw.length; i++) {
+                const ch = raw[i];
+                if (inStr) {
+                    if (esc) esc = false;
+                    else if (ch === '\\') esc = true;
+                    else if (ch === '"') inStr = false;
+                    continue;
+                }
+                if (ch === '"') { inStr = true; continue; }
+                if (ch === '{') { if (depth === 0) objStart = i; depth++; continue; }
+                if (ch === '}') {
+                    depth--;
+                    if (depth === 0 && objStart >= 0) {
+                        try {
+                            const o = JSON.parse(raw.slice(objStart, i + 1));
+                            if (o && o.id && (o.data || o.type === 'dock' || o.type === 'folder')) out.push(o);
+                        } catch (e) { /* a partial object at the tail — expected */ }
+                        objStart = -1;
+                    }
+                    continue;
+                }
+                if (ch === ']' && depth === 0) break;
+            }
+            return out;
+        };
+
+        const freshDefaultState = () => JSON.parse(JSON.stringify(DEFAULT_STATE));
+
         try {
             const saved = localStorage.getItem('xancode_v2_state');
-            window.OS_STATE = saved ? JSON.parse(saved) : DEFAULT_STATE;
-            if(!window.OS_STATE || !Array.isArray(window.OS_STATE.apps)) window.OS_STATE = DEFAULT_STATE;
+            window.OS_STATE = saved ? JSON.parse(saved) : freshDefaultState();
+            if(!window.OS_STATE || !Array.isArray(window.OS_STATE.apps)) window.OS_STATE = freshDefaultState();
             
             window.OS_STATE.isEditMode = false;
             if(window.OS_STATE.autoArrange === undefined) window.OS_STATE.autoArrange = false;
@@ -1846,7 +1890,37 @@
                 document.body.style.backgroundImage = `url('${window.OS_STATE.wallpaper}')`;
                 document.getElementById('btn-reset-wallpaper').classList.remove('hidden');
             }
-        } catch(e) { window.OS_STATE = DEFAULT_STATE; }
+        } catch (e) {
+            // Losing everything must never be silent, and must never be the first resort.
+            //
+            // This was one line — `window.OS_STATE = DEFAULT_STATE` — which replaced everything
+            // the user owned with the three demo codes, said nothing about it, and left the next
+            // save free to overwrite the only copy of the original. Measured: twenty codes, a
+            // state truncated to 80% (a half-finished write, which is what a killed tab or a
+            // storage fault actually produces), and the app came back showing "My WiFi",
+            // "Website" and "Boarding Pass" as though that were normal.
+            //
+            // Three things instead. Salvage what can still be parsed. Keep the unreadable
+            // original under its own key so the next save cannot destroy it. Say so.
+            // console, not XanLogger: this runs before XanLogger is initialised, and a
+            // reference to it here would throw inside the handler for a throw.
+            console.error('[XanOS ERROR] Saved state could not be read', e);
+            let raw = null;
+            try { raw = localStorage.getItem('xancode_v2_state'); } catch (e2) {}
+            try { if (raw) localStorage.setItem('xancode_v2_state_unreadable', raw); } catch (e2) {}
+
+            const salvaged = window.salvageApps(raw);
+            window.OS_STATE = freshDefaultState();
+            const codes = salvaged.filter(a => a.type === 'grid' || a.type === 'folder');
+            if (codes.length) {
+                // Keep the dock from defaults — it is chrome, not the user's data, and a
+                // truncated payload often loses it.
+                const dock = window.OS_STATE.apps.filter(a => a.type === 'dock');
+                const salvagedDock = salvaged.filter(a => a.type === 'dock');
+                window.OS_STATE.apps = codes.concat(salvagedDock.length ? salvagedDock : dock);
+            }
+            window.__stateUnreadable = { recovered: codes.length, kept: !!raw };
+        }
 
         // Returns whether the write actually landed.
         //
@@ -7224,6 +7298,25 @@
                 }
             } catch (e) {}
         };
+        // If the saved state could not be read, say so — once the interface exists to say it in.
+        //
+        // A recovery nobody is told about is indistinguishable from the silent wipe it replaced:
+        // the user opens the app, sees fewer codes than they had, and has no idea whether it was
+        // them or the app. The unreadable original is kept under its own key, so this also tells
+        // them the data is still there rather than gone.
+        if (window.__stateUnreadable) {
+            const { recovered } = window.__stateUnreadable;
+            setTimeout(() => {
+                window.showToast(recovered
+                    ? `Saved data was damaged — recovered ${recovered} ${recovered === 1 ? 'code' : 'codes'}`
+                    : 'Saved data could not be read — starting fresh, the old copy is kept',
+                    recovered ? 'success' : 'error');
+            }, 900);
+            // Persist the salvage now. Leaving it unsaved means a second reload loses what was
+            // just rescued, which is the same defect one step later.
+            saveState();
+        }
+
         lockOrientation();
         document.body.addEventListener('touchstart', lockOrientation, { once: true, passive: true });
         document.body.addEventListener('click', lockOrientation, { once: true });

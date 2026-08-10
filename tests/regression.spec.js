@@ -5221,3 +5221,113 @@ test.describe('A code never disappears from the home screen', () => {
         expect(await hidden(page), 'orphaned codes are still not on the screen').toEqual([]);
     });
 });
+
+test.describe('An unreadable saved state does not cost you your codes', () => {
+    // The loader ended in `catch (e) { window.OS_STATE = DEFAULT_STATE; }` — one line that
+    // replaced everything the user owned with the three demo codes, said nothing about it, and
+    // left the next save free to overwrite the only copy of the original.
+    //
+    // Measured: twenty codes, a state truncated to 80% — a half-finished write, which is what a
+    // killed tab or a storage fault actually produces — and the app came back showing "My WiFi",
+    // "Website" and "Boarding Pass" as though that were normal.
+
+    const bootWith = async (page, raw) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(600);
+        await page.evaluate((raw) => {
+            localStorage.clear();
+            localStorage.setItem('xancode_v2_state', raw);
+        }, raw);
+        await page.reload();
+        await page.waitForTimeout(1400);
+    };
+
+    const twentyCodes = () => {
+        const apps = [{ id: 'nav_home', title: 'Home', icon: 'grid', type: 'dock', order: 0 }];
+        for (let i = 0; i < 20; i++) {
+            apps.push({ id: 'real' + i, title: 'Important ' + i, type: 'grid',
+                page: 0, order: i, bcid: 'qrcode', data: 'important-' + i });
+        }
+        return JSON.stringify({ apps, skin: 'dock', accent: '#3b82f6' });
+    };
+
+    test('a half-written state recovers the codes it still contains', async ({ page }) => {
+        const full = twentyCodes();
+        await bootWith(page, full.slice(0, Math.floor(full.length * 0.8)));
+
+        const codes = await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.title));
+        // Not all twenty — the tail is genuinely gone — but most, and certainly not the demo set.
+        expect(codes.length, `recovered only ${codes.length} of 20`).toBeGreaterThan(10);
+        expect(codes, 'fell back to the demo codes instead of recovering').not.toContain('My WiFi');
+        expect(codes[0]).toBe('Important 0');
+    });
+
+    test('the unreadable original is kept, not overwritten', async ({ page }) => {
+        // Whatever could not be parsed is still the user's data. The next save used to destroy
+        // it, which turned a recoverable fault into a permanent one.
+        const full = twentyCodes();
+        const damaged = full.slice(0, Math.floor(full.length * 0.8));
+        await bootWith(page, damaged);
+
+        const kept = await page.evaluate(() => localStorage.getItem('xancode_v2_state_unreadable'));
+        expect(kept, 'the unreadable state was thrown away').toBe(damaged);
+
+        // And a later save must not touch it. addTag ends in saveState(), which is the path
+        // that used to overwrite the only copy of the damaged data.
+        await page.evaluate(() => {
+            const first = window.OS_STATE.apps.find(a => a.type === 'grid');
+            window.addTag(first.id, 'work');
+        });
+        await page.waitForTimeout(300);
+        expect(await page.evaluate(() => localStorage.getItem('xancode_v2_state_unreadable')))
+            .toBe(damaged);
+    });
+
+    test('the user is told, rather than quietly shown fewer codes', async ({ page }) => {
+        const full = twentyCodes();
+        await page.goto('/index.html');
+        await page.waitForTimeout(600);
+        await page.evaluate((raw) => {
+            localStorage.clear();
+            localStorage.setItem('xancode_v2_state', raw);
+        }, full.slice(0, Math.floor(full.length * 0.8)));
+        await page.reload();
+        await page.waitForTimeout(2200);
+
+        const toast = await page.evaluate(() => {
+            const el = document.querySelector('.fixed.top-16');
+            return el ? el.textContent.trim() : '';
+        });
+        expect(toast, 'the recovery happened silently').toMatch(/damaged|could not be read|recovered/i);
+    });
+
+    test('the salvage survives a second reload', async ({ page }) => {
+        // Recovering into memory and not writing it back would lose the rescue on the next
+        // launch — the same defect, one step later.
+        const full = twentyCodes();
+        await bootWith(page, full.slice(0, Math.floor(full.length * 0.8)));
+        const first = await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'grid').length);
+
+        await page.reload();
+        await page.waitForTimeout(1400);
+        const second = await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'grid').length);
+        expect(second, 'the recovered codes were lost on the next launch').toBe(first);
+    });
+
+    test('an ordinary saved state still loads exactly as it was', async ({ page }) => {
+        // The guard that matters most: a recovery path that fires when nothing is wrong would
+        // be worse than the bug.
+        await bootWith(page, twentyCodes());
+        const r = await page.evaluate(() => ({
+            codes: window.OS_STATE.apps.filter(a => a.type === 'grid').length,
+            first: window.OS_STATE.apps.find(a => a.type === 'grid').title,
+            unreadableKey: localStorage.getItem('xancode_v2_state_unreadable'),
+        }));
+        expect(r.codes).toBe(20);
+        expect(r.first).toBe('Important 0');
+        expect(r.unreadableKey, 'a healthy state was treated as damaged').toBeNull();
+    });
+});

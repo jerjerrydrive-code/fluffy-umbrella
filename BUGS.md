@@ -423,6 +423,33 @@ creating and merging folders is untouched.
 
 ---
 
+## Found by reading every catch block again
+
+| # | Defect | Status |
+|---|---|---|
+| 49 | **An unreadable saved state silently replaced everything with the demo codes.** The loader ended in `catch (e) { window.OS_STATE = DEFAULT_STATE; }` — one line that threw away the user's data, said nothing, and left the next save free to overwrite the only copy of the original. Measured: twenty codes, a state truncated to 80%, and the app came back showing "My WiFi", "Website" and "Boarding Pass" as though that were normal. | FIXED |
+
+A state truncated to 80% is what a killed tab or a storage fault actually produces, and it is
+**not empty** — it still holds most of the codes as text. Three things now happen instead of one:
+
+- **Salvage.** `window.salvageApps()` walks the raw string tracking brace depth and string state,
+  lifting every complete record out of the prefix. A regex cannot do this: it cannot tell a `}`
+  inside a code's data from the one that ends the object. Measured: **20 codes truncated to 80%
+  now recover 15**, where the old build recovered none.
+- **Keep the original.** The unparseable payload moves to its own key, so the next save cannot
+  destroy it. That is the difference between a recoverable fault and a permanent one.
+- **Say so.** A recovery nobody is told about is indistinguishable from the wipe it replaced: the
+  user opens the app, sees fewer codes, and cannot tell whether it was them or the app.
+
+Two of the five tests are the ones worth having later, and they pass against both builds on
+purpose: that a **healthy** state is never treated as damaged, and that the rescue is written
+back so a second reload does not lose it — the same defect one step later.
+
+Also fixed while here: `window.OS_STATE = DEFAULT_STATE` handed out the shared constant, so a
+reset app then mutated the defaults in place. It is a fresh copy now.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
