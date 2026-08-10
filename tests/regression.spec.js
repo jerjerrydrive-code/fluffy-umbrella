@@ -3269,7 +3269,7 @@ test.describe('Edit mode: entering it, and turning pages once you are in it', ()
         // Drag far past the left edge.
         await page.mouse.move(-400, box.y, { steps: 6 });
         const held = await page.evaluate(() => {
-            const el = window.DragEngine.draggedEl;
+            const el = window.DragEngine.heldElement();
             const r = el.getBoundingClientRect();
             return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, w: r.width, h: r.height };
         });
@@ -6207,5 +6207,212 @@ test.describe('A page exists because there is something on it', () => {
         const v = await view(page);
         expect(v.pages).toBe(2);
         expect(v.dotsShown).toBe(true);
+    });
+});
+
+// ============================================================================================
+//  Moving a code around: the rewrite
+//
+//  "moving the barcodes is still fucked redo it" — the fifth report about this one area, after
+//  four rounds of patching. The engine was rewritten rather than patched again.
+//
+//  The old one mutated the DOM on every pointermove — swapping the hovered icon with a
+//  placeholder "ghost", animating everything that moved — and read the final order back out of
+//  the DOM. So the arrangement lived in the DOM and was being rewritten dozens of times a
+//  second underneath the finger doing the rewriting. Every failure followed from that: after
+//  the first swap the finger was over the ghost rather than an icon, so every "what am I on?"
+//  got the wrong answer.
+//
+//  Now a page is a grid of slots, the target is a slot INDEX worked out from the pointer
+//  position, and the new arrangement is computed as data. Nothing in the DOM is reordered until
+//  you let go. The most valuable consequence is the first block below: what moving MEANS is a
+//  pure function, and needs no pointer, no DOM and no browser to check.
+// ============================================================================================
+test.describe('What moving a code means, as arithmetic', () => {
+    const arrange = (page, model, held, toPage, toSlot, compact) => page.evaluate(
+        ([m, h, p, s, c]) => window.SlotDragEngine.arrange(m, h, p, s, c),
+        [model, held, toPage, toSlot, compact]);
+
+    const boot = async (page) => { await page.goto('/index.html'); await page.waitForTimeout(1300); };
+    const M = () => [['a', 'b', 'c', 'd'], [null, null, null, null]];
+
+    test('moving onto an occupied slot swaps the two', async ({ page }) => {
+        await boot(page);
+        expect(await arrange(page, M(), 'a', 0, 2, false))
+            .toEqual([['c', 'b', 'a', 'd'], [null, null, null, null]]);
+    });
+
+    test('a swap is its own inverse', async ({ page }) => {
+        // The property that makes rearranging feel safe: nothing is created or destroyed by a
+        // move, so putting it back puts it back.
+        await boot(page);
+        const once = await arrange(page, M(), 'a', 0, 2, false);
+        expect(await arrange(page, once, 'a', 0, 0, false)).toEqual(M());
+    });
+
+    test('moving onto an empty slot leaves a gap behind, and does not compact', async ({ page }) => {
+        await boot(page);
+        expect(await arrange(page, M(), 'a', 1, 0, false))
+            .toEqual([[null, 'b', 'c', 'd'], ['a', null, null, null]]);
+    });
+
+    test('with auto-arrange on it inserts and the rest shuffle up', async ({ page }) => {
+        await boot(page);
+        expect(await arrange(page, M(), 'a', 0, 2, true))
+            .toEqual([['b', 'c', 'a', 'd'], [null, null, null, null]]);
+    });
+
+    test('no move ever loses a code', async ({ page }) => {
+        // The invariant worth having above all others. Every destination, both modes: the set
+        // of codes coming out is the set that went in.
+        await boot(page);
+        const before = ['a', 'b', 'c', 'd'].sort();
+        for (const compact of [false, true]) {
+            for (const held of ['a', 'b', 'c', 'd']) {
+                for (let p = 0; p < 2; p++) {
+                    for (let s = 0; s < 4; s++) {
+                        const out = await arrange(page, M(), held, p, s, compact);
+                        const ids = out.flat().filter(Boolean).sort();
+                        expect(ids, `${held} -> page ${p} slot ${s} (compact=${compact}) lost or duplicated a code`)
+                            .toEqual(before);
+                    }
+                }
+            }
+        }
+    });
+
+    test('dropping a code back where it started changes nothing', async ({ page }) => {
+        await boot(page);
+        expect(await arrange(page, M(), 'b', 0, 1, false)).toEqual(M());
+        expect(await arrange(page, M(), 'b', 0, 1, true)).toEqual(M());
+    });
+});
+
+test.describe('Moving a code around, with a finger', () => {
+    const setup = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => {
+            window.OS_STATE.apps.filter(a => a.type === 'grid')
+                .forEach((a, i) => { a.page = 0; a.order = i; delete a.folderId; });
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(500);
+        return page.evaluate(() =>
+            [...document.querySelectorAll('#workspace-pager .sortable-page')][0]
+                .querySelectorAll('.app-icon-wrapper').length);
+    };
+    const centres = (page) => page.evaluate(() =>
+        [...[...document.querySelectorAll('#workspace-pager .sortable-page')][0]
+            .querySelectorAll('.app-icon-wrapper')].map(el => {
+                const r = el.getBoundingClientRect();
+                return { id: el.dataset.id, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+            }));
+    const order = (page) => page.evaluate(() => window.OS_STATE.apps
+        .filter(a => a.type === 'grid' && !a.folderId)
+        .sort((x, y) => (x.page - y.page) || (x.order - y.order))
+        .map(a => `${a.id}@${a.page}:${a.order}`));
+
+    // Real touch. Mouse events pass against builds that a finger cannot drive at all.
+    const finger = async (page, path) => {
+        const cdp = await page.context().newCDPSession(page);
+        const send = (type, x, y) => cdp.send('Input.dispatchTouchEvent',
+            { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+        await send('touchStart', path[0].x, path[0].y);
+        await page.waitForTimeout(50);
+        for (const p of path.slice(1)) {
+            await send('touchMove', p.x, p.y);
+            await page.waitForTimeout(p.hold || 22);
+        }
+        await send('touchEnd', 0, 0);
+    };
+    const carry = (from, to, n, hold) => Array.from({ length: n + 1 }, (_, i) => ({
+        x: from.x + (to.x - from.x) * i / n,
+        y: from.y + (to.y - from.y) * i / n,
+        hold,
+    }));
+
+    test('a code carried to another code\'s square swaps with it', async ({ page }) => {
+        await setup(page);
+        const c = await centres(page);
+        const before = await order(page);
+        await finger(page, [...carry(c[0], c[2], 12), { x: c[2].x, y: c[2].y, hold: 400 }]);
+        await page.waitForTimeout(700);
+
+        const after = await order(page);
+        expect(after, 'nothing moved').not.toEqual(before);
+        expect(await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'folder').length),
+            'a reorder made a folder').toBe(0);
+        // The two of them traded places, and nothing else did.
+        expect(after.length).toBe(before.length);
+    });
+
+    test('a second code can be moved the instant the first is dropped', async ({ page }) => {
+        // The arrangement is committed when the finger lifts, not when the animation finishes.
+        // Landing it the other way round leaves the destination slot registering as EMPTY for
+        // the length of the flight: measured, a press 10ms after a drop hit `.empty-slot` and
+        // the engine never saw a pointerdown at all. That is the "I have to re-tap the icons"
+        // report, and it came back the moment a drop was landed through a rebuild.
+        await setup(page);
+        const c = await centres(page);
+        await finger(page, carry(c[0], c[1], 10));
+        await page.waitForTimeout(10);            // deep inside the settling animation
+
+        const after = await centres(page);
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send('Input.dispatchTouchEvent',
+            { type: 'touchStart', touchPoints: [{ x: after[1].x, y: after[1].y }] });
+        await cdp.send('Input.dispatchTouchEvent',
+            { type: 'touchMove', touchPoints: [{ x: after[1].x + 14, y: after[1].y + 14 }] });
+        const engaged = await page.evaluate(() => window.DragEngine.isEngaged);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await page.waitForTimeout(600);
+
+        expect(engaged, 'the second code could not be picked up until the first had settled')
+            .toBe(true);
+    });
+
+    test('nothing is left stranded outside the grid after a drop', async ({ page }) => {
+        await setup(page);
+        const c = await centres(page);
+        await finger(page, carry(c[0], c[2], 12));
+        await page.waitForTimeout(800);
+        const loose = await page.evaluate(() =>
+            [...document.querySelectorAll('.app-icon-wrapper')]
+                .filter(el => el.style.position === 'fixed' || el.style.zIndex === '9999').length);
+        expect(loose, 'an icon was left floating above the grid').toBe(0);
+    });
+
+    test('the grid on screen matches the state that was saved', async ({ page }) => {
+        // The old engine read the order back out of the DOM, so these two could disagree and
+        // the DOM won. They are now written from one model, and this is what says so.
+        await setup(page);
+        const c = await centres(page);
+        await finger(page, carry(c[0], c[2], 12));
+        await page.waitForTimeout(800);
+
+        const r = await page.evaluate(() => {
+            const dom = [...[...document.querySelectorAll('#workspace-pager .sortable-page')][0].children]
+                .map(el => el.dataset.id || null);
+            const state = new Array(window.OS_STATE.gridCols * window.OS_STATE.gridRows).fill(null);
+            window.OS_STATE.apps
+                .filter(a => (a.type === 'grid' && !a.folderId) || a.type === 'folder')
+                .filter(a => (a.page || 0) === 0)
+                .forEach(a => { if (a.order < state.length) state[a.order] = a.id; });
+            return { dom, state };
+        });
+        expect(r.dom, 'the screen and the saved order disagree').toEqual(r.state);
+    });
+
+    test('holding still over a code is still how you make a folder', async ({ page }) => {
+        await setup(page);
+        const c = await centres(page);
+        await finger(page, [...carry(c[0], c[1], 10), { x: c[1].x, y: c[1].y, hold: 1200 }]);
+        await page.waitForTimeout(700);
+        expect(await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(1);
     });
 });

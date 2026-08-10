@@ -3035,383 +3035,457 @@
             }
         }
 
-        class PhysicsDragEngine {
+        // ============================================================================
+        //  SlotDragEngine — moving codes around the home screen
+        //
+        //  This is a rewrite, not a repair. The engine it replaces was asked to do the job
+        //  five times and patched five times, and the reason it kept failing is that it had
+        //  the wrong idea about where an arrangement lives.
+        //
+        //  THE OLD MODEL. On every pointermove it looked up elementFromPoint, then immediately
+        //  mutated the DOM — swapping the hovered icon with a placeholder "ghost", running a
+        //  FLIP animation on everything that moved — and at the end it read the new order back
+        //  out of the DOM. So the DOM was the source of truth, and it was being rewritten
+        //  dozens of times a second underneath the finger doing the rewriting. Everything that
+        //  went wrong followed from that:
+        //
+        //    · After the first swap the finger was over the GHOST, not the icon, so every
+        //      question of the form "what am I on?" got the wrong answer. The folder dwell
+        //      needed a special case for it, and that special case is what made every reorder
+        //      end in a folder.
+        //    · Reordering fought the swipe detector, because both were reading the same moving
+        //      DOM to decide what the gesture was.
+        //    · A re-render during a drag could destroy the very nodes the drag was holding.
+        //    · Nothing about it could be tested without a browser hit-test, so the tests were
+        //      as fragile as the code.
+        //
+        //  THE NEW MODEL. A page is a fixed grid of slots. A drag has a target SLOT INDEX,
+        //  worked out from the pointer position against slot rectangles measured once when the
+        //  drag begins. From that, the new arrangement is computed as DATA. The DOM is not
+        //  reordered at all: every icon except the held one is simply transformed from its own
+        //  slot to its previewed slot, and the transforms are cleared on drop. State is written
+        //  from the model, never read back out of the DOM.
+        //
+        //  What that buys, concretely: there is no ghost, so nothing can be "over the ghost";
+        //  the answer to "which slot am I on" is arithmetic and cannot be disturbed by the
+        //  preview; a merge is decided from a slot index and a position, both stable; and the
+        //  whole arrangement step is a pure function that can be tested without a pointer.
+        // ============================================================================
+        class SlotDragEngine {
             constructor() {
-                this.draggedEl = null; this.ghostEl = null;
+                this.heldEl = null;
+                this.heldId = null;
                 this.containers = [];
-                this.wasDragging = false; this.isEngaged = false; this.isPageFlipping = false;
-                this.dwellTimer = null; this.dwellTarget = null; this.folderArmed = null;
-                this.dwellX = 0; this.dwellY = 0;
+                this.wasDragging = false;
+                this.isEngaged = false;
+                this.isPageFlipping = false;
                 this.settleTimer = null;
 
-                // How long a merge takes to arm, and how still the finger has to be for it to
-                // count as a hold. See updateFolderDwell.
-                this.MERGE_HOLD_MS = 750;
-                this.MERGE_SLOP = 10;
+                this.dwell = null;          // { page, slot, x, y, timer, armedId }
+                this.MERGE_HOLD_MS = 750;   // a merge is a decision to hold still
+                this.MERGE_SLOP = 10;       // ...and this is how still
 
                 this.onPointerDown = this.onPointerDown.bind(this);
                 this.onPointerMove = this.onPointerMove.bind(this);
                 this.onPointerUp = this.onPointerUp.bind(this);
-                
+
                 window.addEventListener('touchmove', (e) => {
                     if (this.isEngaged) e.preventDefault();
                 }, { passive: false });
             }
 
-            // Listeners live on the page containers, never on individual icons. Binding each
-            // icon worked only because render() happens to re-bind at the end of every repaint;
-            // any icon that reached the DOM another way — or any future path that mutates the
-            // grid without a full render — got no listener and would jiggle without being
-            // draggable. Delegation cannot drift out of step with the DOM. The containers are
-            // themselves new elements on every render, so there is nothing to unbind.
+            // Listeners live on the page containers, never on individual icons: an icon that
+            // reaches the DOM by any other route would otherwise jiggle without being draggable.
             init(containers) {
-                this.detachPointerTracking();
+                this.detach();
                 this.containers = Array.from(containers);
                 this.containers.forEach(c => c.addEventListener('pointerdown', this.onPointerDown));
             }
 
-            detachPointerTracking() {
+            detach() {
                 document.removeEventListener('pointermove', this.onPointerMove);
                 document.removeEventListener('pointerup', this.onPointerUp);
                 document.removeEventListener('pointercancel', this.onPointerUp);
             }
 
-            cleanupListeners() {
-                this.detachPointerTracking();
-                if (this.containers) this.containers.forEach(c => c.removeEventListener('pointerdown', this.onPointerDown));
-            }
-
             destroy() {
-                this.clearFolderDwell();
-                this.cleanupListeners();
-                // Leaving these set outlives the drag they describe. Anything that asks "is a
-                // drag in progress" then gets yes forever, which is how leaving edit mode used
-                // to make the whole launcher stop responding.
-                this.targetEl = null;
+                this.clearDwell();
+                this.detach();
+                if (this.containers) {
+                    this.containers.forEach(c => c.removeEventListener('pointerdown', this.onPointerDown));
+                }
+                // Leaving these set outlives the drag they describe, and everything that asks
+                // "is a drag in progress" then gets yes forever.
+                this.releaseHeld();
                 this.isEngaged = false;
                 this.wasDragging = false;
             }
 
+            // ---- the model -------------------------------------------------------------
+
+            get perPage() {
+                return window.OS_STATE.gridCols * window.OS_STATE.gridRows;
+            }
+
+            // The arrangement, as data: one array of ids (or null) per page, in slot order.
+            // Built from state, never from the DOM.
+            readModel() {
+                const st = window.OS_STATE;
+                const per = this.perPage;
+                const onGrid = st.apps.filter(a => (a.type === 'grid' && !a.folderId) || a.type === 'folder');
+                const pages = Math.max(1, ...onGrid.map(a => (a.page || 0) + 1));
+                const model = Array.from({ length: pages }, () => new Array(per).fill(null));
+                onGrid.forEach(a => {
+                    const p = Math.min(pages - 1, Math.max(0, a.page || 0));
+                    if (st.autoArrange) return;                 // filled in order below
+                    const s = a.order;
+                    if (s >= 0 && s < per && model[p][s] === null) model[p][s] = a.id;
+                });
+                if (st.autoArrange) {
+                    for (let p = 0; p < pages; p++) {
+                        onGrid.filter(a => (a.page || 0) === p)
+                              .sort((x, y) => x.order - y.order)
+                              .forEach((a, i) => { if (i < per) model[p][i] = a.id; });
+                    }
+                } else {
+                    // Anything whose order collided or fell outside the grid still has to land
+                    // somewhere, or it would vanish the moment a drag committed.
+                    onGrid.forEach(a => {
+                        const p = Math.min(pages - 1, Math.max(0, a.page || 0));
+                        if (model.some(pg => pg.includes(a.id))) return;
+                        const free = model[p].indexOf(null);
+                        if (free !== -1) model[p][free] = a.id;
+                    });
+                }
+                return model;
+            }
+
+            // PURE. Given the arrangement at the start of a drag, the id being held, and where
+            // it is being offered, return the arrangement that a drop would produce.
+            //
+            // Compacting (autoArrange) inserts and lets the rest shuffle up. Free placement
+            // swaps with whatever is already there, which is what a home screen with gaps in it
+            // has to do. Exported for tests: this is the whole of "what does moving mean", and
+            // it needs no pointer, no DOM and no browser to check.
+            static arrange(model, heldId, toPage, toSlot, compact) {
+                const next = model.map(p => p.slice());
+                let fromPage = -1, fromSlot = -1;
+                next.forEach((pg, p) => {
+                    const s = pg.indexOf(heldId);
+                    if (s !== -1) { fromPage = p; fromSlot = s; }
+                });
+                if (fromPage === -1) return next;
+                if (toPage < 0 || toPage >= next.length) return next;
+                if (toPage === fromPage && toSlot === fromSlot) return next;
+
+                if (compact) {
+                    next[fromPage][fromSlot] = null;
+                    const target = next[toPage];
+                    const live = target.filter(id => id !== null);
+                    const at = Math.min(toSlot, live.length);
+                    live.splice(at, 0, heldId);
+                    for (let i = 0; i < target.length; i++) target[i] = live[i] !== undefined ? live[i] : null;
+                    // A page that overflowed pushes its last code to the next page rather than
+                    // dropping it. Losing a code to a reorder is not a trade worth making.
+                    if (live.length > target.length && next[toPage + 1]) {
+                        const spill = live[target.length];
+                        const free = next[toPage + 1].indexOf(null);
+                        if (free !== -1) next[toPage + 1][free] = spill;
+                    }
+                    const src = next[fromPage];
+                    const srcLive = src.filter(id => id !== null);
+                    for (let i = 0; i < src.length; i++) src[i] = srcLive[i] !== undefined ? srcLive[i] : null;
+                } else {
+                    const displaced = next[toPage][toSlot];
+                    next[toPage][toSlot] = heldId;
+                    next[fromPage][fromSlot] = displaced;   // may be null; that is a move
+                }
+                return next;
+            }
+
+            // ---- geometry --------------------------------------------------------------
+
+            // Slot rectangles, measured once per page when the drag starts. They cannot move
+            // during the drag because nothing in the DOM moves during the drag — which is the
+            // entire point of this rewrite.
+            measure() {
+                this.slots = [];
+                document.querySelectorAll('#workspace-pager .sortable-page').forEach((pageEl, p) => {
+                    this.slots[p] = Array.from(pageEl.children).map(el => el.getBoundingClientRect());
+                });
+            }
+
+            // Which slot is the finger offering the code to? Nearest centre within the page,
+            // which behaves sensibly in the gaps between icons instead of returning nothing.
+            slotAt(page, x, y) {
+                const rects = this.slots[page];
+                if (!rects || !rects.length) return -1;
+                let best = -1, bestDist = Infinity;
+                rects.forEach((r, i) => {
+                    const d = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
+                    if (d < bestDist) { bestDist = d; best = i; }
+                });
+                // Beyond about a cell and a half away the finger is not offering it anywhere.
+                const r0 = rects[0];
+                const reach = Math.max(r0.width, r0.height) * 1.5;
+                return bestDist <= reach ? best : -1;
+            }
+
+            // ---- the drag ---------------------------------------------------------------
+
             onPointerDown(e) {
                 if (!window.OS_STATE.isEditMode || e.target.closest('button')) return;
-                const target = e.target.closest('.app-icon-wrapper');
-                if (!target || target.classList.contains('custom-drag-ghost')) return;
-                if (target.parentNode !== e.currentTarget) return;
+                const el = e.target.closest('.app-icon-wrapper');
+                if (!el || el.parentNode !== e.currentTarget) return;
 
-                // Grabbing a second icon while the previous drop was still settling let that
-                // pending timer fire mid-flight: it wiped the new drag's inline transform and
-                // removed the new ghost, so the icon stuck to the finger and went nowhere. That
-                // is the "I have to re-tap to move another one" symptom. Land the old drop now.
-                if (this.draggedEl) this.settleDrop();
-                                
+                // A previous drop is already committed by the time its animation runs, so
+                // there is nothing to land here — only a flight to cut short.
+                clearTimeout(this.settleTimer);
+
                 this.startX = e.clientX; this.startY = e.clientY;
-                this.currentX = e.clientX; this.currentY = e.clientY;
                 this.pressedAt = performance.now();
-
-                this.wasDragging = false; this.isEngaged = false; this.isPageFlipping = false;
+                this.wasDragging = false;
+                this.isEngaged = false;
+                this.isPageFlipping = false;
                 this.swipedAway = false;
-                this.dwellTimer = null; this.dwellTarget = null; this.folderArmed = null;
-                
-                this.targetEl = target;
-                this.startContainer = target.parentNode;
-                this.currentContainer = this.startContainer;
-                
-                this.targetEl.classList.add('drag-ready');
+                this.candidate = el;
+                this.candidate.classList.add('drag-ready');
 
                 document.addEventListener('pointermove', this.onPointerMove, { passive: false });
                 document.addEventListener('pointerup', this.onPointerUp);
                 document.addEventListener('pointercancel', this.onPointerUp);
             }
 
-            engageDrag() {
+            engage(x, y) {
                 this.isEngaged = true;
-                this.targetEl.classList.remove('drag-ready');
-                
-                const rect = this.targetEl.getBoundingClientRect();
-                this.offsetX = this.startX - rect.left;
-                this.offsetY = this.startY - rect.top;
-                this.draggedEl = this.targetEl;
+                this.wasDragging = true;
+                this.heldEl = this.candidate;
+                this.heldId = this.heldEl.dataset.id;
+                this.heldEl.classList.remove('drag-ready');
 
-                const jiggles = this.draggedEl.querySelectorAll('.jiggle-target');
-                jiggles.forEach(j => j.style.animation = 'none');
+                this.measure();
+                this.base = this.readModel();
+                this.preview = this.base;
 
-                this.ghostEl = document.createElement('div');
-                this.ghostEl.className = this.targetEl.className + ' custom-drag-ghost';
-                this.currentContainer.insertBefore(this.ghostEl, this.targetEl);
+                const rect = this.heldEl.getBoundingClientRect();
+                this.offsetX = x - rect.left;
+                this.offsetY = y - rect.top;
 
-                this.draggedEl.style.position = 'fixed';
-                this.draggedEl.style.zIndex = '9999';
-                this.draggedEl.style.width = `${rect.width}px`;
-                this.draggedEl.style.height = `${rect.height}px`;
-                this.draggedEl.style.left = `0px`;
-                this.draggedEl.style.top = `0px`;
-                this.draggedEl.style.margin = `0px`;
-                this.draggedEl.style.transform = this.heldTransform(this.currentX, this.currentY);
-                this.draggedEl.style.pointerEvents = 'none';
-                
+                this.heldEl.querySelectorAll('.jiggle-target').forEach(j => { j.style.animation = 'none'; });
+                Object.assign(this.heldEl.style, {
+                    position: 'fixed', zIndex: '9999', left: '0px', top: '0px', margin: '0px',
+                    width: rect.width + 'px', height: rect.height + 'px', pointerEvents: 'none',
+                    transition: 'none'
+                });
+                this.heldEl.style.transform = this.heldTransform(x, y);
                 haptic(15);
             }
 
-            // Where the held icon is drawn. Follows the finger exactly until that would carry it
-            // off the screen, then holds at the edge with a sliver still showing. Something you
-            // are holding should never become invisible — that is how an icon "disappears" and
-            // reappears somewhere you did not put it.
+            // Where the held icon is drawn. Follows the finger, but never leaves the screen —
+            // something you are holding should not become invisible.
             heldTransform(px, py) {
-                const w = this.draggedEl.offsetWidth || 0, h = this.draggedEl.offsetHeight || 0;
-                const keep = 0.55;   // fraction that must stay on screen
-                const x = Math.max(-w * (1 - keep),
-                          Math.min(px - this.offsetX, window.innerWidth - w * keep));
-                const y = Math.max(-h * (1 - keep),
-                          Math.min(py - this.offsetY, window.innerHeight - h * keep));
-                return `translate3d(${x}px, ${y}px, 0) scale(1.15)`;
+                const w = this.heldEl.offsetWidth || 0, h = this.heldEl.offsetHeight || 0;
+                const keep = 0.55;
+                const x = Math.max(-w * (1 - keep), Math.min(px - this.offsetX, window.innerWidth - w * keep));
+                const y = Math.max(-h * (1 - keep), Math.min(py - this.offsetY, window.innerHeight - h * keep));
+                return `translate3d(${x}px, ${y}px, 0) scale(1.12)`;
             }
 
             onPointerMove(e) {
-                this.currentX = e.clientX; this.currentY = e.clientY;
-                
+                if (this.swipedAway) return;
+
                 if (!this.isEngaged) {
-                    if (this.swipedAway) return;
-
                     const dx = e.clientX - this.startX, dy = e.clientY - this.startY;
-                    const distance = Math.hypot(dx, dy);
 
-                    // Turning pages in edit mode is a swipe, and on a full page every swipe
-                    // starts on an icon — there is nowhere else to put your thumb. Engaging after
-                    // 5px in any direction meant that swipe grabbed the icon instead, and since
-                    // nothing constrained where a held icon could go, it was dragged clean off
-                    // the side of the screen: the icon vanished from page one and turned up
-                    // somewhere unexpected on page two.
-                    //
-                    // A quick, clearly horizontal movement is therefore a page turn, and the
-                    // drag is abandoned so the pager scrolls natively. Hold for a moment first
-                    // and it is a drag, whichever way you then move — which is how picking an
-                    // icon up is meant to feel, and matches every home screen people already know.
-                    // Deliberately hard to trigger by accident. A page turn is fast, travels a
-                    // long way sideways and barely deviates; a lift is usually diagonal and much
-                    // shorter. An earlier, looser rule (12px and a 1.6 ratio) would have called a
-                    // 14x8 diagonal lift a swipe, which would make picking icons up feel random
-                    // in the other direction. When in doubt, it is a drag — that is recoverable,
-                    // and a wrongly-refused drag is not.
                     // A page flick and a sideways reorder look identical for the first few
-                    // pixels, so this separates them on SPEED rather than on distance.
-                    //
-                    // It used to ask whether the first move was at least 18px within 180ms of
-                    // touching. That made the answer depend on how the browser happened to
-                    // sample the finger: the same physical gesture is one 40px move on a quiet
-                    // frame and two 20px moves on a busy one, and only the first was called a
-                    // swipe. Reported from a phone as "I cant get the moving spots right" —
-                    // measured, a horizontal drag from slot 0 to slot 3 did nothing at all,
-                    // twice, while diagonal drags in the same session worked.
-                    //
-                    // Velocity does not have that problem: it is the same however the movement
-                    // is chopped up. A flick is fast from the first instant; a reorder is a
-                    // press that becomes a movement, and is an order of magnitude slower. The
-                    // distance floor stays as a sanity check so a fast twitch cannot page.
-                    const QUICK_MS = 180, SWIPE_PX = 24, SWIPE_DRIFT = 10, FLICK_VX = 0.9;
+                    // pixels, so they are separated on SPEED. Distance alone depends on how the
+                    // browser happened to sample the finger; velocity is the same however the
+                    // movement is chopped up. A flick is fast from the first instant, a reorder
+                    // is a press that becomes a movement.
                     const elapsed = performance.now() - this.pressedAt;
-                    const vx = Math.abs(dx) / Math.max(1, elapsed);      // px per ms
-                    const quick = elapsed < QUICK_MS && vx >= FLICK_VX;
-                    if (quick && Math.abs(dx) >= SWIPE_PX && Math.abs(dy) <= SWIPE_DRIFT) {
+                    const vx = Math.abs(dx) / Math.max(1, elapsed);
+                    if (elapsed < 180 && vx >= 0.9 && Math.abs(dx) >= 24 && Math.abs(dy) <= 10) {
                         this.swipedAway = true;
-                        if (this.targetEl) this.targetEl.classList.remove('drag-ready');
-                        this.detachPointerTracking();
+                        if (this.candidate) this.candidate.classList.remove('drag-ready');
+                        this.detach();
                         return;
                     }
-
-                    if (distance > 5) this.engageDrag(); else return;
+                    if (Math.hypot(dx, dy) <= 5) return;
+                    this.engage(e.clientX, e.clientY);
                 }
 
-                this.wasDragging = true;
-                this.draggedEl.style.transform = this.heldTransform(e.clientX, e.clientY);
+                if (e.cancelable) e.preventDefault();
+                this.heldEl.style.transform = this.heldTransform(e.clientX, e.clientY);
 
-                const pager = document.getElementById('workspace-pager');
-                const clientWidth = pager.clientWidth;
-                const maxPages = Math.max(1, Math.ceil(pager.scrollWidth / clientWidth));
-                const edgeThreshold = 45;
+                const page = window.OS_STATE.currentPage || 0;
+                this.edgeFlip(e.clientX, page);
 
-                if (!this.isPageFlipping) {
-                    if (e.clientX < edgeThreshold && window.OS_STATE.currentPage > 0) {
-                        this.isPageFlipping = true;
-                        window.LauncherInput.goTo(window.OS_STATE.currentPage - 1);
-                        setTimeout(() => { this.isPageFlipping = false; }, 600);
-                    } else if (e.clientX > window.innerWidth - edgeThreshold && window.OS_STATE.currentPage < maxPages - 1) {
-                        this.isPageFlipping = true;
-                        window.LauncherInput.goTo(window.OS_STATE.currentPage + 1);
-                        setTimeout(() => { this.isPageFlipping = false; }, 600);
-                    }
-                }
+                const slot = this.slotAt(page, e.clientX, e.clientY);
+                if (slot === -1) return;
 
-                const under = document.elementFromPoint(e.clientX, e.clientY);
-                const closestSlot = under ? under.closest('.app-icon-wrapper, .empty-slot') : null;
+                this.updateDwell(page, slot, e.clientX, e.clientY);
 
-                // Folder dwell. Resting over another ICON (not an empty slot) for a moment
-                // arms a merge; a quick pass keeps the existing swap behaviour. The timer is
-                // what separates "I am moving past this" from "I mean this one", and without
-                // it every reorder that crossed an icon would try to make a folder.
-                this.updateFolderDwell(closestSlot, e.clientX, e.clientY);
-                const targetContainer = closestSlot ? closestSlot.parentNode : null;
-
-                if (closestSlot && closestSlot !== this.draggedEl && closestSlot !== this.ghostEl && this.containers.includes(targetContainer)) {
-                    const itemPositions = new Map();
-                    this.containers.forEach(c => { 
-                        Array.from(c.children).forEach(item => { 
-                            if (item !== this.draggedEl && item !== this.ghostEl) { itemPositions.set(item, item.getBoundingClientRect()); } 
-                        }); 
-                    });
-
-                    if (window.OS_STATE.autoArrange) {
-                        if (targetContainer !== this.currentContainer) {
-                            targetContainer.insertBefore(this.ghostEl, closestSlot);
-                            this.currentContainer = targetContainer;
-                        } else {
-                            const targetItems = Array.from(targetContainer.children);
-                            const ghostIndex = targetItems.indexOf(this.ghostEl);
-                            const hoverIndex = targetItems.indexOf(closestSlot);
-                            if (hoverIndex > ghostIndex) targetContainer.insertBefore(this.ghostEl, closestSlot.nextSibling);
-                            else targetContainer.insertBefore(this.ghostEl, closestSlot);
-                        }
-                    } else {
-                        const p1 = this.ghostEl.parentNode;
-                        const s1 = this.ghostEl.nextSibling;
-                        const p2 = closestSlot.parentNode;
-                        const s2 = closestSlot.nextSibling === this.ghostEl ? closestSlot : closestSlot.nextSibling;
-
-                        p2.insertBefore(this.ghostEl, s2);
-                        p1.insertBefore(closestSlot, s1);
-                        this.currentContainer = p2;
-                    }
-
-                    this.containers.forEach(c => {
-                        Array.from(c.children).forEach(item => {
-                            if (item !== this.draggedEl && item !== this.ghostEl) {
-                                const oldPos = itemPositions.get(item);
-                                const newPos = item.getBoundingClientRect();
-                                if (oldPos && (oldPos.left !== newPos.left || oldPos.top !== newPos.top)) {
-                                    item.style.transform = `translate3d(${oldPos.left - newPos.left}px, ${oldPos.top - newPos.top}px, 0)`;
-                                    item.style.transition = 'none';
-                                    requestAnimationFrame(() => {
-                                        item.style.transition = 'transform 0.3s var(--spring-snappy)';
-                                        item.style.transform = 'translate3d(0, 0, 0)';
-                                        setTimeout(() => { item.style.transition = ''; item.style.transform = ''; }, 300);
-                                    });
-                                }
-                            }
-                        });
-                    });
-                }
+                const next = SlotDragEngine.arrange(this.base, this.heldId, page, slot,
+                                                    !!window.OS_STATE.autoArrange);
+                this.applyPreview(next);
             }
 
-            syncState() {
-                const allPages = document.querySelectorAll('.sortable-page');
-                allPages.forEach((pageEl, pageIndex) => {
-                    const items = Array.from(pageEl.children);
-                    items.forEach((item, itemIndex) => {
-                        if (item.classList.contains('app-icon-wrapper')) {
-                            const itemId = item.dataset.id;
-                            const itemObj = window.OS_STATE.apps.find(a => a.id === itemId);
-                            if (itemObj) {
-                                itemObj.page = pageIndex;
-                                itemObj.order = itemIndex;
-                            }
-                        }
+            // Carrying a code to the edge turns the page, once, with a cooldown — otherwise it
+            // riffles through every page while you are still deciding.
+            edgeFlip(x, page) {
+                if (this.isPageFlipping) return;
+                const pages = this.slots.length;
+                const edge = 45;
+                let to = null;
+                if (x < edge && page > 0) to = page - 1;
+                else if (x > window.innerWidth - edge && page < pages - 1) to = page + 1;
+                if (to === null) return;
+                this.isPageFlipping = true;
+                window.LauncherInput.goTo(to);
+                setTimeout(() => {
+                    this.isPageFlipping = false;
+                    // The page moved under the finger, so every slot rectangle is stale.
+                    this.measure();
+                }, 600);
+            }
+
+            // Move every icon to where the drop would put it. Transforms only: the DOM order is
+            // never touched, so nothing can move out from under the pointer.
+            applyPreview(next) {
+                if (this.samePreview(next)) return;
+                this.preview = next;
+                const byId = new Map();
+                document.querySelectorAll('#workspace-pager .app-icon-wrapper').forEach(el => {
+                    byId.set(el.dataset.id, el);
+                });
+                this.base.forEach((pg, p) => {
+                    pg.forEach((id, homeSlot) => {
+                        if (!id || id === this.heldId) return;
+                        const el = byId.get(id);
+                        if (!el) return;
+                        let tp = -1, ts = -1;
+                        next.forEach((npg, np) => {
+                            const s = npg.indexOf(id);
+                            if (s !== -1) { tp = np; ts = s; }
+                        });
+                        if (tp === -1 || !this.slots[tp] || !this.slots[p]) return;
+                        const from = this.slots[p][homeSlot];
+                        const to = this.slots[tp][ts];
+                        if (!from || !to) return;
+                        const dx = to.left - from.left, dy = to.top - from.top;
+                        el.style.transition = 'transform 0.22s var(--spring-snappy)';
+                        el.style.transform = (dx || dy) ? `translate3d(${dx}px, ${dy}px, 0)` : '';
                     });
                 });
-                saveState();
             }
 
-            // Merging is a decision to HOLD STILL. Passing through, or arriving and pausing
-            // before you let go, is a reorder.
-            //
-            // This is the whole of the fix for "its not possible for me to rearrange without
-            // glitching into a folder". The dwell used to start when the finger first entered a
-            // target's box and then never reset: the swap immediately moved that icon away, so
-            // every later move landed on the ghost and took the early return below, leaving the
-            // timer running no matter how far the finger travelled afterwards. Dragging a code
-            // to another's slot means spending time in that slot, so the merge armed on
-            // essentially every reorder — measured on the user's own screen as four codes
-            // swallowed into two folders while trying to rearrange them.
-            //
-            // Anchoring the dwell to a POSITION rather than to an element is what separates the
-            // two gestures, because it is the difference a person actually performs: a merge is
-            // a deliberate hold, a reorder is a movement that happens to end there.
-            armFolderDwell(slot, x, y) {
-                if (this.dwellTimer) clearTimeout(this.dwellTimer);
-                this.dwellX = x; this.dwellY = y;
-                this.dwellTimer = setTimeout(() => {
-                    // Re-check on fire: the pointer may have moved on, and arming a merge
-                    // against an icon the finger already left is how you get a folder you
-                    // never asked for.
-                    if (this.dwellTarget !== slot) return;
-                    this.folderArmed = slot;
-                    slot.classList.add('folder-target');
-                    if (this.draggedEl) this.draggedEl.classList.add('drag-merging');
+            samePreview(next) {
+                if (!this.preview) return false;
+                if (next.length !== this.preview.length) return false;
+                return next.every((pg, p) => pg.every((id, i) => id === this.preview[p][i]));
+            }
+
+            clearPreviewTransforms() {
+                document.querySelectorAll('#workspace-pager .app-icon-wrapper').forEach(el => {
+                    if (el === this.heldEl) return;
+                    el.style.transition = '';
+                    el.style.transform = '';
+                });
+            }
+
+            // ---- merging ----------------------------------------------------------------
+
+            // A merge is a decision to HOLD STILL over an occupied slot. Passing through, or
+            // arriving and pausing before you let go, is a reorder. The dwell is anchored to a
+            // POSITION as well as a slot: a finger that is travelling can never be holding
+            // still, however long it spends over one square.
+            updateDwell(page, slot, x, y) {
+                const occupant = this.base[page] && this.base[page][slot];
+                if (!occupant || occupant === this.heldId) { this.clearDwell(); return; }
+
+                const d = this.dwell;
+                const moved = d && Math.hypot(x - d.x, y - d.y) > this.MERGE_SLOP;
+                if (d && d.page === page && d.slot === slot && !moved) return;
+
+                this.clearDwell();
+                this.dwell = { page, slot, x, y, armedId: null, timer: null };
+                const mine = this.dwell;
+                mine.timer = setTimeout(() => {
+                    if (this.dwell !== mine) return;
+                    mine.armedId = occupant;
+                    const el = document.querySelector(`#workspace-pager .app-icon-wrapper[data-id="${occupant}"]`);
+                    if (el) el.classList.add('folder-target');
+                    if (this.heldEl) this.heldEl.classList.add('drag-merging');
                     haptic(18);
                 }, this.MERGE_HOLD_MS);
             }
 
-            updateFolderDwell(slot, x, y) {
-                // Resting on an icon and the reorder swap fight each other, and the swap was
-                // winning. The same pointermove that starts the dwell also swaps the hovered
-                // icon into the ghost's old place — so by the next move the finger is over the
-                // GHOST, not the icon, the dwell was cleared, and the merge never armed. Whether
-                // it worked came down to where the last move event happened to land, which is
-                // why folder creation was unreliable by hand and the test for it failed about
-                // one run in five.
-                //
-                // Being over the ghost means being exactly where you already were: the ghost
-                // occupies the gap your own drag opened. So it is not a change of target, and
-                // the dwell stays pointed at the icon it started on. The timer still holds a
-                // reference to that icon, and resolveFolderDrop works from its data-id, so the
-                // merge lands on the item that was actually held over even though it has moved.
-                // What the ghost does NOT buy is immunity from the stillness test below — that
-                // is exactly the loophole that made every reorder end in a folder.
-                const overGhost = !!(slot && slot === this.ghostEl && this.dwellTarget);
+            clearDwell() {
+                if (this.dwell && this.dwell.timer) clearTimeout(this.dwell.timer);
+                document.querySelectorAll('.folder-target').forEach(el => el.classList.remove('folder-target'));
+                if (this.heldEl) this.heldEl.classList.remove('drag-merging');
+                this.dwell = null;
+            }
 
-                const isIcon = slot && slot.classList.contains('app-icon-wrapper') &&
-                               slot !== this.draggedEl && slot !== this.ghostEl;
+            // ---- landing ----------------------------------------------------------------
 
-                if (!overGhost && (!isIcon || slot !== this.dwellTarget)) {
-                    this.clearFolderDwell();
-                    this.dwellTarget = isIcon ? slot : null;
-                    if (isIcon) this.armFolderDwell(slot, x, y);
+            onPointerUp() {
+                this.detach();
+                if (this.candidate) this.candidate.classList.remove('drag-ready');
+
+                if (!this.isEngaged) {
+                    this.candidate = null;
+                    this.clearDwell();
                     return;
                 }
+                this.isEngaged = false;
 
-                // Still on the same target — but that alone is not intent. Any real movement
-                // pushes the merge back out, and takes an armed one down again, so a finger that
-                // is travelling can never be holding still.
-                if (!this.dwellTarget) return;
-                if (Math.hypot(x - this.dwellX, y - this.dwellY) <= this.MERGE_SLOP) return;
+                const merge = this.dwell && this.dwell.armedId;
+                if (merge && this.resolveMerge(merge)) return;
 
-                if (this.folderArmed) {
-                    this.folderArmed.classList.remove('folder-target');
-                    if (this.draggedEl) this.draggedEl.classList.remove('drag-merging');
-                    this.folderArmed = null;
-                }
-                this.armFolderDwell(this.dwellTarget, x, y);
+                // The drop lands NOW — in the model, in state, and in the DOM — and the
+                // settling animation is played afterwards from where the finger left it.
+                //
+                // The obvious order is the other way round: animate the held icon into its slot
+                // and commit when it arrives. That leaves the grid wrong for the length of the
+                // animation, and it is wrong in the way that matters, because the slot the icon
+                // is flying towards is still an empty slot as far as a hit test is concerned.
+                // Measured: pressing a second icon within about 200ms of putting the first one
+                // down landed on `.empty-slot` and the engine never saw a pointerdown at all —
+                // which is precisely the "I have to re-tap the icons" report, reproduced.
+                //
+                // Committing first also means the icon is back IN FLOW when it animates, so the
+                // flight is an ordinary FLIP on a grid item rather than a fixed-position element
+                // hovering over a hole where it is supposed to be.
+                const from = this.heldEl.getBoundingClientRect();
+                const el = this.heldEl;
+                this.commit();
+                this.flyHome(el, from);
             }
 
-            clearFolderDwell() {
-                if (this.dwellTimer) clearTimeout(this.dwellTimer);
-                this.dwellTimer = null;
-                if (this.folderArmed) this.folderArmed.classList.remove('folder-target');
-                // Always, not only when armed: moving off the target has to undim the held icon
-                // even though nothing was armed yet, or a near-miss leaves it faded for the rest
-                // of the drag.
-                if (this.draggedEl) this.draggedEl.classList.remove('drag-merging');
-                this.folderArmed = null;
-                this.dwellTarget = null;
+            // FLIP: the element is already in its slot, so put it back where the finger left it
+            // and let it travel the difference.
+            flyHome(el, from) {
+                if (!el || !el.isConnected) return;
+                const to = el.getBoundingClientRect();
+                const dx = from.left - to.left, dy = from.top - to.top;
+                if (!dx && !dy) return;
+                el.style.transition = 'none';
+                el.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(1.12)`;
+                requestAnimationFrame(() => {
+                    el.style.transition = 'transform 0.22s var(--spring-snappy)';
+                    el.style.transform = '';
+                });
+                clearTimeout(this.settleTimer);
+                this.settleTimer = setTimeout(() => {
+                    el.style.transition = ''; el.style.transform = '';
+                }, 260);
             }
 
-            // Returns true when the drop was consumed as a folder action.
-            resolveFolderDrop() {
-                const target = this.folderArmed;
-                if (!target) return false;
-                const dragId = this.draggedEl && this.draggedEl.dataset.id;
-                const targetId = target.dataset.id;
-                this.clearFolderDwell();
+            resolveMerge(targetId) {
+                this.clearDwell();
+                const dragId = this.heldId;
                 if (!dragId || !targetId || dragId === targetId) return false;
-
                 const targetItem = window.OS_STATE.apps.find(a => a.id === targetId);
                 if (!targetItem) return false;
 
@@ -3421,75 +3495,90 @@
                 if (!ok) return false;
 
                 haptic([12, 40, 12]);
+                this.releaseHeld();
+                this.clearPreviewTransforms();
+                window.Renderer.render();
+                setTimeout(() => { this.wasDragging = false; }, 50);
                 return true;
             }
 
-            onPointerUp(e) {
-                document.removeEventListener('pointermove', this.onPointerMove);
-                document.removeEventListener('pointerup', this.onPointerUp);
-                document.removeEventListener('pointercancel', this.onPointerUp);
-                
-                if (this.targetEl) this.targetEl.classList.remove('drag-ready');
+            // Write the previewed arrangement into state. The DOM is not consulted — it was
+            // never the truth, and reading an order back out of it is what this rewrite exists
+            // to stop doing.
+            commit() {
+                if (!this.heldEl) return;
 
-                // The drag is over the moment the finger lifts.
-                //
-                // `isEngaged` was set in engageDrag() and never cleared here — only when edit
-                // mode ended. So after ONE drag it stayed true for the rest of the session, and
-                // everything that asks "is a drag in progress" got yes forever: taps were
-                // ignored, the background tap that leaves edit mode did nothing, and the global
-                // touchmove preventDefault stayed armed. Reported from a phone as "I cant get
-                // out of edit mode" and "I cant get the moving spots right", and the flags
-                // confirmed it — isEngaged true, targetEl set, with no finger on the screen.
-                const wasEngaged = this.isEngaged;
-                this.isEngaged = false;
-                this.targetEl = null;
+                const byId = new Map(window.OS_STATE.apps.map(a => [a.id, a]));
+                (this.preview || this.base).forEach((pg, p) => {
+                    pg.forEach((id, slot) => {
+                        const item = id && byId.get(id);
+                        if (!item) return;
+                        item.page = p;
+                        item.order = slot;
+                    });
+                });
 
-                if (!wasEngaged) { this.clearFolderDwell(); return; }
-
-                // A folder drop replaces the reorder entirely — the dragged icon is going INTO
-                // something, so animating it back into a grid slot would be wrong.
-                if (this.resolveFolderDrop()) {
-                    if (this.draggedEl) { this.draggedEl.style = ''; this.draggedEl.classList.remove('drag-merging'); }
-                    if (this.ghostEl) this.ghostEl.remove();
-                    this.draggedEl = null; this.ghostEl = null;
-                    window.Renderer.render();
-                    setTimeout(() => { this.wasDragging = false; }, 50);
-                    return;
-                }
-
-                // Landing takes 220ms, not 400. Until it lands the icon is still position:fixed
-                // at z-index 9999 — a full-size code floating over the grid — so a slow settle
-                // does not read as "gently placed", it reads as stuck. Caught in a screenshot
-                // taken just after a drop: the icon had already swapped in the state but was
-                // still hanging above its new square, larger than its neighbours.
-                const ghostRect = this.ghostEl.getBoundingClientRect();
-                this.draggedEl.style.transition = 'transform 0.22s var(--spring-snappy)';
-                this.draggedEl.style.transform = `translate3d(${ghostRect.left}px, ${ghostRect.top}px, 0) scale(1)`;
-
-                this.settleTimer = setTimeout(() => this.settleDrop(), 220);
-            }
-
-            // Drops the dragged icon back into the grid at the slot its ghost is holding.
-            // Runs from the settle timer, or immediately when a new drag starts first.
-            // Running it twice is harmless; running it late is what broke the next drag.
-            settleDrop() {
-                clearTimeout(this.settleTimer);
-                this.settleTimer = null;
-                if (!this.draggedEl || !this.ghostEl) return;
-
-                this.draggedEl.style = '';
-                this.draggedEl.classList.remove('drag-merging');
-                this.draggedEl.querySelectorAll('.jiggle-target').forEach(j => j.style.animation = '');
-
-                this.currentContainer.insertBefore(this.draggedEl, this.ghostEl);
-                this.ghostEl.remove();
-
-                this.syncState();
-                this.draggedEl = null; this.ghostEl = null;
-
+                this.clearDwell();
+                this.releaseHeld();
+                this.clearPreviewTransforms();
+                this.applyToDom(this.preview || this.base);
+                saveState();
                 setTimeout(() => { this.wasDragging = false; }, 50);
             }
+
+            // Put the icons where the model says, by MOVING the existing nodes inside their
+            // page — not by asking Renderer to rebuild.
+            //
+            // A full render replaces the page containers themselves, and the drag engine's
+            // pointerdown listener lives on those containers. Landing a drop that way means
+            // that for one frame there is no container listening, and a press that arrives in
+            // that window is simply lost: measured, picking up a second icon within about
+            // 200ms of putting the first one down did nothing at all, with the event never
+            // reaching the engine. That is the "I have to re-tap the icons" report, and it was
+            // reintroduced by landing a drop through a rebuild.
+            //
+            // Moving nodes inside a container keeps the container, keeps the listener, keeps
+            // every canvas, and is less work besides.
+            applyToDom(model) {
+                const pages = document.querySelectorAll('#workspace-pager .sortable-page');
+                const byId = new Map();
+                document.querySelectorAll('#workspace-pager .app-icon-wrapper').forEach(el => {
+                    byId.set(el.dataset.id, el);
+                });
+                const spare = [];
+                pages.forEach(p => p.querySelectorAll('.empty-slot').forEach(el => spare.push(el)));
+
+                model.forEach((pg, p) => {
+                    const pageEl = pages[p];
+                    if (!pageEl) return;
+                    const kids = pg.map(id => {
+                        const el = id && byId.get(id);
+                        if (el) return el;
+                        const blank = spare.pop() || document.createElement('div');
+                        blank.className = 'empty-slot';
+                        return blank;
+                    });
+                    pageEl.replaceChildren(...kids);
+                });
+            }
+
+            // The supported way to ask what is being held. A test reached straight into the
+            // old engine's private field for this and broke on a rename that changed nothing
+            // about behaviour — which is a bad reason for a test to fail.
+            heldElement() { return this.heldEl; }
+
+            releaseHeld() {
+                if (this.heldEl) {
+                    this.heldEl.style.cssText = '';
+                    this.heldEl.classList.remove('drag-merging', 'drag-ready');
+                    this.heldEl.querySelectorAll('.jiggle-target').forEach(j => { j.style.animation = ''; });
+                }
+                this.heldEl = null;
+                this.heldId = null;
+                this.candidate = null;
+            }
         }
+
 
         class OSInteractionManager {
             constructor() {
@@ -7278,7 +7367,8 @@
         // --- INIT ---
         window.TimeEngine = new OSTimeEngine();
         window.Renderer = new OSRenderer();
-        window.DragEngine = new PhysicsDragEngine();
+        window.DragEngine = new SlotDragEngine();
+        window.SlotDragEngine = SlotDragEngine;
         window.SearchEngine = new OSSearchEngine();
         window.GestureManager = new OSGestureManager();
         window.InteractionManager = new OSInteractionManager();
