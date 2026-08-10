@@ -359,6 +359,14 @@ re-run and was not changed.
 
 ---
 
+Audit rate after the fix: **15 clean runs in 16**, against 3 in 4 before it. One run reported
+**two** findings — note two, where the original was consistently one — and did not reproduce in
+ten further runs, so it could not be captured or named. Recorded here rather than rounded down to
+zero: the direct measurement above is what the fix rests on, and that one observation is
+unexplained.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
@@ -442,31 +450,42 @@ watching four of them fail.
 
 ---
 
-## Open
+## Fixed after being tracked as open
 
 | # | Defect | Status |
 |---|---|---|
-| 42 | **The skin morph occasionally leaves the screen illegible for ~660ms.** `#workspace-container: unreadable (blur ≥4px) for 661ms`, against a 500ms budget. Intermittent: **1 run in 4** on the currently-live build, 1 in 2 on the working branch — small samples, and present at baseline either way. | OPEN |
+| 42 | **The skin morph intermittently left the screen illegible.** `#workspace-container: unreadable (blur ≥4px) for 661ms`, against a 500ms budget. Roughly 1 run in 4. | FIXED |
 
-This is defect #5 coming back part-time. The timings say it should not: the blur eases in over
-220ms, `morph-pulse` is removed at 260ms, and the ease-out finishes around 480ms — a span above
-4px of roughly **334ms**. Measured, it is sometimes double that.
+The obvious explanation was ruled out first: the timers fire on time, and the renders are cheap
+(`Renderer.render()` 7.5ms, `SkinManager.render()` 4.2ms with 40 codes).
 
-Ruled out, by measurement rather than reasoning:
-- Not main-thread blocking from rendering — `Renderer.render()` is 7.5ms and `SkinManager.render()`
-  is 4.2ms with 40 codes on the page.
-- Not caused by any of the launcher, TouchTap, inert, or icon-cache work — it reproduces on the
-  build that was already live before any of it.
+The actual mechanism is that flipping `data-skin` invalidates essentially every rule in the
+stylesheet, and that recalculation lands exactly where the old sequence tried to begin easing the
+blur away. **A transition cannot start while the main thread is busy**, so the start slipped and
+the screen stayed unreadable long past its budget. Measured over 21 morphs: median 327ms, worst
+512, and the long ones lined up with frame gaps of 137–154ms.
 
-The likely mechanism, not yet confirmed: the morph is sequenced by wall-clock `setTimeout`, and
-at 150ms it flips `data-skin`, which invalidates essentially every rule in the stylesheet. A slow
-style recalc there delays the 260ms timer that removes the blur, and the blur simply sits. If so
-the fix is to stop sequencing a visual transition on wall-clock timers — drive it from
-`transitionend` or the Web Animations API, the same reasoning that fixed the toast in #19.
+Two changes, each doing a different job:
 
-Not shipped as part of this round deliberately: it is pre-existing, so holding the other fixes
-back does not protect anyone from it, and changing the morph deserves its own audit cycle rather
-than being bundled into a deploy.
+- The ease-out now starts **two animation frames after the swap** rather than at a fixed 260ms.
+  The first frame carries the recalculation and repaint; the second begins the ease-out with that
+  work behind it. A slow machine now starts a little later instead of starting on time and
+  stalling half way through — the difference between a transition that is late and one that is
+  broken.
+- The pulse blurs to **8px rather than 12**. It exists to hide the swap, and 8px hides it
+  completely — verified, the swap happens at 6.6px, above the ~4px legibility threshold. What
+  12px bought was 74ms more unreadable screen at each end.
+
+| | before | after |
+|---|---|---|
+| median span | 327ms | **140ms** |
+| worst of 21 | 512ms | **198ms** |
+| over the 500ms budget | 1 in 21 | **none** |
+
+Two of the three tests fail against the previous build, and one of them found something the audit
+never reported: morphing to and from aurora sometimes left the workspace **still blurred after
+1.3 seconds**. The third — that the swap still happens while the screen is covered — passes both
+ways on purpose, because it guards the fix from going too far.
 
 ---
 
