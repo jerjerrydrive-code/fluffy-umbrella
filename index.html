@@ -2334,10 +2334,36 @@
                 this.pagination = document.getElementById('pagination-container');
             }
 
+            // Everything that decides what this icon LOOKS like. Two icons with the same
+            // signature are pixel-identical, so the old node can be kept instead of rebuilt.
+            // Anything that affects only WHERE an icon sits is deliberately absent: moving an
+            // icon must not cost it its canvas.
+            itemSignature(item, isDock) {
+                const parts = [item.id, item.type, isDock ? 'dock' : 'grid', item.title || '',
+                               item.icon || '', item.bcid || '', item.data || '',
+                               item.fg || '', item.bg || '', item.badge || ''];
+                // The Library's badge is derived from the whole collection, not from the item.
+                if (item.id === 'nav_lib') {
+                    parts.push(window.OS_STATE.apps.filter(a => a.type === 'grid').length);
+                }
+                // A folder's face is a 2x2 peek at its first four codes, so it changes when
+                // they do even though the folder itself has not.
+                if (item.type === 'folder') {
+                    window.folderChildren(item.id).slice(0, 4).forEach(k =>
+                        parts.push(k.id, k.bcid || '', k.data || '', k.fg || '', k.bg || ''));
+                }
+                return parts.join('\u0001');
+            }
+
             createItemElement(itemData, isDock = false) {
                 const wrapper = document.createElement('div');
                 wrapper.className = 'app-icon-wrapper flex flex-col items-center justify-start group cursor-pointer w-full relative';
                 wrapper.dataset.id = itemData.id;
+
+                // A node can now outlive the render that made it, so its handlers must not
+                // hold the object they were built from — a restore, or any path that rebuilds
+                // the apps array, would leave them editing a copy nothing else can see.
+                const live = () => window.OS_STATE.apps.find(a => a.id === itemData.id) || itemData;
 
                 let iconInnerHtml = '';
                 if (itemData.type === 'folder') {
@@ -2419,7 +2445,7 @@
 
                     if (window.OS_STATE.isEditMode || e.target.closest('.edit-only')) {
                         if(window.OS_STATE.isEditMode && !e.target.closest('.edit-only') && (itemData.type === 'grid' || itemData.type === 'folder')) {
-                            window.InteractionManager.openRename(itemData);
+                            window.InteractionManager.openRename(live());
                         }
                         return;
                     }
@@ -2427,7 +2453,7 @@
                     if (itemData.type === 'folder') {
                         if (window.FolderManager) window.FolderManager.open(itemData.id);
                     } else if (itemData.type === 'grid') {
-                        if (window.InteractionManager) window.InteractionManager.openEnlarge(itemData);
+                        if (window.InteractionManager) window.InteractionManager.openEnlarge(live());
                     } else if (itemData.id === 'nav_gen') {
                         if (window.CodeGenerator) window.CodeGenerator.open();
                     } else if (itemData.id === 'nav_home') {
@@ -2483,11 +2509,12 @@
                             // same square: only one can be drawn there, so the rest vanished
                             // from the home screen while staying in storage.
                             const kids = window.folderChildren(itemData.id);
+                            const homePage = live().page || 0;
                             // The folder leaves first, so the first child can have its square.
                             window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== itemData.id);
                             kids.forEach(kid => {
                                 delete kid.folderId;
-                                window.placeOnGrid(kid, itemData.page || 0);
+                                window.placeOnGrid(kid, homePage);
                             });
                         }
                         window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== itemData.id);
@@ -2534,18 +2561,59 @@
                 });
                 
                 const totalPages = Math.max(2, maxPage + 1);
-                
-                this.pager.innerHTML = '';
 
+                // Reconcile; do not rebuild.
+                //
+                // This used to empty the pager and construct every icon again. A code's icon is
+                // a <canvas> that bwip-js draws into ten milliseconds later, so for at least one
+                // frame after ANY state change the whole home screen was a grid of blank white
+                // squares that then popped back in. Reported from a phone as "a lot of static
+                // flashes throughout the app all over when interacting" — and render() runs on
+                // far more than edits: every drop, every folder change, every resize, every
+                // return from a layer.
+                //
+                // Keeping the nodes keeps their pixels. An icon is reused whenever the thing it
+                // depicts has not changed (see itemSignature); moving one between slots or pages
+                // is a DOM move, which costs nothing and shows nothing. Only an icon whose
+                // CONTENT changed is built again, and only that one flashes.
+                const salvage = (root) => {
+                    const pool = new Map();
+                    root.querySelectorAll('.app-icon-wrapper[data-id]').forEach(el => {
+                        if (!el.classList.contains('custom-drag-ghost')) pool.set(el.dataset.id, el);
+                    });
+                    return pool;
+                };
+                const gridPool = salvage(this.pager);
+                const dockPool = salvage(this.dock);
+
+                const nodeFor = (item, isDock) => {
+                    const pool = isDock ? dockPool : gridPool;
+                    const sig = this.itemSignature(item, isDock);
+                    const kept = pool.get(item.id);
+                    if (kept && kept.__sig === sig) {
+                        pool.delete(item.id);
+                        // A drop can leave transient state behind. Strip it, or a reused icon
+                        // keeps the half-finished look of the drag that moved it.
+                        kept.style.cssText = '';
+                        kept.classList.remove('drag-ready', 'drag-merging', 'folder-target');
+                        kept.querySelectorAll('.jiggle-target').forEach(j => { j.style.animation = ''; });
+                        return kept;
+                    }
+                    const fresh = this.createItemElement(item, isDock);
+                    fresh.__sig = sig;
+                    return fresh;
+                };
+
+                const pagesFrag = document.createDocumentFragment();
                 for (let i = 0; i < totalPages; i++) {
                     const pageWrapper = document.createElement('div');
                     pageWrapper.className = 'page-wrapper';
                     const gridEl = document.createElement('div');
                     gridEl.className = 'os-grid sortable-page';
-                    
+
                     const itemsOnPage = gridItems.filter(a => a.page === i).sort((a, b) => a.order - b.order);
                     const slots = new Array(itemsPerPage).fill(null);
-                    
+
                     if (state.autoArrange) {
                         itemsOnPage.forEach((item, index) => { if (index < itemsPerPage) slots[index] = item; });
                     } else {
@@ -2553,7 +2621,7 @@
                     }
 
                     slots.forEach((item) => {
-                        if (item) gridEl.appendChild(this.createItemElement(item));
+                        if (item) gridEl.appendChild(nodeFor(item, false));
                         else {
                             const empty = document.createElement('div');
                             empty.className = 'empty-slot';
@@ -2561,13 +2629,17 @@
                         }
                     });
                     pageWrapper.appendChild(gridEl);
-                    this.pager.appendChild(pageWrapper);
+                    pagesFrag.appendChild(pageWrapper);
                 }
+                // One swap, inside the same task the nodes were moved in, so the browser never
+                // gets a chance to paint a half-built grid.
+                this.pager.replaceChildren(pagesFrag);
 
-                this.dock.innerHTML = '';
+                const dockFrag = document.createDocumentFragment();
                 state.apps.filter(a => a.type === 'dock').sort((a,b)=>a.order-b.order).forEach(app => {
-                    this.dock.appendChild(this.createItemElement(app, true));
+                    dockFrag.appendChild(nodeFor(app, true));
                 });
+                this.dock.replaceChildren(dockFrag);
 
                 this.pagination.innerHTML = '';
                 for (let i = 0; i < totalPages; i++) {
@@ -2736,7 +2808,13 @@
                 this.containers = [];
                 this.wasDragging = false; this.isEngaged = false; this.isPageFlipping = false;
                 this.dwellTimer = null; this.dwellTarget = null; this.folderArmed = null;
+                this.dwellX = 0; this.dwellY = 0;
                 this.settleTimer = null;
+
+                // How long a merge takes to arm, and how still the finger has to be for it to
+                // count as a hold. See updateFolderDwell.
+                this.MERGE_HOLD_MS = 750;
+                this.MERGE_SLOP = 10;
 
                 this.onPointerDown = this.onPointerDown.bind(this);
                 this.onPointerMove = this.onPointerMove.bind(this);
@@ -2937,7 +3015,7 @@
                 // arms a merge; a quick pass keeps the existing swap behaviour. The timer is
                 // what separates "I am moving past this" from "I mean this one", and without
                 // it every reorder that crossed an icon would try to make a folder.
-                this.updateFolderDwell(closestSlot);
+                this.updateFolderDwell(closestSlot, e.clientX, e.clientY);
                 const targetContainer = closestSlot ? closestSlot.parentNode : null;
 
                 if (closestSlot && closestSlot !== this.draggedEl && closestSlot !== this.ghostEl && this.containers.includes(targetContainer)) {
@@ -3008,7 +3086,37 @@
                 saveState();
             }
 
-            updateFolderDwell(slot) {
+            // Merging is a decision to HOLD STILL. Passing through, or arriving and pausing
+            // before you let go, is a reorder.
+            //
+            // This is the whole of the fix for "its not possible for me to rearrange without
+            // glitching into a folder". The dwell used to start when the finger first entered a
+            // target's box and then never reset: the swap immediately moved that icon away, so
+            // every later move landed on the ghost and took the early return below, leaving the
+            // timer running no matter how far the finger travelled afterwards. Dragging a code
+            // to another's slot means spending time in that slot, so the merge armed on
+            // essentially every reorder — measured on the user's own screen as four codes
+            // swallowed into two folders while trying to rearrange them.
+            //
+            // Anchoring the dwell to a POSITION rather than to an element is what separates the
+            // two gestures, because it is the difference a person actually performs: a merge is
+            // a deliberate hold, a reorder is a movement that happens to end there.
+            armFolderDwell(slot, x, y) {
+                if (this.dwellTimer) clearTimeout(this.dwellTimer);
+                this.dwellX = x; this.dwellY = y;
+                this.dwellTimer = setTimeout(() => {
+                    // Re-check on fire: the pointer may have moved on, and arming a merge
+                    // against an icon the finger already left is how you get a folder you
+                    // never asked for.
+                    if (this.dwellTarget !== slot) return;
+                    this.folderArmed = slot;
+                    slot.classList.add('folder-target');
+                    if (this.draggedEl) this.draggedEl.classList.add('drag-merging');
+                    haptic(18);
+                }, this.MERGE_HOLD_MS);
+            }
+
+            updateFolderDwell(slot, x, y) {
                 // Resting on an icon and the reorder swap fight each other, and the swap was
                 // winning. The same pointermove that starts the dwell also swaps the hovered
                 // icon into the ghost's old place — so by the next move the finger is over the
@@ -3019,30 +3127,35 @@
                 //
                 // Being over the ghost means being exactly where you already were: the ghost
                 // occupies the gap your own drag opened. So it is not a change of target, and
-                // the running dwell is left alone. The timer still holds a reference to the
-                // original icon, and resolveFolderDrop works from its data-id, so the merge
-                // lands on the item that was actually paused over even though it has moved.
-                if (slot && slot === this.ghostEl && this.dwellTarget) return;
+                // the dwell stays pointed at the icon it started on. The timer still holds a
+                // reference to that icon, and resolveFolderDrop works from its data-id, so the
+                // merge lands on the item that was actually held over even though it has moved.
+                // What the ghost does NOT buy is immunity from the stillness test below — that
+                // is exactly the loophole that made every reorder end in a folder.
+                const overGhost = !!(slot && slot === this.ghostEl && this.dwellTarget);
 
                 const isIcon = slot && slot.classList.contains('app-icon-wrapper') &&
                                slot !== this.draggedEl && slot !== this.ghostEl;
 
-                if (!isIcon || slot !== this.dwellTarget) {
+                if (!overGhost && (!isIcon || slot !== this.dwellTarget)) {
                     this.clearFolderDwell();
                     this.dwellTarget = isIcon ? slot : null;
-                    if (isIcon) {
-                        this.dwellTimer = setTimeout(() => {
-                            // Re-check on fire: the pointer may have moved on, and arming a merge
-                            // against an icon the finger already left is how you get a folder you
-                            // never asked for.
-                            if (this.dwellTarget !== slot) return;
-                            this.folderArmed = slot;
-                            slot.classList.add('folder-target');
-                            if (this.draggedEl) this.draggedEl.classList.add('drag-merging');
-                            haptic(18);
-                        }, 550);
-                    }
+                    if (isIcon) this.armFolderDwell(slot, x, y);
+                    return;
                 }
+
+                // Still on the same target — but that alone is not intent. Any real movement
+                // pushes the merge back out, and takes an armed one down again, so a finger that
+                // is travelling can never be holding still.
+                if (!this.dwellTarget) return;
+                if (Math.hypot(x - this.dwellX, y - this.dwellY) <= this.MERGE_SLOP) return;
+
+                if (this.folderArmed) {
+                    this.folderArmed.classList.remove('folder-target');
+                    if (this.draggedEl) this.draggedEl.classList.remove('drag-merging');
+                    this.folderArmed = null;
+                }
+                this.armFolderDwell(this.dwellTarget, x, y);
             }
 
             clearFolderDwell() {
@@ -6410,7 +6523,7 @@
                 if (this.source === 'saved') window.Renderer.render();
             }
 
-            open() {
+            open() {
                 this.searchInput.value = '';
                 this.query = '';
                 this.renderSourceRow();

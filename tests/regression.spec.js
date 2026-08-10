@@ -2032,7 +2032,7 @@ test.describe('Folders (Phase 4)', () => {
         await page.mouse.down();
         await page.mouse.move(boxes[1].x + 12, boxes[1].y + 12, { steps: 3 });  // engage
         await page.mouse.move(boxes[0].x, boxes[0].y, { steps: 12 });           // onto the target
-        await page.waitForTimeout(900);                                          // dwell past 550ms
+        await page.waitForTimeout(1200);   // hold still, well past the 750ms merge dwell
         await page.mouse.up();
         await page.waitForTimeout(800);
 
@@ -2814,7 +2814,7 @@ test('Folders: a merge survives the reorder swapping the target out from under t
 
     // Jitter on the spot across the whole dwell window. Every one of these lands on the ghost
     // once the swap has happened, which is precisely what used to cancel the merge.
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 16; i++) {
         await page.mouse.move(boxes[0].x + (i % 2 ? 1 : -1), boxes[0].y);
         await page.waitForTimeout(80);
     }
@@ -2954,7 +2954,7 @@ test.describe('Arming a folder merge is visible, not only felt', () => {
         expect(early.target, 'armed before the dwell elapsed').toBe(false);
         expect(early.merging).toBe(false);
 
-        await page.waitForTimeout(750);
+        await page.waitForTimeout(1000);
 
         const armed = await page.evaluate(() => {
             const t = document.querySelector('.folder-target');
@@ -2983,7 +2983,7 @@ test.describe('Arming a folder merge is visible, not only felt', () => {
         // clearFolderDwell has to strip the fade whether or not a merge had armed, or a near
         // miss leaves the icon translucent for the rest of the drag.
         const p = await arm(page);
-        await page.waitForTimeout(750);
+        await page.waitForTimeout(1000);
         expect(await page.evaluate(() => !!document.querySelector('.drag-merging'))).toBe(true);
 
         await page.mouse.move(p[1].x, p[1].y + 180, { steps: 8 });
@@ -5501,5 +5501,289 @@ test.describe('Edit mode is usable and escapable', () => {
                 document.getElementById('folder-overlay').classList.contains('opacity-100')),
                 `a tap outside with ${drift}px of drift left the folder open`).toBe(false);
         }
+    });
+});
+
+// ============================================================================================
+//  Rearranging is not a way to make folders
+//
+//  Reported from the user's own phone, with a screenshot: "the barcodes get stuck in folder
+//  just when I try to move them to another's spots. its not possible for me to rearrange
+//  without glitching into a folder." Four codes had been swallowed into two folders by an
+//  attempt to reorder them.
+//
+//  The cause was that the merge dwell had no notion of time-since-you-stopped. It started when
+//  the finger first entered a target's box, and the reorder swap then moved that icon away, so
+//  every subsequent move landed on the ghost and took an early return that left the timer
+//  running. Carrying a code to another code's slot means spending time in that slot, so the
+//  merge armed on essentially every reorder.
+// ============================================================================================
+test.describe('Rearranging is not a way to make folders', () => {
+    const enterEdit = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+        return page.evaluate(() =>
+            [...document.querySelectorAll('#workspace-pager .sortable-page')][0]
+                .querySelectorAll('.app-icon-wrapper').length >= 2
+            ? [...document.querySelectorAll('#workspace-pager .sortable-page')][0]
+                .querySelectorAll('.app-icon-wrapper')
+            : null);
+    };
+
+    // Two icons that are genuinely on the same visible page. Reaching for the second icon in
+    // the DOM can hand you one that lives on page 2, a thousand pixels off-screen, and dragging
+    // to it exercises the edge page-flip instead of a reorder.
+    const samePageBoxes = (page) => page.evaluate(() => {
+        const first = document.querySelector('#workspace-pager .sortable-page');
+        return [...first.querySelectorAll('.app-icon-wrapper')].slice(0, 2).map(el => {
+            const r = el.getBoundingClientRect();
+            return { id: el.dataset.id, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+    });
+
+    const slots = (page) => page.evaluate(() =>
+        [...document.querySelectorAll('#workspace-pager .sortable-page')][0]
+            .querySelectorAll('.app-icon-wrapper, .empty-slot').length &&
+        window.OS_STATE.apps.filter(a => a.type === 'grid' && !a.folderId && a.page === 0)
+            .sort((a, b) => a.order - b.order).map(a => `${a.id}@${a.order}`));
+
+    test('carrying a code to another code\'s slot swaps them instead of merging', async ({ page }) => {
+        // The exact gesture that was failing: pick one up, carry it to the next one's square,
+        // pause the way anyone pauses before letting go of something, release.
+        await enterEdit(page);
+        const b = await samePageBoxes(page);
+        const before = await slots(page);
+
+        await page.mouse.move(b[0].x, b[0].y);
+        await page.mouse.down();
+        await page.mouse.move(b[0].x + 10, b[0].y + 10, { steps: 3 });
+        await page.mouse.move(b[1].x, b[1].y, { steps: 14 });
+        await page.waitForTimeout(500);          // the human pause before letting go
+        await page.mouse.up();
+        await page.waitForTimeout(900);
+
+        const r = await page.evaluate(() => ({
+            folders: window.OS_STATE.apps.filter(a => a.type === 'folder').length,
+            filed: window.OS_STATE.apps.filter(a => a.folderId).length,
+        }));
+        expect(r.folders, 'moving a code to another\'s slot made a folder').toBe(0);
+        expect(r.filed).toBe(0);
+
+        // And it has to have actually moved — a reorder that refuses is the other bug.
+        expect(await slots(page), 'nothing was rearranged').not.toEqual(before);
+    });
+
+    test('a slow drag across an icon never arms a merge while it is still moving', async ({ page }) => {
+        // The strongest form of the rule. This spends two full seconds over the target — four
+        // times the old dwell and nearly three times the new one — but never stops moving.
+        // Under the old rule the merge armed 550ms in and stayed armed.
+        await enterEdit(page);
+        const b = await samePageBoxes(page);
+
+        await page.mouse.move(b[0].x, b[0].y);
+        await page.mouse.down();
+        await page.mouse.move(b[0].x + 10, b[0].y + 10, { steps: 3 });
+        await page.mouse.move(b[1].x - 24, b[1].y, { steps: 10 });
+
+        let armedEver = false;
+        for (let i = 0; i < 20; i++) {
+            await page.mouse.move(b[1].x - 24 + i * 2.4, b[1].y + (i % 2 ? 6 : -6));
+            await page.waitForTimeout(100);
+            if (await page.evaluate(() => !!document.querySelector('.folder-target'))) armedEver = true;
+        }
+        await page.mouse.up();
+        await page.waitForTimeout(900);
+
+        expect(armedEver, 'a merge armed under a finger that never stopped moving').toBe(false);
+        expect(await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(0);
+    });
+
+    test('holding still over a code is still how you make a folder', async ({ page }) => {
+        // The other half of the contract. Making the merge deliberate must not make it
+        // unreachable — that would be trading one broken gesture for another.
+        await enterEdit(page);
+        const b = await samePageBoxes(page);
+
+        await page.mouse.move(b[0].x, b[0].y);
+        await page.mouse.down();
+        await page.mouse.move(b[0].x + 10, b[0].y + 10, { steps: 3 });
+        await page.mouse.move(b[1].x, b[1].y, { steps: 12 });
+        await page.waitForTimeout(1200);         // a hold, not a pause
+        expect(await page.evaluate(() => !!document.querySelector('.folder-target')),
+               'a deliberate hold no longer arms a merge').toBe(true);
+        await page.mouse.up();
+        await page.waitForTimeout(900);
+
+        expect(await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(1);
+    });
+
+    test('setting off again after arming takes the merge back down', async ({ page }) => {
+        // Holding, changing your mind, and carrying on has to leave you with a reorder. The
+        // armed state used to survive until the target CHANGED, which over a ghost it never did.
+        await enterEdit(page);
+        const b = await samePageBoxes(page);
+
+        await page.mouse.move(b[0].x, b[0].y);
+        await page.mouse.down();
+        await page.mouse.move(b[0].x + 10, b[0].y + 10, { steps: 3 });
+        await page.mouse.move(b[1].x, b[1].y, { steps: 12 });
+        await page.waitForTimeout(1200);
+        expect(await page.evaluate(() => !!document.querySelector('.folder-target'))).toBe(true);
+
+        // Move on within the same square, then let go quickly.
+        await page.mouse.move(b[1].x + 22, b[1].y + 4, { steps: 4 });
+        await page.waitForTimeout(120);
+        expect(await page.evaluate(() => !!document.querySelector('.folder-target')),
+               'the merge stayed armed after the finger set off again').toBe(false);
+        await page.mouse.up();
+        await page.waitForTimeout(900);
+
+        expect(await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(0);
+    });
+});
+
+// ============================================================================================
+//  The home screen does not blink
+//
+//  Reported alongside the folder bug: "I notice a lot of static flashes throughout the app all
+//  over when interacting."
+//
+//  render() emptied the pager and built every icon again. A code's icon is a <canvas> that
+//  bwip-js fills in ten milliseconds later, so for at least one frame after ANY state change
+//  the entire home screen was a grid of blank white squares. render() runs on far more than
+//  edits — every drop, every folder change, every resize, every return from a layer — which is
+//  why the flashing was "all over".
+// ============================================================================================
+test.describe('The home screen does not blink', () => {
+    // Opaque dark pixels only. A canvas that has never been drawn into is 300x150 of
+    // TRANSPARENT black, whose red channel is 0 — count on colour alone and a blank icon
+    // scores 45,000, which is the opposite of the answer.
+    const inkFn = `(c) => {
+        if (!c || !c.width || !c.height) return -1;
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] < 128) n++;
+        return n;
+    }`;
+
+    test('re-rendering keeps every drawn code on the screen', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+
+        const r = await page.evaluate((src) => {
+            const ink = eval(src);
+            const before = [...document.querySelectorAll('#workspace-pager canvas')];
+            const ids = before.map(c => c.id);
+            const inkBefore = before.map(ink);
+
+            window.Renderer.render();
+
+            // Read back in the SAME task, before the 10ms redraw timer can rescue it. This is
+            // the frame the user was seeing as a flash.
+            const after = ids.map(id => document.getElementById(id));
+            return {
+                ids,
+                inkBefore,
+                reused: after.every((el, i) => el === before[i]),
+                inkAfter: after.map(ink),
+            };
+        }, inkFn);
+
+        expect(r.ids.length, 'no code icons on the home screen to check').toBeGreaterThan(0);
+        expect(Math.min(...r.inkBefore), 'a code icon was blank before the test even ran')
+            .toBeGreaterThan(0);
+        expect(r.reused, 'render() destroyed the icons instead of moving them').toBe(true);
+        expect(Math.min(...r.inkAfter), 'the home screen went blank for a frame')
+            .toBeGreaterThan(0);
+    });
+
+    test('entering and leaving edit mode does not blank the grid', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+
+        for (const step of ['enter', 'leave']) {
+            const r = await page.evaluate(({ src, step }) => {
+                const ink = eval(src);
+                const before = [...document.querySelectorAll('#workspace-pager canvas')];
+                const inkBefore = before.map(ink);
+                if (step === 'enter') {
+                    window.OS_STATE.isEditMode = true;
+                    document.body.classList.add('edit-mode');
+                    window.Renderer.render();
+                } else {
+                    window.exitEditMode();
+                }
+                const after = [...document.querySelectorAll('#workspace-pager canvas')];
+                return { inkBefore, inkAfter: after.map(ink) };
+            }, { src: inkFn, step });
+
+            expect(Math.min(...r.inkAfter), `the grid blanked when it went ${step} edit mode`)
+                .toBeGreaterThan(0);
+        }
+    });
+
+    test('an icon whose code changed IS drawn again', async ({ page }) => {
+        // The other half of reconciling: reusing a node must never show a stale code. If this
+        // fails, the flash is gone and so is the truth.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+
+        const r = await page.evaluate(async (src) => {
+            const ink = eval(src);
+            const item = window.OS_STATE.apps.find(a => a.type === 'grid' && a.bcid && !a.folderId);
+            const id = `can-${item.id}`;
+            const inkBefore = ink(document.getElementById(id));
+
+            item.title = 'Retitled By Test';
+            item.data = '9781234567897';
+            item.bcid = 'ean13';
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 400));
+
+            const wrapper = document.querySelector(`.app-icon-wrapper[data-id="${item.id}"]`);
+            return {
+                inkBefore,
+                inkAfter: ink(document.getElementById(id)),
+                label: wrapper.querySelector('.app-label').textContent,
+            };
+        }, inkFn);
+
+        expect(r.label).toBe('Retitled By Test');
+        expect(r.inkAfter, 'the redrawn icon is blank').toBeGreaterThan(0);
+        expect(r.inkAfter, 'the icon still shows the code it used to hold').not.toBe(r.inkBefore);
+    });
+
+    test('a folder face keeps up with what is inside it', async ({ page }) => {
+        // A folder's icon is a peek at its first four codes, so it has to be rebuilt when its
+        // membership changes even though the folder itself is untouched.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+
+        const r = await page.evaluate(async () => {
+            const ids = window.OS_STATE.apps.filter(a => a.type === 'grid' && !a.folderId)
+                                            .slice(0, 3).map(a => a.id);
+            const folder = window.createFolderFrom(ids[1], ids[0]);
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 300));
+            const filled = () => document.querySelectorAll(
+                `.app-icon-wrapper[data-id="${folder.id}"] canvas`).length;
+            const two = filled();
+            window.addToFolder(folder.id, ids[2]);
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 300));
+            return { two, three: filled() };
+        });
+
+        expect(r.two).toBe(2);
+        expect(r.three, 'the folder face did not notice a third code going in').toBe(3);
     });
 });

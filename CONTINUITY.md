@@ -291,3 +291,50 @@ Result: 10.3ms to 0.4ms, no sweeps, no special case for the first open.
 
 The general rule, which has now bitten twice here: when something is too slow, ask whether it can
 stop happening before asking when it should happen.
+
+---
+
+## A gesture is a shape in time, not a lookup of what is under the finger
+
+Two of the launcher's worst bugs were the same mistake in different places: deciding what a
+gesture *meant* from a single instantaneous fact.
+
+- The swipe/drag split asked whether the first move was ≥18px within 180ms. The same physical
+  gesture is one 40px move on a quiet frame and two 20px moves on a busy one — so the answer
+  depended on how the browser sampled the finger, not on what the finger did. Fixed by measuring
+  **velocity**, which is the same however the movement is chopped up.
+- The folder merge asked *which element* the finger was over. A reorder ends in the target's
+  square by definition, so that question cannot separate a reorder from a merge no matter what
+  timeout you attach to it. Fixed by anchoring the dwell to a **position**, so movement resets
+  it: a finger that is travelling can never be holding still.
+
+Both were patched several times before being fixed, and the patches all had the same character —
+adjusting a threshold on a quantity that was measuring the wrong thing. If a gesture rule needs a
+third round of threshold tuning, the quantity is wrong; change what is being measured.
+
+---
+
+## Redrawing is not free just because it is fast
+
+`Renderer.render()` was 7.5ms and looked cheap, so it was called on essentially every state
+change. What the timing missed is that it emptied the pager and rebuilt every icon, and a code's
+icon is a `<canvas>` bwip-js fills in **10ms later**. The cost was never the 7.5ms. It was that
+the home screen was blank in between — reported as "a lot of static flashes throughout the app
+all over when interacting", and invisible to every performance number in the project.
+
+The grid is now keyed by item id and reconciled: an icon whose content has not changed is moved,
+not rebuilt. Two rules to keep it honest:
+
+- **`itemSignature` must cover everything the icon depicts.** Anything that affects only *where*
+  an icon sits is deliberately excluded — moving an icon must not cost it its canvas. Anything
+  that affects how it *looks* must be in there, including a folder's first four children, which
+  change without the folder itself changing. A missing field means a stale icon, which is worse
+  than a flash.
+- **A reused node's handlers outlive the object they were built from.** They look the item up by
+  id at the moment they run. Closing over `itemData` was safe only while every render threw the
+  node away.
+
+To measure a flash, read **synchronously after `render()` returns** — that is the frame the user
+sees. And count *opaque* dark pixels: a canvas that has never been drawn into is 300x150 of
+transparent black, whose red channel is 0, so a colour-only check scores a blank icon at 45,000.
+
