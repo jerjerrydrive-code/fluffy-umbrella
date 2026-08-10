@@ -3502,6 +3502,51 @@
             return f.validate(data);
         };
 
+        // The authoritative check: ask the encoder.
+        //
+        // The rules above are per-format hand-written ones, and they cover shape — digits only,
+        // even length, correct check digit. None of them covers CAPACITY, and every symbology
+        // has a limit that depends on the data as well as its length. Measured: a QR code of
+        // 3000 characters throws `qrcodeNoValidSymbol#20217` inside bwip-js, an Aztec code of
+        // 5000 throws a TypeError — and both were accepted by the form, saved, and reported as
+        // "Added to Grid!". The result is a tile that is blank forever, cannot be scanned, and
+        // that nothing in the app can repair.
+        //
+        // Rather than copy a capacity table per format and per error-correction level — which
+        // would be wrong the day bwip-js changes — this simply tries to encode and reports what
+        // happened. Slow enough that it belongs on save rather than on every keystroke.
+        //
+        // 4000px is a separate limit and a practical one: 500 characters of Code 128 encodes
+        // happily into a canvas 16,605px wide, which is a large allocation, unreadable on a
+        // phone screen, and unscannable in the real world. A code nobody can scan is not a code.
+        window.MAX_CODE_PX = 4000;
+        window.canEncode = function(bcid, data) {
+            const holder = document.createElement('canvas');
+            holder.id = 'encode-check-' + Math.random().toString(36).slice(2);
+            holder.style.cssText = 'position:absolute;width:0;height:0;visibility:hidden';
+            document.body.appendChild(holder);
+            try {
+                bwipjs.toCanvas(holder, { bcid, text: data, scale: 3, includetext: false });
+                if (holder.width > window.MAX_CODE_PX || holder.height > window.MAX_CODE_PX) {
+                    return 'That is too much data to make a code anyone could scan. ' +
+                           'Try QR, PDF417 or Data Matrix, which stack instead of stretching.';
+                }
+                return null;
+            } catch (e) {
+                const msg = String((e && e.message) || e);
+                if (/length|capacity|NoValidSymbol|too long/i.test(msg)) {
+                    return 'That is more data than this format can hold. ' +
+                           'PDF417 handles the most, then QR.';
+                }
+                if (/character|charset|encode|invalid/i.test(msg)) {
+                    return 'This format cannot encode some of those characters. QR and Data Matrix can.';
+                }
+                return 'That could not be made into a code.';
+            } finally {
+                holder.remove();
+            }
+        };
+
         // ---------------------------------------------------------------------------------
         //  CODE COLOUR + SCANNABILITY
         //  Codes may be recoloured, but a code that cannot be read is not a code. These are the
@@ -4464,6 +4509,15 @@
                     window.showToast('Please fill all fields', 'error');
                     return;
                 }
+
+                // Shape first, then whether it can actually be encoded. Saving a code that
+                // cannot be drawn puts a permanently blank, unscannable tile on the home screen
+                // and tells the user it worked — see window.canEncode.
+                const shapeError = window.validateForFormat(bcid, data);
+                if (shapeError) { window.showToast(shapeError, 'error'); return; }
+
+                const encodeError = window.canEncode(bcid, data);
+                if (encodeError) { window.showToast(encodeError, 'error'); return; }
 
                 const state = window.OS_STATE;
                 // Codes inside a folder are not on the grid; folders are.
