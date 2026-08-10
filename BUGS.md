@@ -841,6 +841,24 @@ One test reached into the old engine's private `draggedEl` field and broke on a 
 
 ---
 
+## Auto-arrange is not a setting any more
+
+> "aut9 arrange needs to forced auto arrange to the next open spots"
+
+| # | Defect | Status |
+|---|---|---|
+| 64 | **Codes could be left in a square with holes around them.** Auto-arrange was a setting, and its OFF position was the default. A code deleted from the middle of a page left a gap nothing would ever fill; a code moved to another page left one behind it; and two codes that ended up with the same `order` collided, so only one of them was drawn — the other stayed in storage and in the Library, invisible on the home screen. | FIXED |
+
+Forced on, and forced on everywhere a layout can arrive from: the running app, a saved state written while it was optional, and a backup file. A backup no longer restores `autoArrange` at all, because restoring it would put the holes back.
+
+Saved orders are normalised on load rather than only being rendered as if they were packed, so the state matches what is actually on the screen. Measured against a state with holes at 0/5/11 **and** a collision on 5: all four codes come back at 0–3 and all four are drawn, where before one of them could not be seen at all.
+
+The two-layout branch is gone from three places — the renderer, the drag model, and `arrange()`, which no longer takes a `compact` argument. Deleting the branch is the point: a mode that exists only to allow an unreachable code is not a feature.
+
+Two tests state the new rule directly, over every destination: no move ever loses a code, and no arrangement ever has a hole in the middle of a page — once a page has an empty square, everything after it is empty too. That is what "fills the next open spot" means, written down.
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.

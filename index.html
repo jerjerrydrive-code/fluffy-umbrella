@@ -1371,15 +1371,10 @@
                     <button class="grid-select-btn tap-extend flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x6">4×6</button>
                     <button class="grid-select-btn tap-extend flex-1 py-2 rounded-xl text-sm font-medium text-gray-300 border border-transparent" data-grid="4x7">4×7</button>
                 </div>
-                <div class="flex items-center justify-between mt-2 pl-1 cursor-pointer" onclick="document.getElementById('auto-arrange-toggle').click()">
-                    <span class="text-white font-medium text-sm">Auto-Arrange Layout</span>
-                    <label class="relative inline-flex items-center cursor-pointer pointer-events-none">
-                      <input type="checkbox" id="auto-arrange-toggle" class="sr-only peer">
-                      <div class="apple-toggle-bg w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:bg-green-500 transition-colors duration-300">
-                          <div class="apple-toggle-knob absolute top-[2px] left-[2px] bg-white rounded-full h-5 w-5 shadow-sm peer-checked:translate-x-[20px]"></div>
-                      </div>
-                    </label>
-                </div>
+                <!-- The Auto-Arrange switch was here. It is not a choice any more: codes always
+                     fill the next open square. A setting that can leave holes in your home
+                     screen, and whose off position is what made a code land somewhere it could
+                     not be seen, is not worth the row it occupies. -->
             </div>
             <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
                 <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 flex items-center justify-between gap-2">
@@ -2021,7 +2016,7 @@
         const FORMAT_NAMES = { azteccode: 'Aztec Code', qrcode: 'QR Code', pdf417: 'PDF417', datamatrix: 'Data Matrix', code128: 'Code 128' };
 
         const DEFAULT_STATE = {
-            currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: false,
+            currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: true,
             gridSize: 'auto', wallpaper: null, skin: 'dock', accent: '#3b82f6', palette: null,
             haptics: true, animations: true, history: [], pageNames: [],
             apps: [
@@ -2091,7 +2086,30 @@
             if(!window.OS_STATE || !Array.isArray(window.OS_STATE.apps)) window.OS_STATE = freshDefaultState();
             
             window.OS_STATE.isEditMode = false;
-            if(window.OS_STATE.autoArrange === undefined) window.OS_STATE.autoArrange = false;
+            // Auto-arrange is not a setting any more — codes always fill the next open square.
+            // Free placement was the default, and it is what made a gap possible at all: a code
+            // deleted from the middle of a page left a hole that nothing would ever fill, and a
+            // code whose `order` collided with another's was simply not drawn. Forced on, and
+            // forced on for saved states and backups written while it was still optional, or
+            // the layout you get would depend on when you first opened the app.
+            window.OS_STATE.autoArrange = true;
+            // Normalise orders that were saved with gaps in them, so the state matches what is
+            // actually on the screen rather than only looking right.
+            (() => {
+                const per = window.OS_STATE.gridCols * window.OS_STATE.gridRows;
+                const grid = window.OS_STATE.apps.filter(a =>
+                    (a.type === 'grid' && !a.folderId) || a.type === 'folder');
+                const pages = new Map();
+                grid.forEach(a => {
+                    const p = Math.max(0, a.page || 0);
+                    if (!pages.has(p)) pages.set(p, []);
+                    pages.get(p).push(a);
+                });
+                pages.forEach((items, p) => {
+                    items.sort((x, y) => (x.order || 0) - (y.order || 0))
+                         .forEach((a, i) => { a.page = p; a.order = i % per; });
+                });
+            })();
             if(!window.OS_STATE.gridSize) window.OS_STATE.gridSize = 'auto';
             if(!window.OS_STATE.skin) window.OS_STATE.skin = 'dock';
             // A retired skin can arrive from a saved state OR from a backup file made before
@@ -2844,11 +2862,7 @@
                     const itemsOnPage = gridItems.filter(a => a.page === i).sort((a, b) => a.order - b.order);
                     const slots = new Array(itemsPerPage).fill(null);
 
-                    if (state.autoArrange) {
-                        itemsOnPage.forEach((item, index) => { if (index < itemsPerPage) slots[index] = item; });
-                    } else {
-                        itemsOnPage.forEach(item => { if (item.order < itemsPerPage) slots[item.order] = item; });
-                    }
+                    itemsOnPage.forEach((item, index) => { if (index < itemsPerPage) slots[index] = item; });
 
                     slots.forEach((item) => {
                         if (item) gridEl.appendChild(nodeFor(item, false));
@@ -3135,27 +3149,10 @@
                 const onGrid = st.apps.filter(a => (a.type === 'grid' && !a.folderId) || a.type === 'folder');
                 const pages = Math.max(1, ...onGrid.map(a => (a.page || 0) + 1));
                 const model = Array.from({ length: pages }, () => new Array(per).fill(null));
-                onGrid.forEach(a => {
-                    const p = Math.min(pages - 1, Math.max(0, a.page || 0));
-                    if (st.autoArrange) return;                 // filled in order below
-                    const s = a.order;
-                    if (s >= 0 && s < per && model[p][s] === null) model[p][s] = a.id;
-                });
-                if (st.autoArrange) {
-                    for (let p = 0; p < pages; p++) {
-                        onGrid.filter(a => (a.page || 0) === p)
-                              .sort((x, y) => x.order - y.order)
-                              .forEach((a, i) => { if (i < per) model[p][i] = a.id; });
-                    }
-                } else {
-                    // Anything whose order collided or fell outside the grid still has to land
-                    // somewhere, or it would vanish the moment a drag committed.
-                    onGrid.forEach(a => {
-                        const p = Math.min(pages - 1, Math.max(0, a.page || 0));
-                        if (model.some(pg => pg.includes(a.id))) return;
-                        const free = model[p].indexOf(null);
-                        if (free !== -1) model[p][free] = a.id;
-                    });
+                for (let p = 0; p < pages; p++) {
+                    onGrid.filter(a => Math.min(pages - 1, Math.max(0, a.page || 0)) === p)
+                          .sort((x, y) => (x.order || 0) - (y.order || 0))
+                          .forEach((a, i) => { if (i < per) model[p][i] = a.id; });
                 }
                 return model;
             }
@@ -3163,11 +3160,15 @@
             // PURE. Given the arrangement at the start of a drag, the id being held, and where
             // it is being offered, return the arrangement that a drop would produce.
             //
-            // Compacting (autoArrange) inserts and lets the rest shuffle up. Free placement
-            // swaps with whatever is already there, which is what a home screen with gaps in it
-            // has to do. Exported for tests: this is the whole of "what does moving mean", and
-            // it needs no pointer, no DOM and no browser to check.
-            static arrange(model, heldId, toPage, toSlot, compact) {
+            // Codes always close up: dropping one between two others inserts it and the rest
+            // shuffle along, and the square it came from is filled by whatever was after it.
+            // There is no second mode. Free placement — where a code sat exactly where it was
+            // put and gaps stayed open — used to be the default, and it is what made a hole in
+            // the middle of a page possible at all.
+            //
+            // Exported for tests: this is the whole of "what does moving mean", and it needs no
+            // pointer, no DOM and no browser to check.
+            static arrange(model, heldId, toPage, toSlot) {
                 const next = model.map(p => p.slice());
                 let fromPage = -1, fromSlot = -1;
                 next.forEach((pg, p) => {
@@ -3178,28 +3179,24 @@
                 if (toPage < 0 || toPage >= next.length) return next;
                 if (toPage === fromPage && toSlot === fromSlot) return next;
 
-                if (compact) {
-                    next[fromPage][fromSlot] = null;
-                    const target = next[toPage];
-                    const live = target.filter(id => id !== null);
-                    const at = Math.min(toSlot, live.length);
-                    live.splice(at, 0, heldId);
-                    for (let i = 0; i < target.length; i++) target[i] = live[i] !== undefined ? live[i] : null;
-                    // A page that overflowed pushes its last code to the next page rather than
-                    // dropping it. Losing a code to a reorder is not a trade worth making.
-                    if (live.length > target.length && next[toPage + 1]) {
-                        const spill = live[target.length];
-                        const free = next[toPage + 1].indexOf(null);
-                        if (free !== -1) next[toPage + 1][free] = spill;
-                    }
-                    const src = next[fromPage];
-                    const srcLive = src.filter(id => id !== null);
-                    for (let i = 0; i < src.length; i++) src[i] = srcLive[i] !== undefined ? srcLive[i] : null;
-                } else {
-                    const displaced = next[toPage][toSlot];
-                    next[toPage][toSlot] = heldId;
-                    next[fromPage][fromSlot] = displaced;   // may be null; that is a move
+                next[fromPage][fromSlot] = null;
+                const target = next[toPage];
+                const live = target.filter(id => id !== null);
+                live.splice(Math.min(toSlot, live.length), 0, heldId);
+                for (let i = 0; i < target.length; i++) target[i] = live[i] !== undefined ? live[i] : null;
+
+                // A page that overflowed pushes its last code to the next page rather than
+                // dropping it. Losing a code to a reorder is not a trade worth making.
+                if (live.length > target.length && next[toPage + 1]) {
+                    const spill = live[target.length];
+                    const free = next[toPage + 1].indexOf(null);
+                    if (free !== -1) next[toPage + 1][free] = spill;
                 }
+
+                // ...and the square it left closes up behind it.
+                const src = next[fromPage];
+                const srcLive = src.filter(id => id !== null);
+                for (let i = 0; i < src.length; i++) src[i] = srcLive[i] !== undefined ? srcLive[i] : null;
                 return next;
             }
 
@@ -3325,8 +3322,7 @@
 
                 this.updateDwell(page, slot, e.clientX, e.clientY);
 
-                const next = SlotDragEngine.arrange(this.base, this.heldId, page, slot,
-                                                    !!window.OS_STATE.autoArrange);
+                const next = SlotDragEngine.arrange(this.base, this.heldId, page, slot);
                 this.applyPreview(next);
             }
 
@@ -5721,7 +5717,7 @@
                 this.modal = document.getElementById('settings-modal');
                 this.panel = document.getElementById('settings-panel');
                 this.gridButtons = document.querySelectorAll('.grid-select-btn');
-                this.autoArrangeToggle = document.getElementById('auto-arrange-toggle');
+
                 this.wallpaperInput = document.getElementById('wallpaper-upload');
                 this.resetWallpaperBtn = document.getElementById('btn-reset-wallpaper');
 
@@ -5733,13 +5729,6 @@
                     btn.addEventListener('click', () => this.setGridSize(btn.dataset.grid));
                 });
 
-                this.autoArrangeToggle.checked = !!window.OS_STATE.autoArrange;
-                this.autoArrangeToggle.addEventListener('change', (e) => {
-                    window.OS_STATE.autoArrange = e.target.checked;
-                    saveState();
-                    haptic(10);
-                    window.Renderer.render();
-                });
 
                 // Feedback & Motion. Both persist the instant they change (HARD RULE 3).
                 this.hapticsToggle = document.getElementById('haptics-toggle');
@@ -6528,7 +6517,8 @@
                     window.OS_STATE.apps.length !== data.apps.length;
                 if (Array.isArray(data.pageNames)) window.OS_STATE.pageNames = data.pageNames;
                 if (data.gridSize) window.OS_STATE.gridSize = data.gridSize;
-                if (data.autoArrange !== undefined) window.OS_STATE.autoArrange = data.autoArrange;
+                // autoArrange is deliberately NOT restored: it is no longer a setting, and a
+                // backup written while it was one would otherwise put holes back in the grid.
                 if (data.skin) { window.OS_STATE.skin = data.skin; if (window.SkinManager) { window.SkinManager.current = data.skin; document.body.setAttribute('data-skin', data.skin); window.SkinManager.render(); } }
                 if (data.accent) { window.OS_STATE.accent = data.accent; if (window.ThemeManager) { window.ThemeManager.applyAccent(data.accent, false); window.ThemeManager.render(); } }
                 // Feedback & Motion sync too, so a device you set up carries its preferences over.

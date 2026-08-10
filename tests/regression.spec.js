@@ -4962,6 +4962,18 @@ test.describe('The skin morph does not leave the screen unreadable', () => {
         };
     }, { from, to });
 
+    // A BUDGET measurement, and the only one in the suite that is. It times how long the screen
+    // stays blurred past legibility during a skin change — which on a shared CI runner with four
+    // workers is timing the runner's contention as much as the app's. Measured on a quiet
+    // machine the median is ~140ms against a 250ms budget; two CI runs have come in at 264ms
+    // with the same code, alongside samples of 15ms and 106ms in the same batch.
+    //
+    // Retried rather than loosened. Raising the budget to fit the worst runner would throw away
+    // what the test is for: it exists because a real regression left the screen unreadable for
+    // 327ms median and 512 at worst, and a threshold generous enough to survive contention
+    // would not catch that. One slow sample is not evidence; three in a row is.
+    test.describe.configure({ retries: 2 });
+
     test('the screen is never unreadable for long, across several morphs', async ({ page }) => {
         test.setTimeout(120000);
         await page.setViewportSize({ width: 412, height: 892 });
@@ -6229,53 +6241,76 @@ test.describe('A page exists because there is something on it', () => {
 //  pure function, and needs no pointer, no DOM and no browser to check.
 // ============================================================================================
 test.describe('What moving a code means, as arithmetic', () => {
-    const arrange = (page, model, held, toPage, toSlot, compact) => page.evaluate(
-        ([m, h, p, s, c]) => window.SlotDragEngine.arrange(m, h, p, s, c),
-        [model, held, toPage, toSlot, compact]);
+    // Codes always close up. Auto-arrange used to be a setting whose OFF position was the
+    // default, and that is what made a hole in the middle of a page possible at all: a code
+    // deleted from the middle left a gap nothing would ever fill, and two codes that ended up
+    // with the same `order` collided so that only one of them was drawn. It is forced on now,
+    // for saved states and backups too — see the loader.
+    const arrange = (page, model, held, toPage, toSlot) => page.evaluate(
+        ([m, h, p, s]) => window.SlotDragEngine.arrange(m, h, p, s),
+        [model, held, toPage, toSlot]);
 
     const boot = async (page) => { await page.goto('/index.html'); await page.waitForTimeout(1300); };
     const M = () => [['a', 'b', 'c', 'd'], [null, null, null, null]];
 
-    test('moving onto an occupied slot swaps the two', async ({ page }) => {
+    test('dropping a code further along inserts it and the rest shuffle back', async ({ page }) => {
         await boot(page);
-        expect(await arrange(page, M(), 'a', 0, 2, false))
-            .toEqual([['c', 'b', 'a', 'd'], [null, null, null, null]]);
-    });
-
-    test('a swap is its own inverse', async ({ page }) => {
-        // The property that makes rearranging feel safe: nothing is created or destroyed by a
-        // move, so putting it back puts it back.
-        await boot(page);
-        const once = await arrange(page, M(), 'a', 0, 2, false);
-        expect(await arrange(page, once, 'a', 0, 0, false)).toEqual(M());
-    });
-
-    test('moving onto an empty slot leaves a gap behind, and does not compact', async ({ page }) => {
-        await boot(page);
-        expect(await arrange(page, M(), 'a', 1, 0, false))
-            .toEqual([[null, 'b', 'c', 'd'], ['a', null, null, null]]);
-    });
-
-    test('with auto-arrange on it inserts and the rest shuffle up', async ({ page }) => {
-        await boot(page);
-        expect(await arrange(page, M(), 'a', 0, 2, true))
+        expect(await arrange(page, M(), 'a', 0, 2))
             .toEqual([['b', 'c', 'a', 'd'], [null, null, null, null]]);
     });
 
+    test('dropping a code earlier inserts it and the rest shuffle along', async ({ page }) => {
+        await boot(page);
+        expect(await arrange(page, M(), 'd', 0, 1))
+            .toEqual([['a', 'd', 'b', 'c'], [null, null, null, null]]);
+    });
+
+    test('the square a code leaves closes up behind it', async ({ page }) => {
+        // The whole point of forcing this on. Moving a code to another page must not leave a
+        // hole where it used to be.
+        await boot(page);
+        expect(await arrange(page, M(), 'b', 1, 0))
+            .toEqual([['a', 'c', 'd', null], ['b', null, null, null]]);
+    });
+
+    test('a code dropped past the end of a page lands at the end, not off it', async ({ page }) => {
+        await boot(page);
+        expect(await arrange(page, M(), 'a', 1, 3))
+            .toEqual([['b', 'c', 'd', null], ['a', null, null, null]]);
+    });
+
     test('no move ever loses a code', async ({ page }) => {
-        // The invariant worth having above all others. Every destination, both modes: the set
-        // of codes coming out is the set that went in.
+        // The invariant worth having above all others. Every destination: the set of codes
+        // coming out is the set that went in.
         await boot(page);
         const before = ['a', 'b', 'c', 'd'].sort();
-        for (const compact of [false, true]) {
-            for (const held of ['a', 'b', 'c', 'd']) {
-                for (let p = 0; p < 2; p++) {
-                    for (let s = 0; s < 4; s++) {
-                        const out = await arrange(page, M(), held, p, s, compact);
-                        const ids = out.flat().filter(Boolean).sort();
-                        expect(ids, `${held} -> page ${p} slot ${s} (compact=${compact}) lost or duplicated a code`)
-                            .toEqual(before);
-                    }
+        for (const held of ['a', 'b', 'c', 'd']) {
+            for (let p = 0; p < 2; p++) {
+                for (let s = 0; s < 4; s++) {
+                    const out = await arrange(page, M(), held, p, s);
+                    const ids = out.flat().filter(Boolean).sort();
+                    expect(ids, `${held} -> page ${p} slot ${s} lost or duplicated a code`)
+                        .toEqual(before);
+                }
+            }
+        }
+    });
+
+    test('an arrangement never has a hole in the middle of a page', async ({ page }) => {
+        // Stated directly, over every destination: once a page has an empty square, everything
+        // after it is empty too. That is what "fills the next open spot" means.
+        await boot(page);
+        for (const held of ['a', 'b', 'c', 'd']) {
+            for (let p = 0; p < 2; p++) {
+                for (let s = 0; s < 4; s++) {
+                    const out = await arrange(page, M(), held, p, s);
+                    out.forEach((pg, pi) => {
+                        const firstGap = pg.indexOf(null);
+                        if (firstGap === -1) return;
+                        expect(pg.slice(firstGap).every(x => x === null),
+                               `${held} -> page ${p} slot ${s} left a hole on page ${pi}: ${JSON.stringify(pg)}`)
+                            .toBe(true);
+                    });
                 }
             }
         }
@@ -6283,8 +6318,40 @@ test.describe('What moving a code means, as arithmetic', () => {
 
     test('dropping a code back where it started changes nothing', async ({ page }) => {
         await boot(page);
-        expect(await arrange(page, M(), 'b', 0, 1, false)).toEqual(M());
-        expect(await arrange(page, M(), 'b', 0, 1, true)).toEqual(M());
+        expect(await arrange(page, M(), 'b', 0, 1)).toEqual(M());
+    });
+
+    test('a saved layout with holes and collisions closes up on load', async ({ page }) => {
+        // Free placement was the default for long enough that real saved states have both. A
+        // collision is the worse of the two: two codes with the same `order` meant only one of
+        // them was ever drawn, and the other was in storage and in the Library but nowhere on
+        // the home screen.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        await page.evaluate(() => {
+            localStorage.setItem('xancode_v2_state', JSON.stringify({
+                apps: [
+                    { id: 'g1', title: 'One',   type: 'grid', page: 0, order: 0,  bcid: 'qrcode', data: 'one' },
+                    { id: 'g2', title: 'Two',   type: 'grid', page: 0, order: 5,  bcid: 'qrcode', data: 'two' },
+                    { id: 'g3', title: 'Three', type: 'grid', page: 0, order: 11, bcid: 'qrcode', data: 'three' },
+                    { id: 'g4', title: 'Four',  type: 'grid', page: 0, order: 5,  bcid: 'qrcode', data: 'four' },
+                ],
+                autoArrange: false, skin: 'dock', gridCols: 4, gridRows: 6,
+            }));
+        });
+        await page.reload();
+        await page.waitForTimeout(1800);
+
+        const r = await page.evaluate(() => ({
+            orders: window.OS_STATE.apps.filter(a => a.type === 'grid')
+                .map(a => a.order).sort((x, y) => x - y),
+            forced: window.OS_STATE.autoArrange,
+            drawn: [...[...document.querySelectorAll('#workspace-pager .sortable-page')][0].children]
+                .map(el => el.dataset.id).filter(Boolean),
+        }));
+        expect(r.forced, 'a saved state turned auto-arrange back off').toBe(true);
+        expect(r.orders, 'the saved holes and collisions survived the load').toEqual([0, 1, 2, 3]);
+        expect(r.drawn.length, 'a code that collided is still invisible').toBe(4);
     });
 });
 
@@ -6334,7 +6401,7 @@ test.describe('Moving a code around, with a finger', () => {
         hold,
     }));
 
-    test('a code carried to another code\'s square swaps with it', async ({ page }) => {
+    test('a code carried to another code\'s square takes it, and the rest shuffle', async ({ page }) => {
         await setup(page);
         const c = await centres(page);
         const before = await order(page);
