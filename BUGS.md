@@ -608,6 +608,62 @@ ways on purpose, because it guards the fix from going too far.
 
 ---
 
+## Reported from a phone, again — and the second half of it was everywhere
+
+> "the barcodes get stuck in folder just when I try to move them to another's spots. its not
+> possible for me to rearrange without glitching into a folder. also I notice a lot of static
+> flashes throughout the app all over when interacting."
+
+Two defects, unrelated to each other, both in the code that draws the home screen.
+
+| # | Defect | Status |
+|---|---|---|
+| 54 | **Rearranging made folders.** The merge dwell started when the finger first entered a target icon's box and then never reset. The reorder swap moves that icon away on the very same `pointermove`, so every later move landed on the *ghost* and took an early return that deliberately left the timer alone — which meant the merge armed 550ms after entering a square no matter how far the finger travelled afterwards. Carrying a code to another code's square means spending time in that square, so a folder was the normal outcome of a reorder. | FIXED |
+| 55 | **The whole home screen went blank for a frame on every state change.** `render()` emptied the pager and rebuilt every icon. A code's icon is a `<canvas>` bwip-js fills in 10ms later, so between the rebuild and the redraw the grid was a set of blank white squares. `render()` runs on far more than edits — every drop, every folder change, every resize, every return from a layer — which is why the flashing was "all over". | FIXED |
+
+### 54 — a merge is a decision to hold still
+
+The old rule could only ask *which element* the finger was over. That is not enough to tell two
+gestures apart when both of them are over the same element: a reorder ends in the target's square
+by definition. Anchoring the dwell to a **position** rather than an element is what separates
+them, because that is the difference a person actually performs.
+
+The dwell now restarts whenever the pointer moves more than **10px** from where the hold began,
+and an already-armed merge is taken back down by the same movement. The hold itself went from
+550ms to **750ms**. A finger that is travelling can never be holding still, however long it
+spends over one icon.
+
+Measured with real touch (CDP `Input.dispatchTouchEvent`, 412x892): carrying `bc_1` onto `bc_2`
+with a 450ms pause before release now swaps the two codes and creates nothing. Holding still for
+1.2s still arms the merge, shows the ring and makes the folder.
+
+Four tests. Three fail against the previous build; the fourth — that a deliberate hold *still*
+merges — passes both ways on purpose, so the fix cannot go too far and make folders unreachable.
+
+### 55 — reconcile, do not rebuild
+
+The grid is now keyed by item id. An icon is reused whenever the thing it depicts has not changed
+(`itemSignature` covers title, format, payload, colours, badge, and for a folder the first four
+codes inside it); moving one between slots or pages is a DOM move, which costs nothing and shows
+nothing. Only an icon whose *content* changed is built again. The swap into the pager happens in
+a single `replaceChildren` inside the same task the nodes were moved in, so the browser never
+gets a chance to paint a half-built grid.
+
+The measurement is taken **synchronously after `render()` returns**, which is the exact frame the
+user was seeing. Before: the canvases were new nodes with nothing drawn in them. After: the same
+nodes, same ink, 15,300 dark pixels either side.
+
+One trap worth recording, because the first version of the test had it: a canvas that has never
+been drawn into is 300x150 of *transparent* black, whose red channel is 0. Counting dark pixels
+on colour alone scores a blank icon at 45,000 — the opposite of the answer. The probe checks
+alpha as well.
+
+Reusing a node also means its event handlers outlive the object they were built from, so
+`openRename`, `openEnlarge` and the folder-dissolve path now look the item up by id at the moment
+they run rather than closing over it.
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.
