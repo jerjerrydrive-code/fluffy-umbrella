@@ -532,7 +532,7 @@ const LAYERS = [
    whose whole selling point is that it restyles itself. Sizes matter too: a control that clears
    44px on a 412px-wide phone can fall under it at 360, and a layout that fits 892px tall can
    overflow at 640. */
-const SKINS_TO_AUDIT = ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic'];
+const SKINS_TO_AUDIT = ['dock', 'scancard', 'glass', 'soft'];
 const SIZES = [
     { name: '412x892', width: 412, height: 892 },   // the common Android portrait
     { name: '360x640', width: 360, height: 640 },   // small, and still very much in use

@@ -751,44 +751,78 @@ test.describe('Feedback & Motion settings', () => {
     });
 });
 
-test.describe('Aurora skin (Phase 1)', () => {
+test.describe('The dark skin, and the two that were folded into it', () => {
+    // Aurora and Classic were retired: both were dark glass on a dark gradient, differing from
+    // Dark and from each other by shadow weight. Aurora's one real idea — colour blooms behind
+    // the interface — is now what the wallpaper does on every skin, painted from the chosen
+    // palette. The invariant this block used to guard belongs to Dark now.
     const toAurora = async (page) => {
         await page.goto('/index.html');
         await page.waitForTimeout(1200);
-        await page.evaluate(() => window.SkinManager.setSkin('aurora'));
+        await page.evaluate(() => window.SkinManager.setSkin('dock'));
         await page.waitForTimeout(700);
     };
+
+    test('a retired skin in a saved state lands on a skin that exists', async ({ page }) => {
+        // Left unmapped these become data-skin values no picker row matches: the CSS still
+        // applies so the app looks fine, and the settings screen shows nothing selected with
+        // no way to explain it.
+        for (const dead of ['aurora', 'classic']) {
+            await page.goto('/index.html');
+            await page.waitForTimeout(1000);
+            const r = await page.evaluate((dead) => {
+                window.SkinManager.setSkin(dead);
+                return { state: window.OS_STATE.skin, rows: [...document.querySelectorAll('#skin-picker button')].length };
+            }, dead);
+            expect(r.state, `${dead} was left selected after being retired`).toBe('dock');
+            expect(r.rows, 'the picker is not showing four skins').toBe(4);
+        }
+    });
 
     test('keeps the dark polarity — no text inversion, unlike soft', async ({ page }) => {
         // The distinguishing property of this skin: its ground is dark, so the app's native
         // white-on-dark text is already correct and must be left alone. If someone ever copies
         // soft's polarity-flip block into aurora, labels go dark-on-dark and vanish.
         await toAurora(page);
-        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('aurora');
+        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('dock');
         const label = await page.evaluate(() =>
             getComputedStyle(document.querySelector('.app-label')).color);
         expect(label).toBe('rgb(255, 255, 255)');
     });
 
-    test('the three blooms stay distinguishable and all retune with the accent', async ({ page }) => {
-        // Weighting the mixes toward the accent collapsed all three blooms to one hue and the
-        // field read as a flat wash instead of an aurora. Both halves matter: they must differ
-        // from each other, AND they must all move when the accent changes.
+    test('the wallpaper blooms stay distinguishable and all retune with the theme', async ({ page }) => {
+        // Weighting the mixes toward one colour collapsed the blooms to a single hue and the
+        // field read as a flat wash. Both halves matter: they must differ from each other, AND
+        // they must all move when the theme changes.
+        //
+        // These used to be aurora's private --aur-bloom-* variables. They are the WALLPAPER's
+        // now, on every skin, painted from the four colours of the chosen palette — which is
+        // what makes picking a theme change the program rather than the chips.
         await toAurora(page);
         const blooms = () => page.evaluate(() => {
             const cs = getComputedStyle(document.body);
-            return ['--aur-bloom-a', '--aur-bloom-b', '--aur-bloom-c']
+            return ['--pal-1', '--pal-2', '--pal-3', '--pal-4']
                 .map(v => cs.getPropertyValue(v).trim());
         });
 
         const before = await blooms();
-        expect(new Set(before).size, `blooms collapsed to one hue: ${before.join(' ')}`).toBe(3);
+        const wallBefore = await page.evaluate(() => getComputedStyle(document.body).backgroundImage);
+        expect(new Set(before).size, `blooms collapsed to one hue: ${before.join(' ')}`).toBe(4);
 
-        await page.evaluate(() => window.ThemeManager.applyAccent('#E0432F', true));
+        await page.evaluate(() => window.ThemeManager.applyAccent('#E0432F', true,
+            ['#E0432F', '#F5A623', '#2E86AB', '#5D2E46']));
         await page.waitForTimeout(300);
         const after = await blooms();
-        expect(new Set(after).size).toBe(3);
+        expect(new Set(after).size).toBe(4);
         after.forEach((c, i) => expect(c).not.toBe(before[i]));
+
+        // ...and the wallpaper itself is actually built from them, not merely told about them.
+        // Compared as a whole string rather than searched for a colour: Chrome serialises
+        // color-mix() as `color(srgb 0.878431 ...)`, not as the rgb triple you wrote.
+        const wallAfter = await page.evaluate(() => getComputedStyle(document.body).backgroundImage);
+        expect(wallAfter, 'the wallpaper is not built from the palette at all')
+            .toContain('radial-gradient');
+        expect(wallAfter, 'the palette never reaches the wallpaper').not.toBe(wallBefore);
     });
 
     test('the drifting field freezes under reduced motion', async ({ page }) => {
@@ -830,7 +864,7 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         expect(await gap()).toBeGreaterThan(0);
     });
 
-    test('classic keeps the icon size and changes everything else about the shape', async ({ page }) => {
+    test('a skin keeps the icon size and changes everything else about the shape', async ({ page }) => {
         // This test used to assert the opposite — that classic moved NO geometry at all, only
         // shadows. That was the design at the time, and it was the design across all six skins:
         // same squircle, same dock, same labels, colour and shadow only. The person using the
@@ -854,17 +888,17 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
             dockRadius: getComputedStyle(document.getElementById('main-dock')).borderRadius,
             dockPad: getComputedStyle(document.getElementById('main-dock')).padding,
             gridGap: getComputedStyle(document.querySelector('.os-grid')).rowGap,
-            labelShadow: getComputedStyle(document.querySelector('.app-label')).textShadow,
             labelSize: getComputedStyle(document.querySelector('.app-label')).fontSize,
-            iconShadow: getComputedStyle(document.querySelector('.app-icon')).boxShadow,
+            labelCase: getComputedStyle(document.querySelector('.app-label')).textTransform,
+            labelTrack: getComputedStyle(document.querySelector('.app-label')).letterSpacing,
         }));
 
         const sizeBefore = await size();
         const shapeBefore = await shape();
 
-        await page.evaluate(() => window.SkinManager.setSkin('classic'));
+        await page.evaluate(() => window.SkinManager.setSkin('scancard'));
         await page.waitForTimeout(700);
-        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('classic');
+        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('scancard');
 
         // The size a code is drawn at does not move...
         expect(await size()).toEqual(sizeBefore);
@@ -873,7 +907,7 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         // across the room; before this change, none of them differed.
         const after = await shape();
         for (const k of Object.keys(shapeBefore)) {
-            expect(after[k], `classic left ${k} exactly as iOS Dock had it`).not.toBe(shapeBefore[k]);
+            expect(after[k], `Scan Card left ${k} exactly as Dark had it`).not.toBe(shapeBefore[k]);
         }
     });
 
@@ -882,7 +916,7 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         await page.waitForTimeout(1200);
         // dock, scancard, glass, soft, aurora, classic — kept in step with the loop below so
         // adding a SKINS entry without a matching case here fails loudly.
-        const skins = ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic'];
+        const skins = ['dock', 'scancard', 'glass', 'soft'];
         const rendered = await page.evaluate(() =>
             document.querySelectorAll('#skin-picker button').length);
         expect(rendered).toBe(skins.length);
@@ -1650,7 +1684,7 @@ test.describe('Backup and restore (Phase 4)', () => {
                 { id: 'bc_b', title: 'Beta', type: 'grid', page: 1, order: 0, bcid: 'azteccode', data: 'beta-payload' });
             window.OS_STATE.history = [];
             window.recordHistory({ data: 'https://logged.example', source: 'scanned' });
-            window.OS_STATE.skin = 'aurora';
+            window.OS_STATE.skin = 'aurora';   // retired — a backup can still contain one
             window.OS_STATE.accent = '#E0432F';
             return JSON.stringify(window.buildBackup());
         });
@@ -1676,7 +1710,10 @@ test.describe('Backup and restore (Phase 4)', () => {
         expect(restored.res.added).toBe(2);
         expect(restored.codes).toEqual(['alpha-payload', 'beta-payload']);
         expect(restored.history).toBe(1);
-        expect(restored.skin).toBe('aurora');      // preferences restored too
+        // The backup was written with 'aurora', which has since been retired — restoring it
+        // lands on the skin it was folded into. A preference that no longer exists must not
+        // come back out of a file and be set as if it did.
+        expect(restored.skin).toBe('dock');        // preferences restored, and migrated
         expect(restored.accent).toBe('#E0432F');
     });
 
@@ -2846,7 +2883,7 @@ test.describe('Text stays readable on every skin', () => {
     // That is how the Library's Saved/Scanned/Created row ended up at 1.22:1 on Soft and the
     // code viewer's title at 1.11:1 on Aurora — present in the DOM, invisible on screen. Found
     // by sweeping scripts/motion-audit.mjs across all six skins; this keeps it swept.
-    const SKINS = ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic'];
+    const SKINS = ['dock', 'scancard', 'glass', 'soft'];
 
     // Mirrors the audit's measurement, including its one hard-won rule: stop at a background
     // IMAGE rather than walking past it to a colour underneath. The wallpaper is a gradient on
@@ -4740,11 +4777,11 @@ test.describe('Restoring accepts the file you actually have', () => {
             window.OS_STATE.accent = '#3b82f6';
             window.applyBackup(JSON.stringify({
                 format: 'xancode-os-backup', version: 1,
-                state: { apps: [], skin: 'aurora', accent: '#ff0000' },
+                state: { apps: [], skin: 'aurora', accent: '#ff0000' },   // retired since
             }));
             return { skin: window.OS_STATE.skin, accent: window.OS_STATE.accent };
         });
-        expect(r.skin).toBe('aurora');
+        expect(r.skin, 'a retired skin came back out of a backup unchanged').toBe('dock');
         expect(r.accent).toBe('#ff0000');
     });
 });
@@ -4774,7 +4811,7 @@ test.describe('No skin costs the app its frame rate', () => {
         await page.waitForTimeout(900);
 
         const slow = [];
-        for (const skin of ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic']) {
+        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
             await page.evaluate((s) => document.body.setAttribute('data-skin', s), skin);
             await page.waitForTimeout(800);
             const frames = await page.evaluate(async () => {
@@ -4800,7 +4837,7 @@ test.describe('No skin costs the app its frame rate', () => {
         await page.waitForTimeout(1000);
         const offenders = await page.evaluate(() => {
             const bad = [];
-            for (const skin of ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic']) {
+            for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
                 document.body.setAttribute('data-skin', skin);
                 for (const el of [document.body, document.documentElement]) {
                     for (const pseudo of ['::before', '::after']) {
@@ -4940,8 +4977,8 @@ test.describe('The skin morph does not leave the screen unreadable', () => {
         await page.waitForTimeout(800);
 
         const spans = [];
-        for (const [from, to] of [['dock', 'glass'], ['glass', 'soft'], ['soft', 'aurora'],
-                                  ['aurora', 'classic'], ['classic', 'scancard'], ['scancard', 'dock']]) {
+        for (const [from, to] of [['dock', 'glass'], ['glass', 'soft'], ['soft', 'scancard'],
+                                  ['scancard', 'glass'], ['glass', 'soft'], ['soft', 'dock']]) {
             spans.push((await morphSpan(page, from, to)).span);
         }
         spans.sort((a, b) => a - b);
@@ -4973,7 +5010,7 @@ test.describe('The skin morph does not leave the screen unreadable', () => {
         await page.setViewportSize({ width: 412, height: 892 });
         await page.goto('/index.html');
         await page.waitForTimeout(1100);
-        for (const [from, to] of [['dock', 'aurora'], ['aurora', 'dock']]) {
+        for (const [from, to] of [['dock', 'glass'], ['glass', 'dock']]) {
             const r = await morphSpan(page, from, to);
             expect(r.settled, `the workspace stayed blurred after morphing to ${to}`).toBe(true);
             expect(r.skin).toBe(to);
@@ -5855,7 +5892,7 @@ test.describe('The home screen does not blink', () => {
 //  over one interface rather than a different one.
 // ============================================================================================
 test.describe('A skin changes the interface, not just its colour', () => {
-    const SKINS = ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic'];
+    const SKINS = ['dock', 'scancard', 'glass', 'soft'];
 
     // Everything about a skin you could recognise from across the room, with colour left out
     // on purpose — colour was never the part that was missing.
