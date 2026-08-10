@@ -2382,23 +2382,35 @@ test.describe('Edit-mode dragging (report: "I have to re-tap the icons")', () =>
 
     test('a second icon can be moved straight after the first, with no tap in between', async ({ page }) => {
         await enterEditMode(page);
+        // Two codes share page 0 in the default state; a third sits on page 1. Both moves stay
+        // on screen deliberately. An earlier version dragged to that page-1 icon, which is off
+        // to the right at x=1447 — so the drag reached the screen edge, the edge-flip turned the
+        // page (correctly), and the second press then landed on empty space a thousand pixels
+        // off-screen. It only ever passed because the old build refused the first drag partway.
         const icons = await centres(page);
+        const onScreen = icons.filter(c => c.x > 0 && c.x < 1200);
+        expect(onScreen.length, 'need two icons on screen for this').toBeGreaterThan(1);
+        const [first, second] = onScreen;
 
-        // First move.
-        await page.mouse.move(icons[0].x, icons[0].y);
+        // First move: pick one up and put it down again, without leaving the page.
+        await page.mouse.move(first.x, first.y);
         await page.mouse.down();
-        await page.mouse.move(icons[0].x + 12, icons[0].y + 12, { steps: 3 });
-        await page.mouse.move(icons[2].x, icons[2].y, { steps: 10 });
+        await page.mouse.move(first.x + 12, first.y + 12, { steps: 3 });
+        await page.mouse.move(second.x, second.y, { steps: 10 });
         await page.mouse.up();
         await page.waitForTimeout(120);   // deliberately inside the 400ms settle window
 
         // Second move begins before the first has finished animating home. The settle timer
-        // used to fire mid-flight here and strip the new drag's transform.
-        await page.mouse.move(icons[1].x, icons[1].y);
+        // used to fire mid-flight here and strip the new drag's transform. Positions are
+        // re-read because the first move reflows the grid — pressing where an icon used to be
+        // does nothing, correctly.
+        const after = (await centres(page)).filter(c => c.x > 0 && c.x < 1200);
+        const target = after.find(c => c.id !== first.id) || after[0];
+        await page.mouse.move(target.x, target.y);
         await page.mouse.down();
-        await page.mouse.move(icons[1].x + 12, icons[1].y + 12, { steps: 3 });
+        await page.mouse.move(target.x + 12, target.y + 12, { steps: 3 });
         const engaged = await page.evaluate(() => window.DragEngine.isEngaged);
-        await page.mouse.move(icons[0].x, icons[0].y, { steps: 10 });
+        await page.mouse.move(first.x, first.y, { steps: 10 });
         await page.mouse.up();
         await page.waitForTimeout(900);
 
@@ -5329,5 +5341,165 @@ test.describe('An unreadable saved state does not cost you your codes', () => {
         expect(r.codes).toBe(20);
         expect(r.first).toBe('Important 0');
         expect(r.unreadableKey, 'a healthy state was treated as damaged').toBeNull();
+    });
+});
+
+test.describe('Edit mode is usable and escapable', () => {
+    // Reported from a phone, with screenshots: "I cant get out of edit mode i cant get the
+    // moving spots right. try and move the icons around to swap spots. its buggy. also when it
+    // makes a folder its stuck in folder."
+    //
+    // Three separate causes, none of which was the one the symptoms suggested.
+
+    const finger = async (page, type, x, y) => {
+        const cdp = page.__cdp || (page.__cdp = await page.context().newCDPSession(page));
+        await cdp.send('Input.dispatchTouchEvent', { type,
+            touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 8, radiusY: 8, force: 1 }] });
+    };
+    const dragTo = async (page, x0, y0, x1, y1) => {
+        await finger(page, 'touchStart', x0, y0);
+        await page.waitForTimeout(120);
+        for (let i = 1; i <= 14; i++) {
+            await finger(page, 'touchMove', x0 + (x1 - x0) * i / 14, y0 + (y1 - y0) * i / 14);
+            await page.waitForTimeout(20);
+        }
+        await finger(page, 'touchEnd', x1, y1);
+        await page.waitForTimeout(900);
+    };
+    const tapDrift = async (page, x, y, drift) => {
+        await finger(page, 'touchStart', x, y);
+        for (let i = 1; i <= 4; i++) { await finger(page, 'touchMove', x + drift * i / 4, y); await page.waitForTimeout(16); }
+        await finger(page, 'touchEnd', x + drift, y);
+    };
+    const seed = (page, n) => page.evaluate((n) => {
+        window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type === 'dock');
+        for (let i = 0; i < n; i++) {
+            window.OS_STATE.apps.push({ id: 'i' + i, title: 'C' + i, type: 'grid', page: 0,
+                order: i, bcid: 'qrcode', data: 'https://example.com/' + i });
+        }
+        window.OS_STATE.isEditMode = true;
+        document.body.classList.add('edit-mode');
+        const done = document.getElementById('btn-done-editing');
+        if (done) { done.classList.remove('hidden'); done.classList.add('flex'); }
+        window.Renderer.render();
+    }, n);
+    const at = (page, id) => page.evaluate((id) => {
+        const e = document.querySelector(`#workspace-pager [data-id="${id}"]`);
+        const r = e.getBoundingClientRect();
+        return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    }, id);
+    const order = (page) => page.evaluate(() => window.OS_STATE.apps
+        .filter(a => a.type === 'grid' && !a.folderId).sort((a, b) => a.order - b.order)
+        .map(a => a.id).join(','));
+
+    test('a drag ends when the finger lifts', async ({ page }) => {
+        // isEngaged was set in engageDrag() and cleared only when edit mode ended, so after ONE
+        // drag it stayed true for the rest of the session. Everything that asks "is a drag in
+        // progress" then got yes forever: taps ignored, the background tap that leaves edit mode
+        // dead, and the global touchmove preventDefault left armed.
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await seed(page, 8);
+        await page.waitForTimeout(600);
+
+        const a = await at(page, 'i0'), b = await at(page, 'i1');
+        await dragTo(page, a.x, a.y, b.x, b.y);
+
+        expect(await page.evaluate(() => ({
+            engaged: window.DragEngine.isEngaged,
+            was: window.DragEngine.wasDragging,
+            target: !!window.DragEngine.targetEl,
+        })), 'the drag engine still thinks a drag is happening')
+            .toEqual({ engaged: false, was: false, target: false });
+    });
+
+    test('icons can be moved again and again', async ({ page }) => {
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await seed(page, 8);
+        await page.waitForTimeout(600);
+        expect(await order(page)).toBe('i0,i1,i2,i3,i4,i5,i6,i7');
+
+        for (const [from, to] of [['i0', 'i1'], ['i2', 'i3'], ['i4', 'i5']]) {
+            const before = await order(page);
+            const a = await at(page, from), b = await at(page, to);
+            await dragTo(page, a.x, a.y, b.x, b.y);
+            expect(await order(page), `dragging ${from} onto ${to} changed nothing`).not.toBe(before);
+        }
+
+        // Nothing stranded mid-flight, and no code lost along the way.
+        const junk = await page.evaluate(() => ({
+            stuck: [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')]
+                .filter(e => e.style.position === 'fixed').map(e => e.dataset.id),
+            ghosts: document.querySelectorAll('.custom-drag-ghost').length,
+            codes: window.OS_STATE.apps.filter(a => a.type === 'grid').length,
+        }));
+        expect(junk.stuck, 'an icon was left stuck to the screen').toEqual([]);
+        expect(junk.ghosts, 'a drag ghost was left behind').toBe(0);
+        expect(junk.codes, 'a code was lost while rearranging').toBe(8);
+    });
+
+    test('a sideways drag moves the icon rather than being eaten as a page swipe', async ({ page }) => {
+        // A page flick and a sideways reorder look identical for the first few pixels. The old
+        // split — 18px within 180ms of touching — called the reorder a swipe and refused the
+        // drag, so moving an icon along a row did nothing at all.
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await seed(page, 8);
+        await page.waitForTimeout(600);
+
+        const before = await order(page);
+        const a = await at(page, 'i0'), b = await at(page, 'i3');   // same row, purely horizontal
+        await dragTo(page, a.x, a.y, b.x, b.y);
+        expect(await order(page), 'a horizontal drag did nothing').not.toBe(before);
+    });
+
+    test('Done leaves edit mode', async ({ page }) => {
+        // Tapping the background works where the background belongs to the launcher — but in
+        // edit mode much of the empty screen is the page-move row, which is not a launcher
+        // surface, so taps there reached nothing. An explicit way out cannot be missed.
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await seed(page, 4);
+        await page.waitForTimeout(500);
+
+        const box = await page.locator('#btn-done-editing').boundingBox();
+        expect(box, 'there is no visible way out of edit mode').not.toBeNull();
+        await tapDrift(page, box.x + box.width / 2, box.y + box.height / 2, 20);
+        await page.waitForTimeout(700);
+        expect(await page.evaluate(() => document.body.classList.contains('edit-mode')),
+               'Done did not leave edit mode').toBe(false);
+    });
+
+    test('a folder can be closed by tapping outside it, thumb drift and all', async ({ page }) => {
+        // "Tap outside to close" is a click handler on the overlay, and the overlay is a plain
+        // div — not a control, so the tap rescue did not cover it and the browser withholds the
+        // click once the finger drifts. Measured: a dead-still tap closed it, a 25px tap did not.
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await page.evaluate(() => {
+            window.OS_STATE.apps.push({ id: 'fx', title: 'Folder', type: 'folder', page: 0, order: 9 });
+            ['bc_1', 'bc_2'].forEach((id, i) => {
+                const a = window.OS_STATE.apps.find(x => x.id === id);
+                if (a) { a.folderId = 'fx'; a.order = i; }
+            });
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+
+        for (const drift of [0, 20, 30, 44]) {
+            await page.evaluate(() => window.FolderManager.open('fx'));
+            await page.waitForTimeout(600);
+            await tapDrift(page, 206, 780, drift);
+            await page.waitForTimeout(700);
+            expect(await page.evaluate(() =>
+                document.getElementById('folder-overlay').classList.contains('opacity-100')),
+                `a tap outside with ${drift}px of drift left the folder open`).toBe(false);
+        }
     });
 });
