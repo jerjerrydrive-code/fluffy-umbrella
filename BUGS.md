@@ -450,6 +450,42 @@ reset app then mutated the defaults in place. It is a fresh copy now.
 
 ---
 
+## Reported from a phone, with screenshots
+
+> "I cant get out of edit mode i cant get the moving spots right. try and move the icons around
+> to swap spots. its buggy. also when it makes a folder its stuck in folder."
+
+Three separate causes. None was the one the symptoms suggested.
+
+| # | Defect | Status |
+|---|---|---|
+| 50 | **A drag never ended.** `isEngaged` was set in `engageDrag()` and cleared only when edit mode ended, so after ONE drag it stayed true for the rest of the session. Everything that asks "is a drag in progress" then got yes forever: taps ignored, the background tap that leaves edit mode dead, and the global `touchmove` preventDefault left armed. | FIXED |
+| 51 | **A sideways drag was eaten as a page swipe.** The swipe test asked whether the *first move* was ≥18px within 180ms — which made the answer depend on how the browser happened to sample the finger. The same physical gesture is one 40px move on a quiet frame and two 20px moves on a busy one, and only the first counted. Measured: a horizontal drag from slot 0 to slot 3 did nothing at all, twice, while diagonal drags in the same session worked. | FIXED |
+| 52 | **No visible way out of edit mode.** Tapping the background works where the background belongs to the launcher, but in edit mode much of the empty screen is the page-move row, which is not a launcher surface — taps there reached nothing at all. | FIXED |
+| 53 | **A folder could not be closed.** "Tap outside to close" is a click handler on the overlay, and the overlay is a plain div — not a control, so the tap rescue did not cover it, and the browser withholds the click once the finger drifts. Measured: a dead-still tap closed it, a 25px tap did not. | FIXED |
+
+\#51 is decided on **velocity** now, not on the first sample's distance: a flick is fast from the
+first instant, a reorder is a press that becomes a movement, and velocity is the same however the
+movement is chopped up. \#52 adds a **Done** button, which is what the original app had. \#53
+treats a tap on any `.modal-spring` backdrop as a dismissal, with a slop suited to a full-screen
+target rather than to a chip.
+
+Four of the five tests fail against the build the report came from.
+
+### Two existing tests had to be corrected, and neither was the app's fault
+
+The bug #7 guard (*a swipe across a page in edit mode turns the page*) broke on the first attempt
+at #51, which used a bigger distance threshold. Velocity satisfies both that guard and the
+reorder, which is how you can tell it is the right rule rather than a tuned number.
+
+The bug #2 guard (*a second icon can be moved straight after the first*) dragged to an icon on
+**page 1**, off-screen at x=1447. With drags now working, that reaches the screen edge, the
+edge-flip turns the page — correctly — and the second press then landed a thousand pixels
+off-screen. It had only ever passed because the old build refused the first drag partway. Both
+moves now stay on screen, which is what the test was always trying to say.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it

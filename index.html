@@ -1058,6 +1058,11 @@
                 <button id="btn-open-settings" class="tap44 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all duration-300 shadow-sm backdrop-blur-md">
                     <i data-lucide="settings" class="w-[18px] h-[18px] text-white drop-shadow-md"></i>
                 </button>
+                <!-- Edit mode needs a way out you can SEE. Tapping the background works, but a
+                     large part of the screen in edit mode is the page-move row rather than the
+                     grid, so the obvious empty space was not the launcher's to act on and taps
+                     there did nothing at all. Reported as "I cant get out of edit mode". -->
+                <button id="btn-done-editing" class="hidden tap44 items-center justify-center px-4 rounded-full bg-white text-black text-[14px] font-bold shadow-lg active:scale-95 transition-transform">Done</button>
             </div>
         </header>
 
@@ -2876,8 +2881,25 @@
                     // 14x8 diagonal lift a swipe, which would make picking icons up feel random
                     // in the other direction. When in doubt, it is a drag — that is recoverable,
                     // and a wrongly-refused drag is not.
-                    const QUICK_MS = 180, SWIPE_PX = 18, SWIPE_DRIFT = 10;
-                    const quick = (performance.now() - this.pressedAt) < QUICK_MS;
+                    // A page flick and a sideways reorder look identical for the first few
+                    // pixels, so this separates them on SPEED rather than on distance.
+                    //
+                    // It used to ask whether the first move was at least 18px within 180ms of
+                    // touching. That made the answer depend on how the browser happened to
+                    // sample the finger: the same physical gesture is one 40px move on a quiet
+                    // frame and two 20px moves on a busy one, and only the first was called a
+                    // swipe. Reported from a phone as "I cant get the moving spots right" —
+                    // measured, a horizontal drag from slot 0 to slot 3 did nothing at all,
+                    // twice, while diagonal drags in the same session worked.
+                    //
+                    // Velocity does not have that problem: it is the same however the movement
+                    // is chopped up. A flick is fast from the first instant; a reorder is a
+                    // press that becomes a movement, and is an order of magnitude slower. The
+                    // distance floor stays as a sanity check so a fast twitch cannot page.
+                    const QUICK_MS = 180, SWIPE_PX = 24, SWIPE_DRIFT = 10, FLICK_VX = 0.9;
+                    const elapsed = performance.now() - this.pressedAt;
+                    const vx = Math.abs(dx) / Math.max(1, elapsed);      // px per ms
+                    const quick = elapsed < QUICK_MS && vx >= FLICK_VX;
                     if (quick && Math.abs(dx) >= SWIPE_PX && Math.abs(dy) <= SWIPE_DRIFT) {
                         this.swipedAway = true;
                         if (this.targetEl) this.targetEl.classList.remove('drag-ready');
@@ -3062,7 +3084,21 @@
                 document.removeEventListener('pointercancel', this.onPointerUp);
                 
                 if (this.targetEl) this.targetEl.classList.remove('drag-ready');
-                if (!this.isEngaged) { this.clearFolderDwell(); return; }
+
+                // The drag is over the moment the finger lifts.
+                //
+                // `isEngaged` was set in engageDrag() and never cleared here — only when edit
+                // mode ended. So after ONE drag it stayed true for the rest of the session, and
+                // everything that asks "is a drag in progress" got yes forever: taps were
+                // ignored, the background tap that leaves edit mode did nothing, and the global
+                // touchmove preventDefault stayed armed. Reported from a phone as "I cant get
+                // out of edit mode" and "I cant get the moving spots right", and the flags
+                // confirmed it — isEngaged true, targetEl set, with no finger on the screen.
+                const wasEngaged = this.isEngaged;
+                this.isEngaged = false;
+                this.targetEl = null;
+
+                if (!wasEngaged) { this.clearFolderDwell(); return; }
 
                 // A folder drop replaces the reorder entirely — the dragged icon is going INTO
                 // something, so animating it back into a grid slot would be wrong.
@@ -6859,6 +6895,11 @@
         XanNav.register('edit-mode', () => window.exitEditMode(),
                         () => document.body.classList.contains('edit-mode'), document.body);
 
+        document.getElementById('btn-done-editing').addEventListener('click', () => {
+            haptic(12);
+            window.exitEditMode();
+        });
+
         [['btn-page-left', -1], ['btn-page-right', 1]].forEach(([id, dir]) => {
             document.getElementById(id).addEventListener('click', () => {
                 if (!window.OS_STATE.isEditMode) return;
@@ -7002,6 +7043,8 @@
                         g.pressed = true;
                         window.OS_STATE.isEditMode = true;
                         document.body.classList.add('edit-mode');
+                        const done = document.getElementById('btn-done-editing');
+                        if (done) { done.classList.remove('hidden'); done.classList.add('flex'); }
                         haptic([10, 30, 10]);
                         window.Renderer.render();
                     }, this.PRESS_MS);
@@ -7235,10 +7278,22 @@
                 // `pointerdown` then `pointercancel`, full stop. A pointerup-based rule can
                 // never see the release. Touch events keep firing all the way to `touchend`.
                 document.addEventListener('touchstart', (e) => {
-                    if (e.touches.length !== 1) { this.el = null; return; }
+                    if (e.touches.length !== 1) { this.el = null; this.backdrop = null; return; }
                     const t = e.changedTouches[0];
                     const el = t.target && t.target.closest ? t.target.closest(this.SEL) : null;
                     this.el = (el && !el.closest('#workspace-pager, #dock-container')) ? el : null;
+
+                    // "Tap outside to close" is a click handler on the overlay itself, and the
+                    // overlay is a plain div — not a control, so nothing above covers it, and the
+                    // browser withholds the click once the finger has drifted. Measured on the
+                    // folder sheet: a dead-still tap closed it, a 25px tap did nothing, which is
+                    // the "when it makes a folder its stuck in folder" report.
+                    //
+                    // Only when the touch BEGINS on the backdrop itself. Resolving upwards would
+                    // dismiss the sheet whenever anything inside it was tapped.
+                    this.backdrop = (t.target && t.target.classList &&
+                                     t.target.classList.contains('modal-spring')) ? t.target : null;
+
                     this.x = t.clientX; this.y = t.clientY; this.t = performance.now();
                     this.clicked = false;
                 }, { passive: true, capture: true });
@@ -7249,12 +7304,26 @@
 
                 document.addEventListener('touchend', (e) => {
                     const el = this.el;
-                    this.el = null;
-                    if (!el || el.disabled) return;
+                    const backdrop = this.backdrop;
+                    this.el = null; this.backdrop = null;
+                    if ((!el || el.disabled) && !backdrop) return;
                     if (performance.now() - this.t > this.MS) return;
 
                     const t = e.changedTouches[0];
                     if (!t) return;
+
+                    if (!el && backdrop) {
+                        // A backdrop is the whole screen, so precision is not the point and the
+                        // 24px meant for a chip is far too mean here: a 25px tap on the folder
+                        // sheet still did nothing. Anything that stays within a thumb's width of
+                        // where it started, and ends on the backdrop, is a dismissal.
+                        const moved = Math.hypot(t.clientX - this.x, t.clientY - this.y);
+                        if (moved > 48 || moved <= this.MARGIN) return;
+                        const up = document.elementFromPoint(t.clientX, t.clientY);
+                        if (up !== backdrop) return;      // ended on something inside it
+                        setTimeout(() => { if (!this.clicked) backdrop.click(); }, 80);
+                        return;
+                    }
                     // Where the finger ENDED, not where the browser gave up. A real scroll
                     // travels far past this before the finger lifts; a tap that wandered a few
                     // millimetres does not.
@@ -7278,6 +7347,8 @@
             if (!window.OS_STATE.isEditMode) return;
             window.OS_STATE.isEditMode = false;
             document.body.classList.remove('edit-mode');
+            const done = document.getElementById('btn-done-editing');
+            if (done) { done.classList.add('hidden'); done.classList.remove('flex'); }
             document.querySelectorAll('.jiggle-target').forEach(j => j.style.animation = 'none');
 
             window.DragEngine.destroy();
