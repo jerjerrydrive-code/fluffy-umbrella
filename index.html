@@ -322,9 +322,27 @@
          * "page scrolls horizontally: 419px of content in 412px" — 63 findings, on every skin
          * and every screen size, because a document that scrolls sideways affects every layer
          * drawn on it and not just the grid. */
+        /* A dock icon is never wider than its share of the dock.
+           --dock-size is computed from the VIEWPORT by LayoutManager, which knows nothing about
+           the width and padding a skin chooses for its dock. Once those became per-skin the two
+           could disagree, and they did: measured at 412px, Glass overflowed its pill by 35px and
+           Soft by 20px, pushing the last icon outside the bar it lives in. That is "the dock
+           icons dont fit dock".
+           Expressing it as a share rather than a number means the two cannot disagree again —
+           whatever a skin does to the dock's width or padding, five icons still fit inside it. */
+        #dock-container { display: flex; }
+        #dock-container .app-icon-wrapper {
+            flex: 1 1 0; min-width: 0;
+            max-width: var(--dock-size, var(--app-size));
+        }
+        /* The tile is two levels down — wrapper > .jiggle-target > .app-icon — and
+           .jiggle-target is shrink-to-fit, so a percentage on the tile alone resolved against
+           the 28px glyph inside it and collapsed the icon instead of capping it. */
+        #dock-container .app-icon-wrapper > .jiggle-target { width: 100%; }
         #dock-container .app-icon {
-            width: var(--dock-size, var(--app-size));
-            height: var(--dock-size, var(--app-size));
+            width: 100%;
+            height: auto;
+            aspect-ratio: 1 / 1;
         }
 
         .app-icon {

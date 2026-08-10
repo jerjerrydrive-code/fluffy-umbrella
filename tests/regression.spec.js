@@ -6632,3 +6632,52 @@ test.describe('Signing in cannot undo the app', () => {
         if (sent) expect(sent.palette).toEqual(['#010203', '#040506', '#070809', '#0A0B0C']);
     });
 });
+
+// ============================================================================================
+//  The dock icons fit the dock
+//
+//  "the dock icons dont fit dock". Measured at 412px before the fix: Glass overflowed its pill
+//  by 35px and Soft by 20px, pushing the last icon outside the bar it lives in.
+//
+//  --dock-size is computed from the VIEWPORT by LayoutManager, which knows nothing about the
+//  width and padding a skin chooses for its dock. Once those became per-skin the two could
+//  disagree, and did. A dock icon is now a SHARE of the dock rather than a number, so they
+//  cannot disagree again.
+// ============================================================================================
+test.describe('The dock icons fit the dock', () => {
+    for (const [w, h] of [[320, 568], [360, 640], [412, 892], [430, 932]]) {
+        test(`no dock icon escapes its bar at ${w}x${h}`, async ({ page }) => {
+            await page.setViewportSize({ width: w, height: h });
+            await page.goto('/index.html');
+            await page.waitForTimeout(1300);
+            for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+                const r = await page.evaluate((skin) => {
+                    document.body.dataset.skin = skin;
+                    const nav = document.getElementById('main-dock');
+                    const row = document.getElementById('dock-container');
+                    const pad = parseFloat(getComputedStyle(nav).paddingLeft);
+                    const navR = nav.getBoundingClientRect();
+                    const items = [...row.querySelectorAll('.app-icon-wrapper')];
+                    const first = items[0].getBoundingClientRect();
+                    const last = items[items.length - 1].getBoundingClientRect();
+                    return {
+                        overflow: row.scrollWidth - row.clientWidth,
+                        leftGap: first.left - (navR.left + pad),
+                        rightGap: (navR.right - pad) - last.right,
+                        iconW: items[0].querySelector('.app-icon').getBoundingClientRect().width,
+                    };
+                }, skin);
+                await page.waitForTimeout(120);
+                expect(r.overflow, `${skin} at ${w}x${h}: the dock row overflows by ${r.overflow}px`)
+                    .toBeLessThanOrEqual(0);
+                expect(r.leftGap, `${skin} at ${w}x${h}: first icon escapes the bar`)
+                    .toBeGreaterThanOrEqual(-1);
+                expect(r.rightGap, `${skin} at ${w}x${h}: last icon escapes the bar`)
+                    .toBeGreaterThanOrEqual(-1);
+                // ...and it must still be a target you can hit, not a sliver.
+                expect(r.iconW, `${skin} at ${w}x${h}: dock icon shrank to ${r.iconW}px`)
+                    .toBeGreaterThan(34);
+            }
+        });
+    }
+});
