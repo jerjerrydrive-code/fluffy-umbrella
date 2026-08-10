@@ -63,9 +63,17 @@
             --pal-2: #c8836f;
             --pal-3: #1f5c6b;
             --pal-4: #222f5e;
-            --wall-ink-a: #0f1836;
-            --wall-ink-b: #0a1226;
-            --wall-bloom: 72%;
+
+            /* The GROUND is made of the palette too, not just the blooms on top of it.
+               It used to be a fixed navy with four faint radial gradients floating over it, and
+               the navy won: three skins looked like the same dark blue screen whatever theme was
+               chosen, while Soft — whose ground is its own gradient — was the only one where a
+               palette was visible at all. That is what "themes still really dont do shit" meant.
+               Mixed against a near-black rather than replacing it, so a pale palette cannot
+               produce a dark skin nothing can be read on. */
+            --wall-ink-a: color-mix(in srgb, var(--pal-4) 38%, #05070f);
+            --wall-ink-b: color-mix(in srgb, var(--pal-1) 26%, #04050c);
+            --wall-bloom: 78%;
 
             /* ---- Structural skin tokens -------------------------------------------------
                A skin used to be a colour scheme and nothing else. Every one of the six drew the
@@ -271,7 +279,9 @@
                 radial-gradient(44% 36% at 86% 24%, color-mix(in srgb, var(--pal-2) var(--wall-bloom), transparent) 0%, transparent 60%),
                 radial-gradient(52% 40% at 60% 92%, color-mix(in srgb, var(--pal-3) var(--wall-bloom), transparent) 0%, transparent 64%),
                 radial-gradient(46% 34% at 10% 76%, color-mix(in srgb, var(--pal-4) var(--wall-bloom), transparent) 0%, transparent 58%),
-                linear-gradient(165deg, var(--wall-ink-a) 0%, var(--wall-ink-b) 100%);
+                linear-gradient(165deg, var(--wall-ink-a) 0%,
+                                        color-mix(in srgb, var(--pal-2) 18%, var(--wall-ink-b)) 52%,
+                                        var(--wall-ink-b) 100%);
             background-size: cover; background-position: center; background-repeat: no-repeat;
             background-attachment: fixed;
             overflow: hidden; -webkit-user-select: none; user-select: none;
@@ -570,8 +580,20 @@
         /* The two light skins put the palette's blooms on a pale ground instead of a dark
            one. Same four colours, same theme — a light interface rather than a dark one, which
            is the actual difference between them and is now the only difference that is left. */
-        body[data-skin="glass"] { --wall-ink-a: #eef0fb; --wall-ink-b: #dfe6f2; --wall-bloom: 38%; }
-        body[data-skin="soft"]  { --wall-ink-a: #eef1f7; --wall-ink-b: #e2e6ee; --wall-bloom: 22%; }
+        /* The light skins put the same palette on a PALE ground rather than a white one.
+           #eef0fb to #dfe6f2 is not light, it is grey: a big flat near-white field no theme
+           could tint, which reads as glare rather than as a light interface. Mixed with the
+           palette it becomes a tinted daylight instead of a blank one. */
+        body[data-skin="glass"] {
+            --wall-ink-a: color-mix(in srgb, var(--pal-1) 26%, #ffffff);
+            --wall-ink-b: color-mix(in srgb, var(--pal-3) 30%, #f4f6fd);
+            --wall-bloom: 52%;
+        }
+        body[data-skin="soft"] {
+            --wall-ink-a: color-mix(in srgb, var(--pal-1) 14%, #f4f6fa);
+            --wall-ink-b: color-mix(in srgb, var(--pal-3) 18%, #e8ecf4);
+            --wall-bloom: 30%;
+        }
 
         body[data-skin="glass"], .skin-tokens-glass {
             --squircle-radius: 38%;
@@ -710,9 +732,21 @@
             box-shadow: 0 6px 20px -4px color-mix(in srgb, var(--accent) 45%, transparent),
                         0 0 0 1px rgba(255, 255, 255, 0.45);
         }
+        /* Dark ink, like Soft. Glass is a LIGHT skin and its labels were white with a shadow
+           under them — which is what the app does on a dark wallpaper and is exactly wrong here.
+           On a pale ground it reads as a glow around nothing, and the brighter the theme the
+           less of a label there is. A shadow cannot rescue white text on white; the polarity has
+           to flip, and Soft has been doing this since it was written. */
         body[data-skin="glass"] .app-label {
-            text-shadow: 0 1px 3px rgba(60, 50, 90, 0.55), 0 2px 10px rgba(60, 50, 90, 0.35);
+            color: #241f3d;
+            text-shadow: 0 1px 0 rgba(255, 255, 255, 0.65);
         }
+        body[data-skin="glass"] #os-clock,
+        body[data-skin="glass"] .pagination-dot { color: #241f3d; }
+        body[data-skin="glass"] #os-clock { text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6); }
+        body[data-skin="glass"] :is(#os-header, #main-dock) svg { color: #2c2646; }
+        body[data-skin="glass"] .pagination-dot { background: rgba(36, 31, 61, 0.35); }
+        body[data-skin="glass"] .pagination-dot.active { background: #241f3d; }
         body[data-skin="glass"] .pagination-dot { background: rgba(255, 255, 255, 0.6); }
 
         /* Overlays and panels: frosted, accent-tinted, light. */
@@ -787,7 +821,11 @@
            surfaces are soft, the TYPE is not. --soft-ink on --soft-bg is ~11:1, comfortably past
            WCAG AA, and the accent is only ever used for state, never for body copy. */
         body[data-skin="soft"] {
-            --soft-bg: #e4e9f0;
+            /* Tinted by the palette, like everything else. A flat #e4e9f0 meant every soft
+               surface — the dock, the header buttons, the panels — stayed the same grey however
+               the theme changed, which is half of why a theme "did nothing". Kept close to the
+               original lightness so the raised/inset shadows still read as moulded. */
+            --soft-bg: color-mix(in srgb, var(--pal-1) 10%, #e6ebf2);
             --soft-light: rgba(255, 255, 255, 0.92);
             --soft-shade: rgba(160, 174, 196, 0.55);
             --soft-ink: #2b3442;
