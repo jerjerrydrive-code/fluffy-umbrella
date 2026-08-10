@@ -5580,27 +5580,57 @@ test.describe('Rearranging is not a way to make folders', () => {
     });
 
     test('a slow drag across an icon never arms a merge while it is still moving', async ({ page }) => {
-        // The strongest form of the rule. This spends two full seconds over the target — four
-        // times the old dwell and nearly three times the new one — but never stops moving.
+        // The strongest form of the rule. This spends well over a second inside the target's
+        // square — twice the old dwell and nearly twice the new one — but never stops moving.
         // Under the old rule the merge armed 550ms in and stayed armed.
         await enterEdit(page);
         const b = await samePageBoxes(page);
 
+        // Watched from INSIDE the page, for two reasons. Polling from Node costs a round-trip
+        // per step, which is enough on a loaded CI runner to leave a gap between moves longer
+        // than the merge hold — at which point the finger really has stopped, the app is right
+        // to arm, and the test is measuring the harness. The gap is recorded so that case is
+        // reported as what it is rather than as a defect.
+        await page.evaluate(() => {
+            window.__armed = false;
+            window.__maxGap = 0;
+            window.__lastMove = 0;
+            window.__armWatch = new MutationObserver(() => {
+                if (document.querySelector('.folder-target')) window.__armed = true;
+            });
+            window.__armWatch.observe(document.body,
+                { subtree: true, attributes: true, attributeFilter: ['class'] });
+            document.addEventListener('pointermove', () => {
+                const t = performance.now();
+                if (window.__lastMove) {
+                    window.__maxGap = Math.max(window.__maxGap, t - window.__lastMove);
+                }
+                window.__lastMove = t;
+            }, true);
+        });
+
         await page.mouse.move(b[0].x, b[0].y);
         await page.mouse.down();
         await page.mouse.move(b[0].x + 10, b[0].y + 10, { steps: 3 });
-        await page.mouse.move(b[1].x - 24, b[1].y, { steps: 10 });
+        await page.mouse.move(b[1].x - 26, b[1].y, { steps: 10 });
 
-        let armedEver = false;
-        for (let i = 0; i < 20; i++) {
-            await page.mouse.move(b[1].x - 24 + i * 2.4, b[1].y + (i % 2 ? 6 : -6));
-            await page.waitForTimeout(100);
-            if (await page.evaluate(() => !!document.querySelector('.folder-target'))) armedEver = true;
+        // Creeping across the square: 26 nudges of ~2px, dense enough that no gap between
+        // pointermoves approaches the 750ms hold.
+        for (let i = 1; i <= 26; i++) {
+            await page.mouse.move(b[1].x - 26 + i * 2, b[1].y + (i % 2 ? 5 : -5), { steps: 2 });
+            await page.waitForTimeout(35);
         }
+        const r = await page.evaluate(() => ({ armed: window.__armed, maxGap: window.__maxGap }));
         await page.mouse.up();
         await page.waitForTimeout(900);
 
-        expect(armedEver, 'a merge armed under a finger that never stopped moving').toBe(false);
+        // If the harness itself put the finger down for longer than a merge takes, the premise
+        // of the test did not happen. Say so rather than blaming the app.
+        expect(r.maxGap,
+               'the harness stalled between moves for longer than the merge hold, so the finger ' +
+               'was genuinely still — this run proves nothing either way')
+            .toBeLessThan(700);
+        expect(r.armed, 'a merge armed under a finger that never stopped moving').toBe(false);
         expect(await page.evaluate(() =>
             window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(0);
     });
