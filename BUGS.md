@@ -742,6 +742,34 @@ A second test read the drawn values in the same task that set `data-skin`. With 
 
 ---
 
+## The one that made every other fix look like it had failed
+
+> "oh no you went backwards we have the old old old double page glitch and the old cant get out
+> of edit glitch. or did it just idk what happened is this time machine"
+
+| # | Defect | Status |
+|---|---|---|
+| 60 | **The service worker served `index.html` from cache first.** Stale-while-revalidate for everything, the document included: the cached copy is returned instantly and the network copy replaces it in the background, so the page on screen is always the PREVIOUS visit's build. A fix shipped today first appears on the load after next, and any visit where the background refresh failed leaves you further behind still. | FIXED |
+| 61 | **There was always an empty second page.** `Math.max(2, maxPage + 1)` — the home screen always had a blank page you could swipe into and a second pagination dot that led nowhere, however few codes you had. | FIXED |
+
+### 60 — it really was a time machine
+
+This is the most expensive defect in the tracker, because it did not break a feature, it broke **feedback**. Three consecutive deploys were verified byte-for-byte against the server and every one of them was reported back as unchanged or regressed — correctly, from where the user was sitting. The symptoms they named ("cant get out of edit") were real bugs, fixed builds earlier, that their cache was still serving.
+
+The document is now **network-first**, cache only as the offline fallback. Everything else keeps stale-while-revalidate, which is right for the vendored assets: they are large, they change only when the app is rebuilt, and being a version behind for one load costs nothing. It was only ever wrong for the one file that decides which version of the app you are running. `CACHE_NAME` is bumped to v3 so existing clients purge on activate, and registration passes `updateViaCache: 'none'` so a worker carrying a caching bug cannot keep re-installing itself from the HTTP cache.
+
+Two tests: the freshness one, and a guard that the app still opens with the network off — network-first must not become network-only.
+
+**The first version of the freshness test proved nothing.** It changed the response with `page.route()`; Playwright's routing does not intercept fetches made *by* a service worker, so the worker got the real file either way and the test failed against a correct fix. Anything testing a service worker has to change what the **server** has. It now rewrites a fixture on disk between two navigations, and asserts the worker was actually in charge of them — otherwise the test would pass against the broken worker too.
+
+### 61 — a page exists because there is something on it
+
+The spare page has a real job: it is how a code gets onto a new page at all. So it is kept, and shown **only in edit mode**. At rest the pager holds exactly the pages that have codes on them, and the dots are hidden entirely when there is only one — a single dot is not navigation, it is decoration that looks like navigation.
+
+Leaving edit mode while standing on the spare page used to be the interesting case: the page vanishes and the pager is left scrolled past its own content, showing a blank screen with no dot lit. `currentPage` is clamped when the page count shrinks.
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.

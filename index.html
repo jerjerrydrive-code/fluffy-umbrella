@@ -2733,7 +2733,21 @@
                     if (a.page > maxPage) maxPage = a.page; 
                 });
                 
-                const totalPages = Math.max(2, maxPage + 1);
+                // A spare page exists so you can drag a code onto a new one — which is only
+                // something you do while arranging them. It used to be unconditional, so the
+                // home screen always had an empty page you could swipe into and a second
+                // pagination dot that led nowhere, however few codes you had. Reported as "the
+                // double page glitch", and it had been there since the beginning.
+                const usedPages = maxPage + 1;
+                const totalPages = usedPages + (state.isEditMode ? 1 : 0);
+
+                // Leaving edit mode takes the spare page away. If that is the page you were
+                // standing on, the pager is left scrolled past its own content — showing
+                // nothing, with no dot lit, and no way to tell what happened.
+                if ((state.currentPage || 0) > totalPages - 1) {
+                    state.currentPage = totalPages - 1;
+                    if (window.LauncherInput) window.LauncherInput.goTo(state.currentPage);
+                }
 
                 // Reconcile; do not rebuild.
                 //
@@ -2814,7 +2828,10 @@
                 });
                 this.dock.replaceChildren(dockFrag);
 
+                // One page needs no dots. A single dot is not navigation, it is decoration
+                // that looks like navigation.
                 this.pagination.innerHTML = '';
+                this.pagination.classList.toggle('opacity-0', totalPages < 2);
                 for (let i = 0; i < totalPages; i++) {
                     const dot = document.createElement('div');
                     dot.className = `pagination-dot pointer-events-auto ${i === state.currentPage ? 'active' : ''}`;
@@ -7720,7 +7737,10 @@
         // scan/generate/settings state) still opens without a network connection.
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js').catch((e) => XanLogger.error('Service worker registration failed', e));
+                // updateViaCache: 'none' — the worker script itself must not come from the
+                // HTTP cache, or a worker carrying a caching bug can keep re-installing itself.
+                navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+                    .catch((e) => XanLogger.error('Service worker registration failed', e));
             });
         }
     </script>
