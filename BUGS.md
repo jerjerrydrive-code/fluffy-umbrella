@@ -664,6 +664,44 @@ they run rather than closing over it.
 
 ---
 
+## Reported from a phone: the folder view, and a drop that looked stuck
+
+> "still weird behaviors with moving and rearranging. also inside folders the tiny view"
+
+| # | Defect | Status |
+|---|---|---|
+| 56 | **An open folder drew its codes at half size, marooned.** The folder grid was a fixed four columns of fixed 60px tiles however few codes were in it, so two codes sat in the top-left corner of an otherwise empty screen at well under the size the same codes are on the home screen. Every code also carried a permanent "Take out" caption — three lines of furniture apiece for something you do occasionally. | FIXED |
+| 57 | **A dropped icon hung above the grid for 400ms.** Until the settle timer fires the icon is still `position: fixed` at `z-index: 9999`, so a slow landing does not read as "gently placed", it reads as stuck. Caught in a screenshot taken just after a drop: the codes had already swapped in the state, but the one that moved was still floating over its new square, larger than its neighbours. | FIXED |
+
+### 56 — a folder should look like the home screen with a lid on it
+
+The open folder is now a card, and the codes in it use `.app-icon` — the same tile, radius, shadow, size and label as everywhere else in the app, so a code does not change shape because it went into a folder. The grid is sized to what is in it (`max(2, min(4, count))` columns) rather than always four, so a nearly empty folder does not look like a mistake.
+
+"Take out" became the same minus badge the home screen uses, revealed by the folder's own **Edit** button. The default view is now just the codes.
+
+The card is deliberately *darker* than the backdrop (`bg-black/35`, not `bg-white/10`). Code labels are white everywhere in the app, and a white-tinted card over a light skin left them barely there — measured on Soft, where the whole screen behind the folder is pale. The existing per-skin contrast test covers `#folder-overlay`, and holds it to 3:1.
+
+### 57 — landing takes 220ms
+
+Measured with real touch: the drop is fully settled — no inline transform, no `position: fixed`, no ghost — by 520ms with the old 400ms timer, and there was no residue at any point. So the icon was never *stuck*; it was slow, in the one state where slow is indistinguishable from broken. 220ms.
+
+---
+
+## Fixed in the tests, not the app (second time)
+
+Three of the four new drag tests were flaky under parallel load, and each failure blamed the app for something the runner did.
+
+These tests turn on durations the app measures with its own clock, and driving a gesture from Node costs a round-trip per step. On a loaded runner a scripted 500ms pause arrives as 900ms of real stillness — at which point the merge is **correct** to arm. Worse, Chromium coalesces pointer moves under load, so two nudges land as one and a finger that never stopped looks like a finger that did. Neither happens on a phone, where moves arrive every frame.
+
+Two wrong guards were tried before the right fix, and both are worth recording because they look reasonable:
+
+1. Counting the gap between `pointermove` **events**. Coalescing defeats it — the events are dense, the movement is not.
+2. Counting the gap between events where the pointer had moved more than the stillness slop. Closer, but with sub-slop steps only every other move resets the hold, so the real window is twice the measured gap.
+
+The fix was to stop driving the gesture from outside. The whole drag — every move and every pause — now runs in one `page.evaluate`, dispatching `PointerEvent`s at the coordinates the app hit-tests. That is the same input path a real finger takes: the app reads `clientX`/`clientY` and asks `elementFromPoint`. **20/20 across five repeats at four workers**, and all three still fail against the pre-fix build for their original reasons.
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.

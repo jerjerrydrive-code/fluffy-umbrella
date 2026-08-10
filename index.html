@@ -306,6 +306,21 @@
         body.edit-mode .empty-slot { pointer-events: auto; }
         body.edit-mode .app-icon-wrapper { touch-action: none; }
         
+        /* Taking a code out of a folder used to be a permanent "Take out" caption under every
+           icon — three lines of furniture per code, for something you do once in a while. It is
+           now the same minus badge the home screen uses, revealed by the folder's own Edit
+           button, so the default view is just the codes. */
+        #folder-grid .fdr-out {
+            opacity: 0; transform: scale(0.2); pointer-events: none; visibility: hidden;
+            transition: opacity 0.25s var(--spring-snappy), transform 0.25s var(--spring-snappy),
+                        visibility 0s linear 0.25s;
+        }
+        #folder-overlay.folder-editing .fdr-out {
+            opacity: 1; transform: scale(1); pointer-events: auto; visibility: visible;
+            transition-delay: 0s;
+        }
+        #folder-overlay.folder-editing .fdr-open { animation: jiggle 0.3s infinite; }
+
         .app-icon-wrapper.drag-ready .app-icon {
             transform: scale(1.08); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.25); opacity: 0.9;
         }
@@ -1107,10 +1122,23 @@
     <!-- LIBRARY: the dedicated browse-all-codes view behind the dock's Library button.
          Swipe-down search stays the ad-hoc "I know what I'm looking for" path; this is the
          "show me everything I've saved" path, with filtering and sorting. -->
-    <div id="folder-overlay" class="modal-spring fixed inset-0 z-[140] bg-black/55 backdrop-blur-3xl opacity-0 pointer-events-none flex flex-col items-center justify-center p-6">
-        <button id="folder-title" class="text-white text-[22px] font-bold tracking-tight mb-5 px-4 py-1.5 rounded-full active:scale-95 transition-transform"></button>
-        <div id="folder-grid" class="w-full max-w-[380px] grid grid-cols-4 gap-y-6 gap-x-2 justify-items-center"></div>
-        <p class="text-white/40 text-[11px] font-medium mt-8">Tap outside to close</p>
+<!-- An open folder is a CARD, not a full screen with something small in the middle of it.
+         It used to draw its codes at a fixed 60px in a four-column grid however few there were,
+         so two codes sat marooned in the top-left corner of an empty screen at half the size
+         they are on the home screen. A folder should look like the home screen with a lid on
+         it: same icons, same size, same labels, on a panel you can see the edges of. -->
+    <div id="folder-overlay" class="modal-spring fixed inset-0 z-[140] bg-black/50 backdrop-blur-2xl opacity-0 pointer-events-none flex flex-col items-center justify-center p-5">
+        <!-- Darker than the backdrop, not lighter. The labels on a code are white everywhere in
+             the app, and a white-tinted card over a light skin left them barely there — measured
+             on Soft, where the whole screen behind the folder is pale. -->
+        <div id="folder-card" class="w-full max-w-[420px] rounded-[2.25rem] bg-black/35 border border-white/15 shadow-[0_24px_60px_rgba(0,0,0,0.45)] px-4 pt-4 pb-6">
+            <div class="flex items-center gap-2 mb-4">
+                <button id="folder-title" class="flex-1 min-w-0 truncate text-left text-white text-[21px] font-bold tracking-tight px-2.5 py-1.5 rounded-2xl hover:bg-white/10 active:scale-95 transition-all"></button>
+                <button id="btn-folder-edit" class="tap44 flex items-center justify-center px-3.5 rounded-full bg-white/15 hover:bg-white/25 text-white text-[13px] font-bold active:scale-90 transition-all shrink-0">Edit</button>
+            </div>
+            <div id="folder-grid" class="grid gap-y-5 gap-x-1 justify-items-center"></div>
+        </div>
+        <p class="text-white/45 text-[11px] font-medium mt-5">Tap outside to close</p>
     </div>
     <div id="library-overlay" class="modal-spring fixed inset-0 z-[130] bg-black/50 backdrop-blur-3xl opacity-0 pointer-events-none flex flex-col">
         <div class="flex items-center gap-3 px-5 pt-[calc(env(safe-area-inset-top,0px)+1.5rem)] pb-3 shrink-0">
@@ -3224,11 +3252,16 @@
                     return;
                 }
 
+                // Landing takes 220ms, not 400. Until it lands the icon is still position:fixed
+                // at z-index 9999 — a full-size code floating over the grid — so a slow settle
+                // does not read as "gently placed", it reads as stuck. Caught in a screenshot
+                // taken just after a drop: the icon had already swapped in the state but was
+                // still hanging above its new square, larger than its neighbours.
                 const ghostRect = this.ghostEl.getBoundingClientRect();
-                this.draggedEl.style.transition = 'transform 0.4s var(--spring-snappy)';
+                this.draggedEl.style.transition = 'transform 0.22s var(--spring-snappy)';
                 this.draggedEl.style.transform = `translate3d(${ghostRect.left}px, ${ghostRect.top}px, 0) scale(1)`;
 
-                this.settleTimer = setTimeout(() => this.settleDrop(), 400);
+                this.settleTimer = setTimeout(() => this.settleDrop(), 220);
             }
 
             // Drops the dragged icon back into the grid at the slot its ghost is holding.
@@ -6731,11 +6764,14 @@
                 this.overlay = document.getElementById('folder-overlay');
                 this.grid = document.getElementById('folder-grid');
                 this.titleEl = document.getElementById('folder-title');
+                this.editBtn = document.getElementById('btn-folder-edit');
                 this.activeId = null;
+                this.editing = false;
 
                 // Backdrop only — a tap on a child must not close the folder underneath it.
                 this.overlay.addEventListener('click', (e) => { if (e.target === this.overlay) this.close(); });
                 this.titleEl.addEventListener('click', () => this.rename());
+                this.editBtn.addEventListener('click', () => this.setEditing(!this.editing));
             }
 
             open(folderId) {
@@ -6743,13 +6779,21 @@
                 if (!folder) return;
                 this.activeId = folderId;
                 this.titleEl.textContent = folder.title || 'Folder';
+                this.setEditing(false);
                 this.render();
                 this.overlay.classList.remove('opacity-0', 'pointer-events-none');
                 this.overlay.classList.add('opacity-100', 'pointer-events-auto');
             }
 
+            setEditing(on) {
+                this.editing = !!on;
+                this.overlay.classList.toggle('folder-editing', this.editing);
+                this.editBtn.textContent = this.editing ? 'Done' : 'Edit';
+            }
+
             close() {
                 this.activeId = null;
+                this.setEditing(false);
                 this.overlay.classList.add('opacity-0', 'pointer-events-none');
                 this.overlay.classList.remove('opacity-100', 'pointer-events-auto');
             }
@@ -6776,15 +6820,29 @@
                 const kids = window.folderChildren(this.activeId);
                 this.grid.innerHTML = '';
 
+                // Four columns is right for a full folder and wrong for a nearly empty one: two
+                // codes in a four-column grid sit in the corner at what looks like half size.
+                // The grid is sized to what is actually in it, never wider than the home screen's
+                // own four, so the codes stay the size they are everywhere else in the app.
+                const cols = Math.max(2, Math.min(4, kids.length));
+                this.grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+
                 kids.forEach(kid => {
                     const cell = document.createElement('div');
-                    cell.className = 'flex flex-col items-center gap-1.5 w-full';
+                    cell.className = 'flex flex-col items-center w-full';
+                    // Same tile, same radius, same shadow and same label as the home screen —
+                    // .app-icon carries all of it, including the size, so a code does not change
+                    // shape just because it went into a folder.
                     cell.innerHTML = `
-                        <button class="fdr-open w-[60px] h-[60px] rounded-[22.5%] bg-white p-2 shadow-lg active:scale-95 transition-transform overflow-hidden">
-                            <canvas id="fopen-${kid.id}" class="w-full h-full object-contain pixelated"></canvas>
-                        </button>
+                        <div class="relative">
+                            <button class="fdr-open app-icon bg-white p-2 overflow-hidden flex items-center justify-center active:scale-95">
+                                <canvas id="fopen-${kid.id}" class="w-full h-full object-contain pixelated"></canvas>
+                            </button>
+                            <button class="fdr-out absolute -top-1.5 -left-1.5 bg-white/90 border border-black/5 rounded-full w-[26px] h-[26px] flex items-center justify-center shadow-lg z-20 active:scale-90 transition-transform" aria-label="Take out of folder">
+                                <i data-lucide="minus" class="w-4 h-4 text-gray-800"></i>
+                            </button>
+                        </div>
                         <span class="app-label"></span>
-                        <button class="fdr-out tap-extend relative text-[10px] font-bold text-white/50 hover:text-white transition-colors">Take out</button>
                     `;
                     cell.querySelector('.app-label').textContent = kid.title;
                     cell.querySelector('.fdr-open').addEventListener('click', () => {
@@ -6802,6 +6860,7 @@
                     this.grid.appendChild(cell);
                     window.renderCode(`fopen-${kid.id}`, kid, { scale: 3 });
                 });
+                safeCreateIcons();
             }
         }
 

@@ -5553,6 +5553,56 @@ test.describe('Rearranging is not a way to make folders', () => {
         window.OS_STATE.apps.filter(a => a.type === 'grid' && !a.folderId && a.page === 0)
             .sort((a, b) => a.order - b.order).map(a => `${a.id}@${a.order}`));
 
+    // The gesture is driven from INSIDE the page, and the whole of it — every move and every
+    // pause — runs in one evaluate.
+    //
+    // Driving it from Node costs a round-trip per step, and these tests turn on durations the
+    // app measures with its own clock. On a loaded runner a scripted 500ms pause arrives as
+    // 900ms of real stillness, at which point the merge is correct to arm and the test is
+    // reporting the runner. Worse, Chromium coalesces moves under load, so two nudges can land
+    // as one and a finger that never stopped looks like a finger that did. Neither happens on a
+    // phone, where moves arrive every frame; both happened here, and both blamed the app.
+    //
+    // Dispatching PointerEvents at the coordinates the app hit-tests is the same input path the
+    // app sees from a real finger — it reads clientX/clientY and asks elementFromPoint. `steps`
+    // is a list of {x, y, hold}: where to be, and how long to stay there.
+    const drag = (page, steps) => page.evaluate(async (steps) => {
+        window.__armedEver = false;
+        const watch = new MutationObserver(() => {
+            if (document.querySelector('.folder-target')) window.__armedEver = true;
+        });
+        watch.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'] });
+
+        const fire = (type, x, y) => {
+            const at = document.elementFromPoint(x, y) || document.body;
+            // pointerdown is delegated from the page container, so it has to start at the icon
+            // and bubble. The other two are listened for on document.
+            (type === 'pointerdown' ? at : document).dispatchEvent(new PointerEvent(type, {
+                bubbles: true, cancelable: true, composed: true,
+                pointerId: 1, pointerType: 'touch', isPrimary: true,
+                clientX: x, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+            }));
+        };
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+        fire('pointerdown', steps[0].x, steps[0].y);
+        for (const s of steps.slice(1)) {
+            fire('pointermove', s.x, s.y);
+            if (s.hold) await sleep(s.hold);
+        }
+        const last = steps[steps.length - 1];
+        fire('pointerup', last.x, last.y);
+        watch.disconnect();
+        return window.__armedEver;
+    }, steps);
+
+    // A straight carry from one square to another, in `n` moves.
+    const carry = (from, to, n) => Array.from({ length: n + 1 }, (_, i) => ({
+        x: from.x + (to.x - from.x) * i / n,
+        y: from.y + (to.y - from.y) * i / n,
+        hold: 16,
+    }));
+
     test('carrying a code to another code\'s slot swaps them instead of merging', async ({ page }) => {
         // The exact gesture that was failing: pick one up, carry it to the next one's square,
         // pause the way anyone pauses before letting go of something, release.
@@ -5560,12 +5610,12 @@ test.describe('Rearranging is not a way to make folders', () => {
         const b = await samePageBoxes(page);
         const before = await slots(page);
 
-        await page.mouse.move(b[0].x, b[0].y);
-        await page.mouse.down();
-        await page.mouse.move(b[0].x + 10, b[0].y + 10, { steps: 3 });
-        await page.mouse.move(b[1].x, b[1].y, { steps: 14 });
-        await page.waitForTimeout(500);          // the human pause before letting go
-        await page.mouse.up();
+        await drag(page, [
+            { x: b[0].x, y: b[0].y },
+            { x: b[0].x + 10, y: b[0].y + 10, hold: 16 },
+            ...carry(b[0], b[1], 14),
+            { x: b[1].x, y: b[1].y, hold: 500 },     // the human pause before letting go
+        ]);
         await page.waitForTimeout(900);
 
         const r = await page.evaluate(() => ({
@@ -5586,51 +5636,21 @@ test.describe('Rearranging is not a way to make folders', () => {
         await enterEdit(page);
         const b = await samePageBoxes(page);
 
-        // Watched from INSIDE the page, for two reasons. Polling from Node costs a round-trip
-        // per step, which is enough on a loaded CI runner to leave a gap between moves longer
-        // than the merge hold — at which point the finger really has stopped, the app is right
-        // to arm, and the test is measuring the harness. The gap is recorded so that case is
-        // reported as what it is rather than as a defect.
-        await page.evaluate(() => {
-            window.__armed = false;
-            window.__maxGap = 0;
-            window.__lastMove = 0;
-            window.__armWatch = new MutationObserver(() => {
-                if (document.querySelector('.folder-target')) window.__armed = true;
-            });
-            window.__armWatch.observe(document.body,
-                { subtree: true, attributes: true, attributeFilter: ['class'] });
-            document.addEventListener('pointermove', () => {
-                const t = performance.now();
-                if (window.__lastMove) {
-                    window.__maxGap = Math.max(window.__maxGap, t - window.__lastMove);
-                }
-                window.__lastMove = t;
-            }, true);
-        });
-
-        await page.mouse.move(b[0].x, b[0].y);
-        await page.mouse.down();
-        await page.mouse.move(b[0].x + 10, b[0].y + 10, { steps: 3 });
-        await page.mouse.move(b[1].x - 26, b[1].y, { steps: 10 });
-
-        // Creeping across the square: 26 nudges of ~2px, dense enough that no gap between
-        // pointermoves approaches the 750ms hold.
-        for (let i = 1; i <= 26; i++) {
-            await page.mouse.move(b[1].x - 26 + i * 2, b[1].y + (i % 2 ? 5 : -5), { steps: 2 });
-            await page.waitForTimeout(35);
-        }
-        const r = await page.evaluate(() => ({ armed: window.__armed, maxGap: window.__maxGap }));
-        await page.mouse.up();
+        const armed = await drag(page, [
+            { x: b[0].x, y: b[0].y },
+            { x: b[0].x + 10, y: b[0].y + 10, hold: 16 },
+            ...carry(b[0], { x: b[1].x - 26, y: b[1].y }, 10),
+            // Creeping across the square: 26 nudges, each further than the 10px stillness slop,
+            // over roughly 1.4 seconds. Nothing here ever holds still.
+            ...Array.from({ length: 26 }, (_, i) => ({
+                x: b[1].x - 26 + (i + 1) * 2,
+                y: b[1].y + (i % 2 ? 8 : -8),
+                hold: 50,
+            })),
+        ]);
         await page.waitForTimeout(900);
 
-        // If the harness itself put the finger down for longer than a merge takes, the premise
-        // of the test did not happen. Say so rather than blaming the app.
-        expect(r.maxGap,
-               'the harness stalled between moves for longer than the merge hold, so the finger ' +
-               'was genuinely still — this run proves nothing either way')
-            .toBeLessThan(700);
-        expect(r.armed, 'a merge armed under a finger that never stopped moving').toBe(false);
+        expect(armed, 'a merge armed under a finger that never stopped moving').toBe(false);
         expect(await page.evaluate(() =>
             window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(0);
     });
@@ -5641,16 +5661,15 @@ test.describe('Rearranging is not a way to make folders', () => {
         await enterEdit(page);
         const b = await samePageBoxes(page);
 
-        await page.mouse.move(b[0].x, b[0].y);
-        await page.mouse.down();
-        await page.mouse.move(b[0].x + 10, b[0].y + 10, { steps: 3 });
-        await page.mouse.move(b[1].x, b[1].y, { steps: 12 });
-        await page.waitForTimeout(1200);         // a hold, not a pause
-        expect(await page.evaluate(() => !!document.querySelector('.folder-target')),
-               'a deliberate hold no longer arms a merge').toBe(true);
-        await page.mouse.up();
+        const armed = await drag(page, [
+            { x: b[0].x, y: b[0].y },
+            { x: b[0].x + 10, y: b[0].y + 10, hold: 16 },
+            ...carry(b[0], b[1], 12),
+            { x: b[1].x, y: b[1].y, hold: 1200 },    // a hold, not a pause
+        ]);
         await page.waitForTimeout(900);
 
+        expect(armed, 'a deliberate hold no longer arms a merge').toBe(true);
         expect(await page.evaluate(() =>
             window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(1);
     });
@@ -5661,19 +5680,17 @@ test.describe('Rearranging is not a way to make folders', () => {
         await enterEdit(page);
         const b = await samePageBoxes(page);
 
-        await page.mouse.move(b[0].x, b[0].y);
-        await page.mouse.down();
-        await page.mouse.move(b[0].x + 10, b[0].y + 10, { steps: 3 });
-        await page.mouse.move(b[1].x, b[1].y, { steps: 12 });
-        await page.waitForTimeout(1200);
-        expect(await page.evaluate(() => !!document.querySelector('.folder-target'))).toBe(true);
-
-        // Move on within the same square, then let go quickly.
-        await page.mouse.move(b[1].x + 22, b[1].y + 4, { steps: 4 });
-        await page.waitForTimeout(120);
+        const armed = await drag(page, [
+            { x: b[0].x, y: b[0].y },
+            { x: b[0].x + 10, y: b[0].y + 10, hold: 16 },
+            ...carry(b[0], b[1], 12),
+            { x: b[1].x, y: b[1].y, hold: 1200 },
+            // Move on within the same square, then let go quickly.
+            { x: b[1].x + 22, y: b[1].y + 4, hold: 120 },
+        ]);
+        expect(armed, 'the hold never armed, so there was nothing to take back down').toBe(true);
         expect(await page.evaluate(() => !!document.querySelector('.folder-target')),
                'the merge stayed armed after the finger set off again').toBe(false);
-        await page.mouse.up();
         await page.waitForTimeout(900);
 
         expect(await page.evaluate(() =>
