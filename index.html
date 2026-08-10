@@ -43,6 +43,25 @@
             --accent: #3b82f6;
             --accent-text: #ffffff;
 
+            /* ---- The palette paints the app ---------------------------------------------
+               A theme used to contribute exactly ONE colour, to chips and toggles. The palettes
+               are four-colour sets and the other three were thrown away, while the wallpaper
+               was a fixed gradient the theme could not touch — so picking a theme barely
+               changed anything, and three of the six skins sat on the same painted dusk and
+               were indistinguishable. Reported as "why do you already have wallpapers use the
+               color palates and color the fucking program. my themes were hard work use them".
+
+               All four now reach the wallpaper. The defaults below are that same dusk, so the
+               app looks unchanged until a theme is chosen and nothing depends on one being set.
+               --wall-ink is the ground the blooms sit on; light skins override it. */
+            --pal-1: #4a4a7d;
+            --pal-2: #c8836f;
+            --pal-3: #1f5c6b;
+            --pal-4: #222f5e;
+            --wall-ink-a: #0f1836;
+            --wall-ink-b: #0a1226;
+            --wall-bloom: 72%;
+
             /* ---- Structural skin tokens -------------------------------------------------
                A skin used to be a colour scheme and nothing else. Every one of the six drew the
                same 22.5% squircle, the same 380px dock pill and the same 11.5px label, so
@@ -235,17 +254,19 @@
         }
 
         body {
-            /* Default wallpaper: a painted dusk gradient rather than a hotlinked photo.
-               It costs zero bytes, carries no licence question, and — the reason it changed —
-               it cannot fail to load. The previous default was an Unsplash URL, so a cold or
-               restricted network left the app on a flat black ground. A user-uploaded wallpaper
-               still wins: OSSettingsManager writes an inline background-image, and clearing it
-               falls back here. */
+            /* Painted, not photographed: zero bytes, no licence question, and — the reason
+               it changed — it cannot fail to load. The previous default was an Unsplash URL, so
+               a cold or restricted network left the app on a flat black ground. A user-uploaded
+               wallpaper still wins: OSSettingsManager writes an inline background-image, and
+               clearing it falls back here.
+               It is now built from the chosen palette's four colours rather than being fixed,
+               which is what makes a theme change the whole program rather than the chips. */
             background-image:
-                radial-gradient(125% 65% at 50% 118%, rgba(10, 60, 76, 0.92) 0%, rgba(8, 38, 54, 0) 70%),
-                linear-gradient(180deg,
-                    #0f1836 0%, #222f5e 18%, #4a4a7d 34%, #8a6588 48%,
-                    #c8836f 60%, #e7a874 68%, #a8b39c 76%, #4d8f92 88%, #1f5c6b 100%);
+                radial-gradient(38% 32% at 18% 14%, color-mix(in srgb, var(--pal-1) var(--wall-bloom), transparent) 0%, transparent 62%),
+                radial-gradient(44% 36% at 86% 24%, color-mix(in srgb, var(--pal-2) var(--wall-bloom), transparent) 0%, transparent 60%),
+                radial-gradient(52% 40% at 60% 92%, color-mix(in srgb, var(--pal-3) var(--wall-bloom), transparent) 0%, transparent 64%),
+                radial-gradient(46% 34% at 10% 76%, color-mix(in srgb, var(--pal-4) var(--wall-bloom), transparent) 0%, transparent 58%),
+                linear-gradient(165deg, var(--wall-ink-a) 0%, var(--wall-ink-b) 100%);
             background-size: cover; background-position: center; background-repeat: no-repeat;
             background-attachment: fixed;
             overflow: hidden; -webkit-user-select: none; user-select: none;
@@ -541,6 +562,12 @@
         }
 
         /* Almost-round plates on a narrow circle-ended pill, with light, airy labels. */
+        /* The two light skins put the palette's blooms on a pale ground instead of a dark
+           one. Same four colours, same theme — a light interface rather than a dark one, which
+           is the actual difference between them and is now the only difference that is left. */
+        body[data-skin="glass"] { --wall-ink-a: #eef0fb; --wall-ink-b: #dfe6f2; --wall-bloom: 38%; }
+        body[data-skin="soft"]  { --wall-ink-a: #eef1f7; --wall-ink-b: #e2e6ee; --wall-bloom: 22%; }
+
         body[data-skin="glass"], .skin-tokens-glass {
             --squircle-radius: 38%;
             --dock-radius: 999px; --dock-pad: 0.9rem; --dock-max: 344px; --dock-gap: 0.375rem;
@@ -647,9 +674,11 @@
         body[data-skin="glass"]::before {
             content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
             background:
-                radial-gradient(120% 80% at 15% 0%, color-mix(in srgb, var(--accent) 55%, transparent) 0%, transparent 60%),
-                radial-gradient(100% 70% at 95% 15%, color-mix(in srgb, var(--accent) 30%, #7fd8e8) 0%, transparent 55%),
-                radial-gradient(130% 90% at 50% 105%, color-mix(in srgb, var(--accent) 40%, #ffffff) 0%, transparent 65%),
+                /* All four palette colours, not the accent three times over. */
+                radial-gradient(120% 80% at 15% 0%, color-mix(in srgb, var(--pal-1) 55%, transparent) 0%, transparent 60%),
+                radial-gradient(100% 70% at 95% 15%, color-mix(in srgb, var(--pal-2) 45%, transparent) 0%, transparent 55%),
+                radial-gradient(130% 90% at 50% 105%, color-mix(in srgb, var(--pal-3) 45%, #ffffff) 0%, transparent 65%),
+                radial-gradient(90% 60% at 8% 88%, color-mix(in srgb, var(--pal-4) 35%, transparent) 0%, transparent 58%),
                 linear-gradient(160deg, rgba(233,232,255,0.55) 0%, rgba(214,240,246,0.45) 100%);
             backdrop-filter: blur(60px) saturate(150%);
             -webkit-backdrop-filter: blur(60px) saturate(150%);
@@ -762,9 +791,18 @@
             --soft-raised-sm: 4px 4px 9px var(--soft-shade), -4px -4px 9px var(--soft-light);
             --soft-inset: inset 4px 4px 9px var(--soft-shade), inset -4px -4px 9px var(--soft-light);
         }
+        /* Soft's ground covers the wallpaper completely, so without this the one skin the
+           user actually liked was also the one skin a theme could not touch at all. The blooms
+           come through at a fraction of their strength: enough that the palette is present,
+           light enough that the moulded-from-one-material look survives, which is the whole
+           point of this skin. */
         body[data-skin="soft"]::before {
             content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-            background: var(--soft-bg);
+            background:
+                radial-gradient(62% 46% at 18% 10%, color-mix(in srgb, var(--pal-1) 20%, transparent) 0%, transparent 66%),
+                radial-gradient(58% 44% at 88% 30%, color-mix(in srgb, var(--pal-2) 16%, transparent) 0%, transparent 62%),
+                radial-gradient(66% 50% at 55% 96%, color-mix(in srgb, var(--pal-3) 18%, transparent) 0%, transparent 64%),
+                var(--soft-bg);
         }
 
         body[data-skin="soft"] .ios-glass {
@@ -1984,7 +2022,7 @@
 
         const DEFAULT_STATE = {
             currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: false,
-            gridSize: 'auto', wallpaper: null, skin: 'dock', accent: '#3b82f6',
+            gridSize: 'auto', wallpaper: null, skin: 'dock', accent: '#3b82f6', palette: null,
             haptics: true, animations: true, history: [], pageNames: [],
             apps: [
                 { id: 'bc_1', title: 'My WiFi', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'WIFI:S:MyNetwork;T:WPA;P:Password;;' },
@@ -2056,6 +2094,11 @@
             if(window.OS_STATE.autoArrange === undefined) window.OS_STATE.autoArrange = false;
             if(!window.OS_STATE.gridSize) window.OS_STATE.gridSize = 'auto';
             if(!window.OS_STATE.skin) window.OS_STATE.skin = 'dock';
+            // A retired skin can arrive from a saved state OR from a backup file made before
+            // it was retired, so the migration cannot live only in the settings screen.
+            if (window.RETIRED_SKINS && window.RETIRED_SKINS[window.OS_STATE.skin]) {
+                window.OS_STATE.skin = window.RETIRED_SKINS[window.OS_STATE.skin];
+            }
             if(!window.OS_STATE.accent) window.OS_STATE.accent = '#3b82f6';
             if(window.OS_STATE.haptics === undefined) window.OS_STATE.haptics = true;
             if(window.OS_STATE.animations === undefined) window.OS_STATE.animations = true;
@@ -4258,7 +4301,7 @@
                     pageNames: st.pageNames || [],
                     history: st.history || [],
                     gridSize: st.gridSize, gridCols: st.gridCols, gridRows: st.gridRows,
-                    autoArrange: st.autoArrange, skin: st.skin, accent: st.accent,
+                    autoArrange: st.autoArrange, skin: st.skin, accent: st.accent, palette: st.palette,
                     haptics: st.haptics, animations: st.animations,
                     wallpaper: st.wallpaper || null
                 }
@@ -4321,6 +4364,14 @@
             const incoming = (parsed && parsed.state && typeof parsed.state === 'object')
                 ? Object.assign({}, parsed.state, { apps })
                 : (Array.isArray(parsed) ? { apps } : Object.assign({}, parsed, { apps }));
+
+            // A backup can be older than the app it is being restored into, so it can name a
+            // skin that no longer exists. This has to happen HERE rather than in the settings
+            // screen that usually calls this: the migration belongs to the data, not to one of
+            // the paths the data can arrive on.
+            if (incoming.skin && window.RETIRED_SKINS && window.RETIRED_SKINS[incoming.skin]) {
+                incoming.skin = window.RETIRED_SKINS[incoming.skin];
+            }
 
             // Merge codes, deduped by payload. Existing entries win, so a restore can only ever
             // add — it cannot rewrite something already on this device.
@@ -6011,7 +6062,7 @@
                     }
                 }
                 haptic(10);
-                this.applyAccent(hex, true);
+                this.applyAccent(hex, true, quad);
                 this.syncActiveRings();
             }
 
@@ -6029,10 +6080,25 @@
                 this.render();
             }
 
-            applyAccent(hex, persist) {
+            // A palette is four colours. Only one of them used to leave this function, and
+            // only to chips and toggles; the wallpaper was fixed and could not be reached by a
+            // theme at all. All four are published now, and the wallpaper is built from them.
+            //
+            // A pinned favourite is a single colour with no set behind it, so one is derived —
+            // the accent plus a lighter, a darker and a cooler relative of it. That keeps a
+            // favourite from being a special case that quietly paints a flat screen.
+            paletteFor(hex, quad) {
+                if (quad && quad.length === 4) return quad;
+                const m = window.accentMath.mixHex;
+                return [hex, m(hex, '#ffffff', 0.42), m(hex, '#000000', 0.38), m(hex, '#4d8f92', 0.5)];
+            }
+
+            applyAccent(hex, persist, quad) {
                 this.current = hex.toUpperCase();
+                const palette = this.paletteFor(hex, quad || window.OS_STATE.palette);
                 const root = document.documentElement.style;
                 root.setProperty('--accent', hex);
+                palette.forEach((c, i) => root.setProperty(`--pal-${i + 1}`, c));
                 root.setProperty('--accent-text', this.contrastTextFor(hex));
                 // Mirrors the --surface-1 / --surface-light mixes in the stylesheet, so the
                 // contrast is measured against the colour the text is really drawn on.
@@ -6040,6 +6106,7 @@
                 root.setProperty('--accent-on-light', this.readableOn(hex, mixHex('#ffffff', hex, 0.05)));
                 if (persist) {
                     window.OS_STATE.accent = hex;
+                    window.OS_STATE.palette = palette;
                     saveState();
                 }
             }
@@ -6086,22 +6153,42 @@
         // Registry for the skin system (HARD RULE 5). Add a new entry + a matching
         // body[data-skin="..."] CSS block to introduce another interface style —
         // never fork the app itself.
-        // The descriptions say what CHANGES, not what it evokes. "Frosted glass over an
-        // ambient colour field" tells you nothing about whether to pick it; "round plates, a
-        // narrow pill dock" tells you exactly what you are about to get.
+        // Four, down from six.
+        //
+        // "clean up the ui modes since they're only like 2 anyways realistically" — fair. Aurora
+        // and Classic were both dark-glass-on-a-dark-gradient, differing from the default and
+        // from each other by shadow weight, which is not a choice worth making anyone make.
+        // Aurora's one real idea, colour blooms behind the interface, is now what the WALLPAPER
+        // does on every skin, painted from the chosen palette, so it is not lost — it is
+        // everywhere. Both migrate to Dark below.
+        //
+        // What is left is four things that are actually different: dark, sharp-card (which also
+        // changes how a code is presented in the viewer, so it is a feature and not a coat of
+        // paint), light frosted, light matte.
+        //
+        // Descriptions say what CHANGES, not what it evokes.
         const SKINS = [
-            { id: 'dock',     label: 'iOS Dock',  description: 'Squircle plates, floating pill dock.' },
+            { id: 'dock',     label: 'Dark',      description: 'Squircle plates, floating pill dock.' },
             { id: 'scancard', label: 'Scan Card', description: 'Sharp cards, full-width bar, caps labels.' },
             { id: 'glass',    label: 'Glass',     description: 'Round plates on light frosted glass.' },
-            { id: 'soft',     label: 'Soft',      description: 'Pillowy and roomy, moulded from light.' },
-            { id: 'aurora',   label: 'Aurora',    description: 'Dark glass over drifting colour.' },
-            { id: 'classic',  label: 'Classic',   description: 'Chunky tiles, wide dock, close packed.' }
+            { id: 'soft',     label: 'Soft',      description: 'Pillowy and roomy, moulded from light.' }
         ];
+
+        // A retired skin still lives in somebody's saved state, and in the settings of anyone
+        // who has not opened the app since. Left unmapped they would land on data-skin values
+        // no picker row matches: the CSS still applies, so the app looks fine, and the settings
+        // screen shows nothing selected with no way to explain it.
+        const RETIRED_SKINS = { aurora: 'dock', classic: 'dock' };
+        window.RETIRED_SKINS = RETIRED_SKINS;
 
         class OSSkinManager {
             constructor() {
                 this.pickerEl = document.getElementById('skin-picker');
                 this.current = window.OS_STATE.skin || 'dock';
+                if (RETIRED_SKINS[this.current]) {
+                    this.current = RETIRED_SKINS[this.current];
+                    window.OS_STATE.skin = this.current;
+                }
                 document.body.setAttribute('data-skin', this.current);
                 this.render();
             }
@@ -6134,6 +6221,7 @@
             }
 
             setSkin(id) {
+                if (RETIRED_SKINS[id]) id = RETIRED_SKINS[id];
                 if (id === this.current) return;
                 this.current = id;
                 window.OS_STATE.skin = id;

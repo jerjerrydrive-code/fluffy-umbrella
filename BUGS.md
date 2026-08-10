@@ -770,6 +770,42 @@ Leaving edit mode while standing on the spare page used to be the interesting ca
 
 ---
 
+## Reported: the themes only ever coloured the chips
+
+> "so whats up with the interface styles? the Soft one looks cool and the other ones look all
+> the same. and why do you already have wallpapers use the color palates and color the fucking
+> program. my themes were hard work use them and clean up tge ui modes since they're only like
+> 2 anyways realistically"
+
+| # | Defect | Status |
+|---|---|---|
+| 62 | **A theme contributed one colour out of four, to chips and toggles.** The palettes are four-colour sets; three of every four colours were discarded. The wallpaper was a fixed painted gradient that no theme could reach, so picking a theme barely changed the screen — and three of the six skins sat on that same gradient and were genuinely indistinguishable. | FIXED |
+| 63 | **Six skins, four of them the same idea.** Aurora and Classic were both dark glass on a dark gradient, differing from the default and from each other by shadow weight. | FIXED |
+
+### 62 — the palette paints the program
+
+All four colours now reach the wallpaper, as four blooms over a ground the skin chooses. The dark skins put them on ink; the two light skins put them on a pale ground at lower strength. Soft needed a special case: its `::before` covers the wallpaper completely, so the one skin the user actually liked was also the only skin a theme could not touch — the blooms now come through it at a fifth of their strength, present without costing it the moulded-from-one-material look that is the point of that skin.
+
+A pinned favourite is a single colour with no set behind it, so one is derived — the accent plus a lighter, a darker and a cooler relative. Otherwise a favourite would be a special case that quietly paints a flat screen.
+
+The palette persists in state and travels in a backup.
+
+### 63 — four skins that are actually four things
+
+Dark, Scan Card, Glass, Soft. Retired: Aurora and Classic.
+
+Aurora's one real idea — colour blooms behind the interface — is what the **wallpaper** does now, on every skin, painted from the chosen palette. It is not lost; it is everywhere. Classic was a shadow weight.
+
+Scan Card stays because it is not a coat of paint: it changes how a code is presented in the viewer.
+
+Retired ids migrate to Dark. That has to happen in three places, because a dead skin can arrive from three: a saved state, `setSkin` called with an old id, and **a backup file written before the skin was retired**. The last one is the easy one to miss — the migration belongs to the data, in `applyBackup`, not to the settings screen that usually calls it. Left unmapped they become `data-skin` values no picker row matches: the CSS still applies so the app looks fine, and the settings screen shows nothing selected with no way to explain it.
+
+Two existing tests were rewritten rather than deleted, because the invariants they guarded outlived the skins they were written against — the dark-polarity check moved to Dark, and the size-versus-shape contract moved to Scan Card. Two more had `aurora` in a backup fixture and expected it back out unchanged; they now assert it comes back migrated, which is the actual contract.
+
+One test asserted the wallpaper contained `224, 67, 47`. Chrome serialises `color-mix()` as `color(srgb 0.878431 …)`, so it compares the whole string against the pre-change one instead.
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.
