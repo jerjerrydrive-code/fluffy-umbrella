@@ -359,6 +359,14 @@ re-run and was not changed.
 
 ---
 
+Audit rate after the fix: **15 clean runs in 16**, against 3 in 4 before it. One run reported
+**two** findings — note two, where the original was consistently one — and did not reproduce in
+ten further runs, so it could not be captured or named. Recorded here rather than rounded down to
+zero: the direct measurement above is what the fix rests on, and that one observation is
+unexplained.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
