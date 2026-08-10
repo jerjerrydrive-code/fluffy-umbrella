@@ -859,6 +859,27 @@ Two tests state the new rule directly, over every destination: no move ever lose
 
 ---
 
+## The placement animation, and what a component library can and cannot do
+
+> "uiverse.io has so much that can help this project maybe even fix the homescreen movement or placement animation or whatever idk"
+
+Checked, via its open-source library (`uiverse-io/galaxy`). It is buttons, cards, checkboxes, forms, inputs, notifications, radio buttons, toggle switches, tooltips and loaders — MIT licensed, plain CSS or Tailwind, so it would drop into this repo cleanly and the no-CDN rule is not a problem for it.
+
+There is nothing in it for drag-and-drop, sortable grids or reordering, and there could not be: moving a code is a gesture engine and a state model, not a component. Worth saying plainly rather than pretending to have found something.
+
+The underlying instinct was right though — the movement did not look good, for reasons that had nothing to do with the engine being correct.
+
+| # | Defect | Status |
+|---|---|---|
+| 65 | **Every displaced code started moving on the same frame, with an overshoot curve.** Six icons bouncing in unison reads as a twitch, not as icons pushing each other aside. | FIXED |
+| 66 | **A picked-up code jumped to its lifted size, and its position was eased.** Easing the POSITION of something following a finger is what makes a dragged item feel like it is on a rubber band. | FIXED |
+
+**The shuffle is a wave.** The icons nearest where the code is being dropped move first and the rest follow about a frame apart each, capped at six slots — past that a stagger stops reading as a wave and starts reading as lag. And it uses its own curve: `--spring-snappy` overshoots, which is a satisfying bounce on one element and a wobble on a row of them.
+
+**Scale and position were separated.** The lift now animates in its own `scale` property over 180ms while `transform` stays on `0s` — so the icon follows the finger exactly, with no easing on position at all, and still grows into the hold rather than snapping. The landing animates both together.
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.
