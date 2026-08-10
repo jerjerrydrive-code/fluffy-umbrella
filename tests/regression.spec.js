@@ -4957,3 +4957,100 @@ test.describe('The skin morph does not leave the screen unreadable', () => {
         }
     });
 });
+
+test.describe('A code that cannot be drawn is never saved', () => {
+    // The per-format rules in CODE_FORMATS cover SHAPE — digits only, even length, check digit.
+    // None of them covers CAPACITY, and every symbology has a limit that depends on the data as
+    // well as its length. Measured: a 3000-character QR throws `qrcodeNoValidSymbol#20217`
+    // inside bwip-js and a 5000-character Aztec throws a TypeError — and both were accepted,
+    // saved, and reported as "Added to Grid!". The result is a tile that is blank forever,
+    // cannot be scanned, and that nothing in the app repairs.
+    //
+    // Same family as the storage defects: an operation the user asked for reporting success it
+    // did not have.
+
+    const save = (page, bcid, data) => page.evaluate(async ({ bcid, data }) => {
+        const toasts = [];
+        const realToast = window.showToast;
+        window.showToast = (m) => toasts.push(m);
+        const before = window.OS_STATE.apps.filter(a => a.type === 'grid').length;
+        try { window.CodeGenerator.saveCode('Probe', data, bcid); await new Promise(r => setTimeout(r, 200)); }
+        finally { window.showToast = realToast; }
+        return { added: window.OS_STATE.apps.filter(a => a.type === 'grid').length - before, toasts };
+    }, { bcid, data });
+
+    test('data past a format\'s capacity is refused, and says what to use instead', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        for (const [bcid, data] of [['qrcode', 'x'.repeat(3000)], ['azteccode', 'x'.repeat(5000)]]) {
+            const r = await save(page, bcid, data);
+            expect(r.added, `${bcid} saved a code it cannot draw`).toBe(0);
+            expect(r.toasts.join(' '), `${bcid} refused without saying why`).toMatch(/data|format|hold/i);
+        }
+    });
+
+    test('a code too wide to scan is refused', async ({ page }) => {
+        // 500 characters of Code 128 encodes happily into a canvas 16,605px wide: a large
+        // allocation, unreadable on a phone, and unscannable in the real world.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        const r = await save(page, 'code128', 'x'.repeat(500));
+        expect(r.added, 'saved a code 16,605px wide').toBe(0);
+        expect(r.toasts.join(' ')).toMatch(/scan/i);
+    });
+
+    test('nothing on the grid ever renders blank', async ({ page }) => {
+        // The property that matters, checked directly rather than through the paths that could
+        // reach it. A blank tile is the visible symptom of every version of this bug.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await save(page, 'qrcode', 'x'.repeat(3000));
+        await save(page, 'azteccode', 'x'.repeat(5000));
+        await save(page, 'code128', 'x'.repeat(500));
+        await save(page, 'qrcode', 'https://example.com');
+
+        const blanks = await page.evaluate(() => {
+            const bad = [];
+            window.OS_STATE.apps.filter(a => a.type === 'grid').forEach(app => {
+                const c = document.createElement('canvas');
+                c.id = 'blankchk-' + app.id; c.width = 10; c.height = 10;
+                document.body.appendChild(c);
+                try { window.renderCode(c.id, app, { scale: 3 }); } catch (e) {}
+                const px = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+                const seen = new Set();
+                for (let i = 0; i < px.length; i += 4) seen.add(px[i] + ',' + px[i+1] + ',' + px[i+2]);
+                if (seen.size < 2) bad.push(`${app.title} (${app.bcid}, ${app.data.length} chars)`);
+                c.remove();
+            });
+            return bad;
+        });
+        expect(blanks, `codes on the grid that render blank:\n${blanks.join('\n')}`).toEqual([]);
+    });
+
+    test('everything a real barcode could hold still saves', async ({ page }) => {
+        // The check sits on the same path a SCANNED code takes. If it refused ordinary payloads
+        // it would cost more than it earned — a scanned code the app will not keep is worse than
+        // one that draws badly.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        const real = [
+            ['qrcode', 'WIFI:S:MyNetwork;T:WPA;P:p@ssw0rd!;;'],
+            ['qrcode', 'BEGIN:VCARD\nVERSION:3.0\nN:Smith;John\nTEL:+15551234567\nEND:VCARD'],
+            ['qrcode', 'https://example.com/café?q=naïve&e=✓'],
+            ['qrcode', '日本語のテキストです'],
+            ['qrcode', 'emoji 🚀🎉 in a code'],
+            ['qrcode', 'otpauth://totp/Example:user@example.com?secret=JBSWY3DPEHPK3PXP'],
+            ['qrcode', 'x'.repeat(1200)],
+            ['code128', 'ABC-12345-XYZ'],
+            ['pdf417', 'BOARDING PASS 1234567890 SEAT 12A'],
+            ['datamatrix', '01034531200000111719112510ABCD1234'],
+            ['azteccode', 'RAIL TICKET 9988776655'],
+        ];
+        const refused = [];
+        for (const [bcid, data] of real) {
+            const r = await save(page, bcid, data);
+            if (r.added !== 1) refused.push(`${bcid}: ${data.slice(0, 30)} -> ${r.toasts.join(' ')}`);
+        }
+        expect(refused, `ordinary payloads were refused:\n${refused.join('\n')}`).toEqual([]);
+    });
+});

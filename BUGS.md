@@ -367,6 +367,33 @@ unexplained.
 
 ---
 
+## Found by asking what the app lets you create
+
+| # | Defect | Status |
+|---|---|---|
+| 44 | **A code could be saved that can never be drawn.** A 3000-character QR throws `qrcodeNoValidSymbol#20217` inside bwip-js; a 5000-character Aztec throws a TypeError. Both were accepted by the form, saved, and reported as **"Added to Grid!"** — leaving a tile that is blank forever, cannot be scanned, and that nothing in the app repairs. | FIXED |
+| 45 | **A code could be saved that is too wide to scan.** 500 characters of Code 128 encodes happily into a canvas **16,605px wide**: a large allocation, unreadable on a phone, unscannable in the real world. | FIXED |
+
+`CODE_FORMATS` already carried per-format rules, but every one of them covers *shape* — digits
+only, even length, correct check digit. Nothing covered **capacity**, which depends on the data as
+well as its length and differs per error-correction level.
+
+`window.canEncode()` asks the encoder instead of copying a capacity table that would be wrong the
+day bwip-js changes: it tries the encode and reports what happened, mapping the failure to
+something useful — *"That is more data than this format can hold. PDF417 handles the most, then
+QR."* Run on save, not on every keystroke.
+
+Same family as the storage defects: an operation the user asked for, reporting success it did not
+have.
+
+The check sits on the same path a **scanned** code takes, so the fourth test is the one that
+matters longest — fourteen realistic payloads (WiFi, vCard, TOTP, unicode, Japanese, emoji, GS1,
+boarding pass) must still save. A scanned code the app refuses to keep would be worse than one
+that draws badly. Three of the four tests fail against the previous build; that fourth passes both
+ways on purpose.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
