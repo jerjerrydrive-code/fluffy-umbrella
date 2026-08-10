@@ -37,12 +37,40 @@
         :root {
             --spring-snappy: cubic-bezier(0.175, 0.885, 0.32, 1.275);
             --spring-smooth: cubic-bezier(0.25, 1, 0.5, 1);
-            --squircle-radius: 22.5%;
             --grid-cols: 4;
             --app-size: 60px;
             --grid-gap-y: 28px;
             --accent: #3b82f6;
             --accent-text: #ffffff;
+
+            /* ---- Structural skin tokens -------------------------------------------------
+               A skin used to be a colour scheme and nothing else. Every one of the six drew the
+               same 22.5% squircle, the same 380px dock pill and the same 11.5px label, so
+               switching read as a filter over one interface rather than a different one.
+               Reported as "themes dont do much the styles barely change ui".
+
+               These are the levers that change SHAPE. The defaults below are the iOS Dock skin;
+               every other skin overrides them in the block further down, and each token is
+               transitioned so a skin change is a morph rather than a jump.
+
+               Deliberately NOT here: icon size. --app-size is computed from the viewport by
+               LayoutManager and three other rules derive from it, so scaling it per skin
+               desyncs the label width and the empty-slot height — which is how the dock pushed
+               the page wider than the screen once before. Shape, dock geometry, label
+               typography and density give a skin its identity without touching that. */
+            --squircle-radius: 22.5%;
+            --dock-radius: 2.25rem;
+            --dock-pad: 0.75rem;
+            --dock-max: 380px;
+            --dock-gap: 0.25rem;
+            --label-size: 11.5px;
+            --label-weight: 500;
+            --label-track: 0.2px;
+            --label-case: none;
+            --label-gap: 6px;
+            --row-scale: 1;
+            --preview-bg: linear-gradient(150deg, #3a3a44, #1d1d24);
+            --dock-preview-w: 88%;
         }
 
         /* ================= THEME SYSTEM =================
@@ -255,7 +283,8 @@
             width: var(--app-size); height: var(--app-size);
             border-radius: var(--squircle-radius);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-            transition: transform 0.2s var(--spring-snappy), width 0.3s ease, height 0.3s ease;
+            transition: transform 0.2s var(--spring-snappy), width 0.3s ease, height 0.3s ease,
+                        border-radius 0.45s var(--spring-smooth);
             will-change: transform, width, height;
         }
         
@@ -264,16 +293,21 @@
         .app-label {
             color: #ffffff;
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8), 0 2px 6px rgba(0, 0, 0, 0.6);
-            font-weight: 500; font-size: 11.5px; letter-spacing: 0.2px; margin-top: 6px;
+            font-weight: var(--label-weight); font-size: var(--label-size);
+            letter-spacing: var(--label-track); text-transform: var(--label-case);
+            margin-top: var(--label-gap);
             text-align: center; width: calc(var(--app-size) + 16px);
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-            transition: width 0.3s ease, opacity 0.3s ease;
+            transition: width 0.3s ease, opacity 0.3s ease,
+                        font-size 0.45s var(--spring-smooth),
+                        letter-spacing 0.45s var(--spring-smooth),
+                        margin-top 0.45s var(--spring-smooth);
         }
 
         .os-grid {
             display: grid;
             grid-template-columns: repeat(var(--grid-cols), minmax(0, 1fr));
-            row-gap: var(--grid-gap-y);
+            row-gap: calc(var(--grid-gap-y) * var(--row-scale));
             padding: max(2vh, 20px) max(4vw, 16px);
             justify-items: center; align-content: start;
             width: 100%; height: 100%; max-width: 900px; 
@@ -297,7 +331,19 @@
 
         @media (min-width: 1024px) { .os-grid { max-width: 1200px; padding: 40px 32px; } }
 
-        #main-dock { transition: transform 0.6s var(--spring-snappy), opacity 0.5s ease; }
+        /* The dock's geometry is a skin's most visible signature after the icon shape: a
+           narrow circle-ended pill and a full-width squared-off bar are recognisably different
+           interfaces. Id selector, so it beats the utility classes in the markup. */
+        #main-dock {
+            border-radius: var(--dock-radius);
+            padding: var(--dock-pad);
+            max-width: var(--dock-max);
+            transition: transform 0.6s var(--spring-snappy), opacity 0.5s ease,
+                        border-radius 0.45s var(--spring-smooth),
+                        padding 0.45s var(--spring-smooth),
+                        max-width 0.45s var(--spring-smooth);
+        }
+        #dock-container { gap: var(--dock-gap); }
         body.edit-mode #main-dock { transform: translateY(150%); opacity: 0; pointer-events: none; }
         
         .custom-drag-ghost { opacity: 0 !important; }
@@ -460,6 +506,105 @@
            body[data-skin="..."] block below, nothing else. */
         .fullscreen-badge { display: none; }
         .fullscreen-stats { display: none; }
+
+        /* ============ WHAT MAKES EACH SKIN A DIFFERENT INTERFACE ============
+           Shape, dock geometry, label typography and density. Colour is handled by the much
+           longer per-skin blocks below; this is the part you can recognise across the room.
+
+           Each set is written once and claimed by TWO selectors: the live body, and a class the
+           settings picker puts on its preview tile. That is deliberate — a preview that repeats
+           the numbers is a preview that goes quietly wrong the first time one of them changes.
+
+           Icon radius runs 10% to 38% across the six. It stops at 38% rather than going full
+           circle because these tiles hold real codes: a QR code's finder patterns live in its
+           corners, and a plate round enough to clip them shows a code that could not be
+           scanned. */
+
+        .skin-tokens-dock {
+            --squircle-radius: 22.5%;
+            --dock-radius: 2.25rem; --dock-pad: 0.75rem; --dock-max: 380px; --dock-gap: 0.25rem;
+            --label-size: 11.5px; --label-weight: 500; --label-track: 0.2px;
+            --label-case: none; --label-gap: 6px; --row-scale: 1;
+            --preview-bg: linear-gradient(150deg, #3a3a44, #1d1d24);
+            --dock-preview-w: 88%;
+        }
+
+        /* A wallet of cards: crisp corners, a squared-off bar the full width of the screen,
+           and small hard-set caps under each code. */
+        body[data-skin="scancard"], .skin-tokens-scancard {
+            --squircle-radius: 10%;
+            --dock-radius: 1rem; --dock-pad: 0.55rem; --dock-max: 100%; --dock-gap: 0.125rem;
+            --label-size: 9.5px; --label-weight: 800; --label-track: 0.75px;
+            --label-case: uppercase; --label-gap: 7px; --row-scale: 0.88;
+            --preview-bg: linear-gradient(150deg, #4a4a55, #26262e);
+            --dock-preview-w: 100%;
+        }
+
+        /* Almost-round plates on a narrow circle-ended pill, with light, airy labels. */
+        body[data-skin="glass"], .skin-tokens-glass {
+            --squircle-radius: 38%;
+            --dock-radius: 999px; --dock-pad: 0.9rem; --dock-max: 344px; --dock-gap: 0.375rem;
+            --label-size: 11px; --label-weight: 400; --label-track: 0.35px;
+            --label-case: none; --label-gap: 9px; --row-scale: 1.08;
+            --preview-bg: linear-gradient(150deg, #cfd6f5, #eef0ff);
+            --dock-preview-w: 76%;
+        }
+
+        /* Pillowy and generous — everything a little rounder and further apart. */
+        body[data-skin="soft"], .skin-tokens-soft {
+            --squircle-radius: 32%;
+            --dock-radius: 2.75rem; --dock-pad: 1rem; --dock-max: 360px; --dock-gap: 0.375rem;
+            --label-size: 11px; --label-weight: 600; --label-track: 0.1px;
+            --label-case: none; --label-gap: 8px; --row-scale: 1.12;
+            --preview-bg: linear-gradient(150deg, #eef1f7, #dfe4ee);
+            --dock-preview-w: 80%;
+        }
+
+        body[data-skin="aurora"], .skin-tokens-aurora {
+            --squircle-radius: 28%;
+            --dock-radius: 1.9rem; --dock-pad: 0.8rem; --dock-max: 400px; --dock-gap: 0.25rem;
+            --label-size: 11.5px; --label-weight: 500; --label-track: 0.45px;
+            --label-case: none; --label-gap: 7px; --row-scale: 1.04;
+            --preview-bg: linear-gradient(150deg, #4c2f7a, #0b1a3a);
+            --dock-preview-w: 92%;
+        }
+
+        /* Chunky and close-packed: the least round tiles of the six, on a wide squared dock. */
+        body[data-skin="classic"], .skin-tokens-classic {
+            --squircle-radius: 17%;
+            --dock-radius: 1.35rem; --dock-pad: 0.625rem; --dock-max: 420px; --dock-gap: 0.25rem;
+            --label-size: 12px; --label-weight: 700; --label-track: 0.05px;
+            --label-case: none; --label-gap: 5px; --row-scale: 0.94;
+            --preview-bg: linear-gradient(150deg, #2b2f38, #14161b);
+            --dock-preview-w: 96%;
+        }
+
+        /* The picker's tile: the real tokens, at 1/6 scale. */
+        .skin-preview {
+            width: 54px; height: 54px; border-radius: 15px; padding: 6px;
+            display: flex; flex-direction: column; justify-content: space-between;
+            background: var(--preview-bg); overflow: hidden; flex-shrink: 0;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+        }
+        .skin-preview .sp-grid { display: grid; grid-template-columns: repeat(3, 1fr);
+            gap: calc(2px * var(--row-scale)); }
+        .skin-preview .sp-grid span { display: block; aspect-ratio: 1;
+            background: rgba(255, 255, 255, 0.92); border-radius: var(--squircle-radius); }
+        .skin-preview .sp-dock {
+            height: 9px; align-self: center; width: var(--dock-preview-w);
+            background: rgba(255, 255, 255, 0.42);
+            box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.5);
+            /* The real radius is in rem against a 60px dock; a fifth of it reads the same on a
+               9px bar, and the clamp keeps 999px from becoming a lozenge. */
+            border-radius: clamp(1px, calc(var(--dock-radius) / 5), 4.5px);
+        }
+        .skin-tokens-glass .sp-grid span, .skin-tokens-soft .sp-grid span {
+            background: #ffffff; box-shadow: 0 1px 2px rgba(60, 60, 90, 0.25);
+        }
+        .skin-tokens-glass .sp-dock, .skin-tokens-soft .sp-dock {
+            background: rgba(255, 255, 255, 0.85);
+            box-shadow: 0 1px 3px rgba(60, 60, 90, 0.18);
+        }
 
         body[data-skin="scancard"] #fullscreen-item-data { display: none; }
         body[data-skin="scancard"] .fullscreen-badge {
@@ -5924,13 +6069,16 @@
         // Registry for the skin system (HARD RULE 5). Add a new entry + a matching
         // body[data-skin="..."] CSS block to introduce another interface style —
         // never fork the app itself.
+        // The descriptions say what CHANGES, not what it evokes. "Frosted glass over an
+        // ambient colour field" tells you nothing about whether to pick it; "round plates, a
+        // narrow pill dock" tells you exactly what you are about to get.
         const SKINS = [
-            { id: 'dock', label: 'iOS Dock', icon: 'layout-grid', description: 'The classic home-screen dock & pages layout.' },
-            { id: 'scancard', label: 'Scan Card', icon: 'credit-card', description: 'A clean result-card view for your codes.' },
-            { id: 'glass', label: 'Glass', icon: 'droplets', description: 'Frosted glass over an ambient colour field.' },
-            { id: 'soft', label: 'Soft', icon: 'circle', description: 'Tactile surfaces moulded from soft light.' },
-            { id: 'aurora', label: 'Aurora', icon: 'sparkles', description: 'Drifting colour blooms behind dark glass.' },
-            { id: 'classic', label: 'Classic', icon: 'gem', description: 'The original dock, refined.' }
+            { id: 'dock',     label: 'iOS Dock',  description: 'Squircle plates, floating pill dock.' },
+            { id: 'scancard', label: 'Scan Card', description: 'Sharp cards, full-width bar, caps labels.' },
+            { id: 'glass',    label: 'Glass',     description: 'Round plates on light frosted glass.' },
+            { id: 'soft',     label: 'Soft',      description: 'Pillowy and roomy, moulded from light.' },
+            { id: 'aurora',   label: 'Aurora',    description: 'Dark glass over drifting colour.' },
+            { id: 'classic',  label: 'Classic',   description: 'Chunky tiles, wide dock, close packed.' }
         ];
 
         class OSSkinManager {
@@ -5947,10 +6095,14 @@
                 SKINS.forEach(skin => {
                     const active = skin.id === this.current;
                     const btn = document.createElement('button');
-                    btn.className = `w-full flex items-center gap-3 p-3 rounded-2xl border transition-all text-left ${active ? 'accent-bg-soft accent-border-soft' : 'bg-black/20 border-transparent hover:bg-black/30'}`;
+                    btn.className = `w-full flex items-center gap-3.5 p-3 rounded-2xl border transition-all text-left ${active ? 'accent-bg-soft accent-border-soft' : 'bg-black/20 border-transparent hover:bg-black/30'}`;
+                    // The tile is the skin's own tokens at a sixth of the size — same corner
+                    // radius, same dock geometry, same density — so what you see is what you
+                    // are picking rather than an icon somebody chose to stand for it.
                     btn.innerHTML = `
-                        <div class="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${active ? 'accent-bg text-white' : 'bg-white/10 text-gray-300'}">
-                            <i data-lucide="${skin.icon}" class="w-[18px] h-[18px]"></i>
+                        <div class="skin-preview skin-tokens-${skin.id}" aria-hidden="true">
+                            <div class="sp-grid"><span></span><span></span><span></span></div>
+                            <div class="sp-dock"></div>
                         </div>
                         <div class="flex-1 min-w-0">
                             <div class="text-white font-bold text-sm">${skin.label}</div>

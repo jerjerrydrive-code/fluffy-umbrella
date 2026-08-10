@@ -830,40 +830,51 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         expect(await gap()).toBeGreaterThan(0);
     });
 
-    test('classic refines the treatment without moving any layout geometry', async ({ page }) => {
-        // The whole contract of this skin: it is the original, polished. If it ever starts
-        // changing sizes or spacing it has become a different look and the name is a lie.
+    test('classic keeps the icon size and changes everything else about the shape', async ({ page }) => {
+        // This test used to assert the opposite — that classic moved NO geometry at all, only
+        // shadows. That was the design at the time, and it was the design across all six skins:
+        // same squircle, same dock, same labels, colour and shadow only. The person using the
+        // app disagreed, in those words — "themes dont do much the styles barely change ui" —
+        // and they were right, so the contract changed.
+        //
+        // What survives is the part that was actually load-bearing: the ICON SIZE. --app-size is
+        // computed from the viewport and three other rules derive from it, so a skin that scales
+        // it desyncs the label width and the empty-slot height. That is how the dock once pushed
+        // the page wider than the screen. Shape is a skin's to change; size is not.
         await page.goto('/index.html');
         await page.waitForTimeout(1200);
 
-        const geometry = () => page.evaluate(() => {
+        const size = () => page.evaluate(() => {
             const icon = getComputedStyle(document.querySelector('.app-icon'));
             const grid = getComputedStyle(document.querySelector('.os-grid'));
-            const dock = getComputedStyle(document.getElementById('main-dock'));
-            return {
-                iconW: icon.width, iconH: icon.height, iconRadius: icon.borderRadius,
-                gridGap: grid.rowGap, gridPad: grid.padding,
-                dockRadius: dock.borderRadius, dockPad: dock.padding
-            };
+            return { iconW: icon.width, iconH: icon.height, gridPad: grid.padding };
         });
-        const treatment = () => page.evaluate(() => ({
+        const shape = () => page.evaluate(() => ({
+            iconRadius: getComputedStyle(document.querySelector('.app-icon')).borderRadius,
+            dockRadius: getComputedStyle(document.getElementById('main-dock')).borderRadius,
+            dockPad: getComputedStyle(document.getElementById('main-dock')).padding,
+            gridGap: getComputedStyle(document.querySelector('.os-grid')).rowGap,
             labelShadow: getComputedStyle(document.querySelector('.app-label')).textShadow,
-            iconShadow: getComputedStyle(document.querySelector('.app-icon')).boxShadow
+            labelSize: getComputedStyle(document.querySelector('.app-label')).fontSize,
+            iconShadow: getComputedStyle(document.querySelector('.app-icon')).boxShadow,
         }));
 
-        const geoBefore = await geometry();
-        const treatBefore = await treatment();
+        const sizeBefore = await size();
+        const shapeBefore = await shape();
 
         await page.evaluate(() => window.SkinManager.setSkin('classic'));
         await page.waitForTimeout(700);
         expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('classic');
 
-        // Geometry identical...
-        expect(await geometry()).toEqual(geoBefore);
-        // ...treatment genuinely different.
-        const treatAfter = await treatment();
-        expect(treatAfter.labelShadow).not.toBe(treatBefore.labelShadow);
-        expect(treatAfter.iconShadow).not.toBe(treatBefore.iconShadow);
+        // The size a code is drawn at does not move...
+        expect(await size()).toEqual(sizeBefore);
+
+        // ...and everything else does. Each of these on its own is something you can see from
+        // across the room; before this change, none of them differed.
+        const after = await shape();
+        for (const k of Object.keys(shapeBefore)) {
+            expect(after[k], `classic left ${k} exactly as iOS Dock had it`).not.toBe(shapeBefore[k]);
+        }
     });
 
     test('every skin in the picker applies and leaves the home screen rendering', async ({ page }) => {
@@ -5832,5 +5843,171 @@ test.describe('The home screen does not blink', () => {
 
         expect(r.two).toBe(2);
         expect(r.three, 'the folder face did not notice a third code going in').toBe(3);
+    });
+});
+
+// ============================================================================================
+//  A skin changes the interface, not just its colour
+//
+//  Reported: "themes dont do much the styles barely change ui." It was true. All six skins drew
+//  the same 22.5% squircle, the same 380px dock pill and the same 11.5px label — the per-skin
+//  CSS was hundreds of lines of colour and not one line of shape, so switching read as a filter
+//  over one interface rather than a different one.
+// ============================================================================================
+test.describe('A skin changes the interface, not just its colour', () => {
+    const SKINS = ['dock', 'scancard', 'glass', 'soft', 'aurora', 'classic'];
+
+    // Everything about a skin you could recognise from across the room, with colour left out
+    // on purpose — colour was never the part that was missing.
+    // Set, then LET IT LAND, then read. Radius, dock geometry and label metrics are all
+    // transitioned now so a skin change is a morph rather than a jump — which means reading in
+    // the same task that sets the attribute returns the value the app is animating away FROM.
+    // That mistake made the density spread measure 1.01x instead of 1.27x, and it would have
+    // been read as the tokens not being wired up.
+    const shapeOf = async (page, skin) => {
+        await page.evaluate((skin) => { document.body.dataset.skin = skin; }, skin);
+        await page.waitForTimeout(550);
+        return page.evaluate(() => {
+        const icon = document.querySelector('#workspace-pager .app-icon');
+        const dock = document.getElementById('main-dock');
+        const label = document.querySelector('.app-label');
+        const grid = document.querySelector('.os-grid');
+        const cs = getComputedStyle(document.body);
+        const read = (n) => cs.getPropertyValue(n).trim();
+        return {
+            iconRadius: read('--squircle-radius'),
+            dockRadius: read('--dock-radius'),
+            dockMax: read('--dock-max'),
+            dockPad: read('--dock-pad'),
+            labelSize: read('--label-size'),
+            labelWeight: read('--label-weight'),
+            labelCase: read('--label-case'),
+            rowScale: read('--row-scale'),
+            // and the same things as the browser actually resolved them, so a token that is
+            // set but never used cannot pass this test
+            drawnRadius: getComputedStyle(icon).borderRadius,
+            drawnDock: getComputedStyle(dock).borderRadius + ' ' + getComputedStyle(dock).padding,
+            drawnLabel: [getComputedStyle(label).fontSize, getComputedStyle(label).fontWeight,
+                         getComputedStyle(label).textTransform,
+                         getComputedStyle(label).letterSpacing].join('/'),
+            drawnGap: getComputedStyle(grid).rowGap,
+        };
+        });
+    };
+
+    test('no two skins draw the same interface', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+
+        const seen = new Map();
+        for (const skin of SKINS) {
+            const shape = await shapeOf(page, skin);
+
+            // Every one of these has to be a real, resolved value — a token nobody wired up
+            // resolves to the empty string and would otherwise silently match everything.
+            for (const [k, v] of Object.entries(shape)) {
+                expect(v, `${skin}: ${k} resolved to nothing`).toBeTruthy();
+            }
+
+            const sig = JSON.stringify(shape);
+            if (seen.has(sig)) {
+                throw new Error(`${skin} is pixel-identical in shape to ${seen.get(sig)} — ` +
+                                `switching between them changes nothing you could see`);
+            }
+            seen.set(sig, skin);
+        }
+        expect(seen.size).toBe(SKINS.length);
+    });
+
+    test('the differences are big enough to notice', async ({ page }) => {
+        // Distinct is not the same as different. Two skins that differ by a tenth of a percent
+        // would pass the test above and fail the person looking at the screen.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+
+        const radii = [], gaps = [], scales = [], sizes = [];
+        for (const skin of SKINS) {
+            const s = await shapeOf(page, skin);
+            radii.push(parseFloat(s.iconRadius));
+            gaps.push(parseFloat(s.drawnGap));
+            scales.push(parseFloat(s.rowScale));
+            sizes.push(parseFloat(s.labelSize));
+        }
+        expect(Math.max(...radii) - Math.min(...radii),
+               'every skin rounds its code plates about the same amount').toBeGreaterThanOrEqual(20);
+
+        // Density is asserted as a RATIO, not a pixel count. The row gap is derived from the
+        // viewport, so on a short screen every skin's gap is small and a fixed pixel threshold
+        // fails for a reason that has nothing to do with the skins. Measured in pixels this
+        // spread was 0.13px on the suite's default viewport and 5px on a phone — same design,
+        // different verdict. The pixels are still checked, proportionally, so a --row-scale
+        // nobody wired up cannot pass.
+        expect(Math.max(...scales) - Math.min(...scales),
+               'every skin packs its grid at the same density').toBeGreaterThanOrEqual(0.2);
+        expect(Math.max(...gaps) / Math.min(...gaps),
+               'the density tokens are set but not reaching the grid').toBeGreaterThanOrEqual(1.2);
+
+        expect(Math.max(...sizes) - Math.min(...sizes),
+               'every skin labels its codes at the same size').toBeGreaterThanOrEqual(1.5);
+    });
+
+    test('a code plate is never rounded enough to clip the code', async ({ page }) => {
+        // The reason the shapes stop short of a circle. A QR code's finder patterns live in its
+        // corners; a plate round enough to cut them shows a code that could not be scanned.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        for (const skin of SKINS) {
+            const r = parseFloat((await shapeOf(page, skin)).iconRadius);
+            expect(r, `${skin} rounds its plates ${r}%, far enough in to clip a QR's corners`)
+                .toBeLessThanOrEqual(40);
+        }
+    });
+
+    test('the picker previews the skin you would actually get', async ({ page }) => {
+        // The preview tile and the live body claim the SAME token block, so the settings screen
+        // cannot drift away from what switching does. This is the test that keeps them sharing.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(700);
+
+        for (const skin of SKINS) {
+            const r = await page.evaluate((skin) => {
+                const keys = ['--squircle-radius', '--dock-radius', '--dock-max', '--dock-pad',
+                              '--label-size', '--label-weight', '--label-case', '--row-scale'];
+                const tile = document.querySelector(`#skin-picker .skin-tokens-${skin}`);
+                if (!tile) return { missing: true };
+                const from = (el) => {
+                    const cs = getComputedStyle(el);
+                    return keys.map(k => cs.getPropertyValue(k).trim()).join('|');
+                };
+                document.body.dataset.skin = skin;
+                return { tile: from(tile), live: from(document.body) };
+            }, skin);
+            expect(r.missing, `${skin} has no preview in the picker`).toBeFalsy();
+            expect(r.tile, `the ${skin} preview does not match the ${skin} skin`).toBe(r.live);
+        }
+    });
+
+    test('no skin pushes the dock wider than the screen', async ({ page }) => {
+        // The dock now sets its own max-width per skin, and a dock a few pixels too wide is how
+        // the page gained a horizontal scrollbar the last time its sizing changed.
+        for (const [w, h] of [[320, 568], [360, 640], [412, 892], [430, 932]]) {
+            await page.setViewportSize({ width: w, height: h });
+            await page.goto('/index.html');
+            await page.waitForTimeout(1200);
+            for (const skin of SKINS) {
+                const over = await page.evaluate((skin) => {
+                    document.body.dataset.skin = skin;
+                    const d = document.getElementById('main-dock').getBoundingClientRect();
+                    return {
+                        page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                        dock: Math.max(0, Math.round(d.right - window.innerWidth), Math.round(-d.left)),
+                    };
+                }, skin);
+                expect(over.page, `${skin} at ${w}x${h}: the page scrolls sideways`).toBeLessThanOrEqual(0);
+                expect(over.dock, `${skin} at ${w}x${h}: the dock hangs off the screen`).toBe(0);
+            }
+        }
     });
 });
