@@ -2399,11 +2399,16 @@
                         if (e && e.stopPropagation) e.stopPropagation();
                         if (itemData.type === 'folder') {
                             // Deleting the folder must not delete what is in it — the codes
-                            // return to the page the folder occupied.
-                            window.folderChildren(itemData.id).forEach(kid => {
+                            // return to the page the folder occupied, each in a square of its
+                            // own. They all used to be given order 999, which put them on the
+                            // same square: only one can be drawn there, so the rest vanished
+                            // from the home screen while staying in storage.
+                            const kids = window.folderChildren(itemData.id);
+                            // The folder leaves first, so the first child can have its square.
+                            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== itemData.id);
+                            kids.forEach(kid => {
                                 delete kid.folderId;
-                                kid.page = itemData.page || 0;
-                                kid.order = 999;
+                                window.placeOnGrid(kid, itemData.page || 0);
                             });
                         }
                         window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== itemData.id);
@@ -2426,6 +2431,14 @@
             }
 
             render() {
+                // Rendering is the one thing that always happens after the state changes, which
+                // makes it the only place the folder invariants cannot be forgotten. Skipped
+                // mid-drag, because a folder is momentarily inconsistent while one is being
+                // built and dissolving it under the finger would be worse than the bug.
+                if (window.tidyFolders && !(window.DragEngine && window.DragEngine.isEngaged)) {
+                    if (window.tidyFolders()) saveState();
+                }
+
                 const state = window.OS_STATE;
                 // Codes inside a folder are not on the grid; folders are.
                 const gridItems = state.apps.filter(a =>
@@ -3978,6 +3991,87 @@
                 .sort((a, b) => (a.order || 0) - (b.order || 0));
         };
 
+        // The first free square, starting at `fromPage` and moving forward.
+        //
+        // One place, because the same question is asked when a code is created, when one leaves
+        // a folder, and when a folder is dissolved — and the answers had drifted apart. The
+        // folder paths used `order = 999` with a comment saying "the renderer packs it in",
+        // which is only true when auto-arrange is on. It is off by default, and the renderer
+        // then does `if (item.order < itemsPerPage) slots[item.order] = item` — so 999 is
+        // silently dropped and the code is not drawn anywhere.
+        //
+        // Measured: deleting a folder of three left two of its codes at page 1 order 15, both
+        // invisible. They were still in storage and still in the Library, but gone from the home
+        // screen with nothing to say why. Every child was given the SAME order, so they landed
+        // on one square where only one can be seen.
+        window.firstFreeSlot = function(fromPage) {
+            const st = window.OS_STATE;
+            const perPage = Math.max(1, (st.gridCols || 4) * (st.gridRows || 6));
+            const onGrid = st.apps.filter(a => (a.type === 'grid' && !a.folderId) || a.type === 'folder');
+            const start = Math.max(0, parseInt(fromPage, 10) || 0);
+            for (let page = start; page < start + 20; page++) {
+                const taken = new Set(onGrid.filter(a => (a.page || 0) === page).map(a => a.order));
+                for (let order = 0; order < perPage; order++) {
+                    if (!taken.has(order)) return { page, order };
+                }
+            }
+            return { page: start, order: perPage - 1 };
+        };
+
+        // Puts a code back on the grid in a square of its own. Callers must have cleared
+        // folderId first, so the item is counted as occupying the slot it is given.
+        window.placeOnGrid = function(item, fromPage) {
+            const slot = window.firstFreeSlot(fromPage);
+            item.page = slot.page;
+            item.order = slot.order;
+            return slot;
+        };
+
+        // Folders are a view over codes; the codes are the truth. Anything that deletes a code
+        // can leave a folder in a state that makes no sense, and every one of those states hides
+        // codes:
+        //
+        //   · a folder holding nothing — sits on the home screen and opens to an empty sheet;
+        //   · a folder holding one — which removeFromFolder itself calls "an item wearing a
+        //     costume", and which takes a whole square to show one code;
+        //   · a code pointing at a folder that no longer exists — invisible twice over, skipped
+        //     by the grid because it has a folderId and unreachable because there is no folder
+        //     left to open.
+        //
+        // Kept true in ONE place rather than at each delete site, because the delete sites are
+        // exactly where it was already being forgotten: the Library's bulk delete filters `apps`
+        // directly and knows nothing about folders. Measured — deleting all of a folder's codes
+        // from the Library left an empty folder on the grid; deleting all but one left a folder
+        // of one. Neither path had any reason to think about folders, and that is the point.
+        window.tidyFolders = function() {
+            const st = window.OS_STATE;
+            let changed = false;
+
+            const folderIds = new Set(st.apps.filter(a => a.type === 'folder').map(a => a.id));
+            st.apps.forEach(a => {
+                if (a.type === 'grid' && a.folderId && !folderIds.has(a.folderId)) {
+                    delete a.folderId;
+                    window.placeOnGrid(a, a.page || 0);
+                    changed = true;
+                }
+            });
+
+            st.apps.filter(a => a.type === 'folder').forEach(folder => {
+                const kids = window.folderChildren(folder.id);
+                if (kids.length >= 2) return;
+                // The first child inherits the folder's own square; any other would be a
+                // contradiction, but place it safely rather than assume.
+                kids.forEach((kid, i) => {
+                    delete kid.folderId;
+                    if (i === 0) { kid.page = folder.page || 0; kid.order = folder.order || 0; }
+                    else window.placeOnGrid(kid, folder.page || 0);
+                });
+                st.apps = st.apps.filter(a => a.id !== folder.id);
+                changed = true;
+            });
+            return changed;
+        };
+
         // Puts an item into a folder, taking the first free slot inside it.
         window.addToFolder = function(folderId, itemId) {
             const item = window.OS_STATE.apps.find(a => a.id === itemId);
@@ -4023,8 +4117,9 @@
             const folder = st.apps.find(a => a.id === item.folderId);
             delete item.folderId;
             if (folder) {
-                item.page = folder.page || 0;
-                item.order = 999;   // lands at the end of the page; the renderer packs it in
+                // A square of its own on the folder's page, or the next page with room. This
+                // was `order = 999` — see window.firstFreeSlot for why that disappeared.
+                window.placeOnGrid(item, folder.page || 0);
             }
 
             const left = folder ? window.folderChildren(folder.id) : [];

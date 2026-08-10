@@ -394,6 +394,35 @@ ways on purpose.
 
 ---
 
+## Found by asking where a code goes when a folder ends
+
+| # | Defect | Status |
+|---|---|---|
+| 46 | **Deleting a folder hid the codes it held.** Every child was given `order = 999`, so they all landed on the *same* square — where only one can be drawn. Measured through the app's own edit-mode delete: a folder of three left two codes at page 1 order 15, both invisible. Still in storage, still in the Library, gone from the home screen with nothing to say why. | FIXED |
+| 47 | **Deleting a folder's codes from the Library stranded the folder.** Delete all of them and an empty folder stayed on the grid, opening to nothing. Delete all but one and a folder of one survived — which `removeFromFolder` itself calls "an item wearing a costume". | FIXED |
+| 48 | **A code pointing at a folder that no longer existed was invisible twice over** — skipped by the grid because it has a `folderId`, and unreachable because there is no folder left to open. | FIXED |
+
+The comment on `order = 999` said *"the renderer packs it in"*. That is true only when
+auto-arrange is on; it is **off by default**, and the renderer then does
+`if (item.order < itemsPerPage) slots[item.order] = item`, so 999 is silently dropped.
+
+`window.firstFreeSlot()` and `window.placeOnGrid()` are now the single answer to "where does this
+code go?", asked identically when a code is created, when one leaves a folder, and when a folder
+is dissolved. The three call sites had drifted apart, which is how the same value ended up
+assigned to three codes at once.
+
+The folder invariants are kept in **one** place — `window.tidyFolders()`, called from
+`Renderer.render()` — rather than at each delete site, because the delete sites are exactly where
+they were being forgotten: the Library's bulk delete filters `apps` directly and has no reason to
+think about folders. Rendering is the one thing that always happens after the state changes. It is
+skipped mid-drag, because a folder is momentarily inconsistent while one is being built and
+dissolving it under the finger would be worse than the bug.
+
+All five tests fail against the previous build, and the nine existing folder tests still pass —
+creating and merging folders is untouched.
+
+---
+
 ## Chased and found not to be a bug
 
 Recorded because "could not reproduce" is a result, and burying it invites someone to chase it
