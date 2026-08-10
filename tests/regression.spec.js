@@ -6483,3 +6483,75 @@ test.describe('Moving a code around, with a finger', () => {
             window.OS_STATE.apps.filter(a => a.type === 'folder').length)).toBe(1);
     });
 });
+
+// ============================================================================================
+//  The dock fires under a thumb
+//
+//  "I'm talking about the bottom dock and those dock icons nor firing fix it all"
+//
+//  The tap slop was 24px everywhere. That is the right number on the pager, where a tap has to
+//  be told apart from the start of a page swipe — but the dock is not a scrolling surface, its
+//  buttons are the smallest and most-used targets in the app, and they sit along the bottom
+//  edge where a thumb rolls most. Measured with real touch: a dock tap carrying 26px of drift
+//  did nothing at all, on every button.
+// ============================================================================================
+test.describe('The dock fires under a thumb', () => {
+    const dockTap = async (page, id, drift) => {
+        const cdp = await page.context().newCDPSession(page);
+        const it = await page.evaluate((id) => {
+            const el = document.querySelector(`#dock-container .app-icon-wrapper[data-id="${id}"]`);
+            const r = el.getBoundingClientRect();
+            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+        }, id);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [it] });
+        await page.waitForTimeout(40);
+        for (let i = 1; i <= 3 && drift; i++) {
+            await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove',
+                touchPoints: [{ x: it.x + drift * i / 3, y: it.y - drift * i / 3 }] });
+            await page.waitForTimeout(20);
+        }
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await page.waitForTimeout(700);
+    };
+    const isOpen = (page, id) => page.evaluate((id) =>
+        document.getElementById(id).classList.contains('opacity-100'), id);
+
+    for (const drift of [0, 14, 26]) {
+        test(`a dock tap carrying ${drift}px of drift still fires`, async ({ page }) => {
+            await page.goto('/index.html');
+            await page.waitForTimeout(1600);
+            await dockTap(page, 'nav_lib', drift);
+            expect(await isOpen(page, 'library-overlay'),
+                   `the Library button did nothing with ${drift}px of thumb drift`).toBe(true);
+        });
+    }
+
+    test('a deliberate drag across the dock is still not a tap', async ({ page }) => {
+        // The other half. Raising the slop must not turn every swipe over the dock into a
+        // button press.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1600);
+        await dockTap(page, 'nav_lib', 60);
+        expect(await isOpen(page, 'library-overlay'),
+               'a 60px drag across the dock was treated as a tap').toBe(false);
+    });
+
+    test('a sideways drag on the dock does not move the workspace', async ({ page }) => {
+        // The dock is a row of controls. A pan across it used to be classified as a page swipe,
+        // which both stole the tap and moved a workspace the dock has nothing to do with.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1600);
+        await page.evaluate(() => {
+            for (let i = 0; i < 3; i++) {
+                window.OS_STATE.apps.push({ id: 'dpg_' + i, title: 'P' + i, type: 'grid',
+                    page: 1, order: i, bcid: 'qrcode', data: 'dp' + i });
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(600);
+        const before = await page.evaluate(() => window.OS_STATE.currentPage || 0);
+        await dockTap(page, 'nav_lib', 120);
+        expect(await page.evaluate(() => window.OS_STATE.currentPage || 0),
+               'dragging across the dock turned the page').toBe(before);
+    });
+});

@@ -74,6 +74,15 @@
             --wall-ink-a: color-mix(in srgb, var(--pal-4) 38%, #05070f);
             --wall-ink-b: color-mix(in srgb, var(--pal-1) 26%, #04050c);
             --wall-bloom: 78%;
+            /* What a bloom is mixed INTO. This is the difference between a palette tinting a
+               dark screen and a palette turning it into a light one.
+               The ground was already protected — mixed against near-black so no palette could
+               lighten it — but the four blooms on top of it were not, and at 78% strength four
+               pale colours wash the ground out completely. Measured from a phone: the Dark skin
+               with a pink-and-peach palette came out mid-pink, with the white labels it is
+               supposed to have over a dark ground. The comment above this claimed that could
+               not happen; it could, because it only covered half of the wallpaper. */
+            --wall-tint-base: #05070f;
 
             /* ---- Structural skin tokens -------------------------------------------------
                A skin used to be a colour scheme and nothing else. Every one of the six drew the
@@ -274,11 +283,14 @@
                clearing it falls back here.
                It is now built from the chosen palette's four colours rather than being fixed,
                which is what makes a theme change the whole program rather than the chips. */
+            /* Each bloom keeps its hue but is pulled towards the skin's own base first, so a
+               pale palette tints a dark screen rather than bleaching it. The outer stop still
+               fades to transparent, which is what makes them read as blooms rather than discs. */
             background-image:
-                radial-gradient(38% 32% at 18% 14%, color-mix(in srgb, var(--pal-1) var(--wall-bloom), transparent) 0%, transparent 62%),
-                radial-gradient(44% 36% at 86% 24%, color-mix(in srgb, var(--pal-2) var(--wall-bloom), transparent) 0%, transparent 60%),
-                radial-gradient(52% 40% at 60% 92%, color-mix(in srgb, var(--pal-3) var(--wall-bloom), transparent) 0%, transparent 64%),
-                radial-gradient(46% 34% at 10% 76%, color-mix(in srgb, var(--pal-4) var(--wall-bloom), transparent) 0%, transparent 58%),
+                radial-gradient(38% 32% at 18% 14%, color-mix(in srgb, var(--pal-1) var(--wall-bloom), var(--wall-tint-base)) 0%, transparent 62%),
+                radial-gradient(44% 36% at 86% 24%, color-mix(in srgb, var(--pal-2) var(--wall-bloom), var(--wall-tint-base)) 0%, transparent 60%),
+                radial-gradient(52% 40% at 60% 92%, color-mix(in srgb, var(--pal-3) var(--wall-bloom), var(--wall-tint-base)) 0%, transparent 64%),
+                radial-gradient(46% 34% at 10% 76%, color-mix(in srgb, var(--pal-4) var(--wall-bloom), var(--wall-tint-base)) 0%, transparent 58%),
                 linear-gradient(165deg, var(--wall-ink-a) 0%,
                                         color-mix(in srgb, var(--pal-2) 18%, var(--wall-ink-b)) 52%,
                                         var(--wall-ink-b) 100%);
@@ -588,11 +600,13 @@
             --wall-ink-a: color-mix(in srgb, var(--pal-1) 26%, #ffffff);
             --wall-ink-b: color-mix(in srgb, var(--pal-3) 30%, #f4f6fd);
             --wall-bloom: 52%;
+            --wall-tint-base: #ffffff;      /* light skins tint towards light, symmetrically */
         }
         body[data-skin="soft"] {
             --wall-ink-a: color-mix(in srgb, var(--pal-1) 14%, #f4f6fa);
             --wall-ink-b: color-mix(in srgb, var(--pal-3) 18%, #e8ecf4);
             --wall-bloom: 30%;
+            --wall-tint-base: #ffffff;
         }
 
         body[data-skin="glass"], .skin-tokens-glass {
@@ -7574,6 +7588,15 @@
             // 24px is ~4mm. Paging therefore begins 12px later than it might; that is not
             // perceptible, and it is what makes a tap survive a thumb on a moving bus.
             SLOP: 24,
+            // The dock gets a thumb's width instead.
+            //
+            // 24px is the right number on the pager, where a tap has to be told apart from the
+            // start of a page swipe. The dock is not a scrolling surface — there is nothing
+            // there to confuse a tap with — and its buttons are the smallest, most-used targets
+            // in the app, sitting along the bottom edge where a thumb rolls most. Measured with
+            // real touch: a dock tap carrying 26px of drift did nothing at all, on every button.
+            // That is the whole of "the dock icons not firing".
+            DOCK_SLOP: 44,
             TAP_MS: 700,
             PRESS_MS: 450,         // long press -> edit mode
             FLING: 0.45,           // px/ms past which a flick changes page on its own
@@ -7604,6 +7627,10 @@
 
                 this.active = {
                     id: e.pointerId, surface, target: e.target,
+                    // Recorded once, from where the finger LANDED. Asking later is no good: by
+                    // the time the gesture is being classified the finger may have travelled off
+                    // the dock, and where it started is what decides what it meant.
+                    onDock: !!(e.target.closest && e.target.closest('#main-dock')),
                     x0: e.clientX, y0: e.clientY,
                     lastX: e.clientX, lastT: performance.now(), vx: 0,
                     t0: performance.now(),
@@ -7659,6 +7686,11 @@
                     // while a quick flick across a full page is not — and pages, as it should.
                     if (window.DragEngine && window.DragEngine.isEngaged) {
                         g.mode = 'drag';
+                    } else if (g.onDock) {
+                        // The dock is a row of controls. A sideways drag across it used to turn
+                        // into a page pan, which both stole the tap and moved the workspace from
+                        // a surface that has nothing to do with it.
+                        g.mode = 'undecided';
                     } else if (Math.abs(dx) > Math.abs(dy)) {
                         g.mode = 'page';
                     } else {
@@ -7681,7 +7713,8 @@
                 if (g.mode !== 'undecided') return;    // drag or vertical belong elsewhere
                 if (g.pressed) return;                 // the long press WAS the gesture
 
-                if (Math.hypot(e.clientX - g.x0, e.clientY - g.y0) > this.SLOP) return;
+                const slop = g.onDock ? this.DOCK_SLOP : this.SLOP;
+                if (Math.hypot(e.clientX - g.x0, e.clientY - g.y0) > slop) return;
                 if (performance.now() - g.t0 > this.TAP_MS) return;
                 if (window.DragEngine && (window.DragEngine.isEngaged || window.DragEngine.wasDragging)) return;
 
