@@ -806,6 +806,41 @@ One test asserted the wallpaper contained `224, 67, 47`. Chrome serialises `colo
 
 ---
 
+## The drag engine, rewritten
+
+> "moving the barcodes is still fucked redo it"
+
+The fifth report about this one area, after four rounds of patching. Patching was the mistake, and it was pointed out twice before this: *"we continue to fail that section and need to work on a full revamp of that section because patches and patches doesn't work."*
+
+### Why it kept failing
+
+The old engine had the wrong idea about where an arrangement lives. On every `pointermove` it looked up `elementFromPoint`, immediately **mutated the DOM** — swapping the hovered icon with a placeholder "ghost", running a FLIP animation on everything that moved — and at the end read the new order back out of the DOM.
+
+So the DOM was the source of truth, and it was being rewritten dozens of times a second underneath the finger doing the rewriting. Every symptom followed from that one decision:
+
+- After the first swap the finger was over the **ghost**, not an icon, so every question of the form "what am I on?" got the wrong answer. The folder dwell needed a special case for the ghost, and that special case is what made every reorder end in a folder (defect 54).
+- Reordering fought the swipe detector, because both were reading the same moving DOM to decide what the gesture was (defects 51, 7).
+- A re-render during a drag could destroy the nodes the drag was holding.
+- None of it could be tested without a browser hit-test, so the tests were as fragile as the code.
+
+### The new model
+
+A page is a fixed grid of slots. A drag has a target **slot index**, worked out from the pointer position against slot rectangles measured once when the drag begins. From that, the new arrangement is computed as **data**. The DOM is not reordered at all during a drag: every icon except the held one is transformed from its own slot to its previewed slot. State is written from the model, never read back out of the DOM.
+
+There is no ghost, so nothing can be "over the ghost". The answer to "which slot am I on" is arithmetic and cannot be disturbed by the preview. A merge is decided from a slot index and a position, both stable.
+
+The best consequence is testability: `SlotDragEngine.arrange(model, heldId, toPage, toSlot, compact)` is **pure**. Six tests now check what moving MEANS with no pointer, no DOM and no browser — including the invariant worth more than the rest, that across every destination in both modes the set of codes coming out is the set that went in.
+
+### Two things the rewrite got wrong first, and how they showed up
+
+**Landing a drop through a rebuild brought back "I have to re-tap the icons".** `commit()` called `Renderer.render()`, which replaces the page containers — and the engine's `pointerdown` listener lives on those containers. Landing a drop that way leaves a window with no container listening. A drop now moves the existing nodes inside their page instead: the container survives, the listener survives, every canvas survives, and it is less work besides.
+
+**Committing when the animation finished, rather than when the finger lifted, was worse.** The destination slot registers as an `.empty-slot` for the whole flight. Measured: a press 10ms after a drop landed on `.empty-slot` and the engine never saw a `pointerdown` at all. The arrangement is now committed the instant you let go, and the settling animation is an ordinary FLIP on an in-flow grid item played afterwards — which also removes the fixed-position element hovering over a hole where it is supposed to be.
+
+One test reached into the old engine's private `draggedEl` field and broke on a rename that changed nothing about behaviour. There is a `heldElement()` accessor now; that is a bad reason for a test to fail.
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.
