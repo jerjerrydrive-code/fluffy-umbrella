@@ -5054,3 +5054,170 @@ test.describe('A code that cannot be drawn is never saved', () => {
         expect(refused, `ordinary payloads were refused:\n${refused.join('\n')}`).toEqual([]);
     });
 });
+
+test.describe('A code never disappears from the home screen', () => {
+    // Folders re-parent codes, and every path that put one back on the grid used
+    // `order = 999` with a comment saying "the renderer packs it in". That is only true when
+    // auto-arrange is on. It is OFF by default, and the renderer then does
+    // `if (item.order < itemsPerPage) slots[item.order] = item` — so 999 is silently dropped.
+    //
+    // Measured through the app's own edit-mode delete: a folder of three left two of its codes
+    // at page 1 order 15, both invisible. Still in storage, still in the Library, gone from the
+    // home screen with nothing to say why. Every child was given the SAME order, so they landed
+    // on one square where only one can be drawn.
+
+    const seedFolder = (page, kids, opts = {}) => page.evaluate(({ kids, opts }) => {
+        window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type === 'dock');
+        window.OS_STATE.autoArrange = false;      // the default, and the case that broke
+        const n = opts.n || 4;
+        for (let i = 0; i < n; i++) {
+            window.OS_STATE.apps.push({ id: 'c' + i, title: 'C' + i, type: 'grid',
+                page: 0, order: i, bcid: 'qrcode', data: 'c' + i });
+        }
+        window.OS_STATE.apps.push({ id: 'fold1', title: 'Folder', type: 'folder', page: 0, order: n });
+        kids.forEach((cid, i) => {
+            const c = window.OS_STATE.apps.find(a => a.id === cid);
+            c.folderId = 'fold1'; c.order = i;
+        });
+        window.Renderer.render();
+    }, { kids, opts });
+
+    const hidden = (page) => page.evaluate(() => {
+        const visible = [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')]
+            .map(e => e.dataset.id);
+        return window.OS_STATE.apps
+            .filter(a => a.type === 'grid' && !a.folderId && !visible.includes(a.id))
+            .map(a => `${a.id} (page ${a.page}, order ${a.order})`);
+    });
+
+    test('deleting a folder leaves every code it held on the screen', async ({ page }) => {
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await seedFolder(page, ['c0', 'c1', 'c2']);
+        await page.waitForTimeout(400);
+
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+        await page.evaluate(() => {
+            const w = document.querySelector('#workspace-pager [data-id="fold1"]');
+            const btn = w && w.querySelector('.edit-only');
+            if (btn && btn.__activate) btn.__activate(); else if (btn) btn.click();
+        });
+        await page.waitForTimeout(700);
+        await page.evaluate(() => window.exitEditMode());
+        await page.waitForTimeout(700);
+
+        expect(await hidden(page), 'codes vanished from the home screen when the folder was deleted')
+            .toEqual([]);
+        expect(await page.evaluate(() => window.OS_STATE.apps.filter(a => a.type === 'grid').length))
+            .toBe(4);
+    });
+
+    test('no two codes ever share one square', async ({ page }) => {
+        // The mechanism behind the disappearance, asserted directly.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await seedFolder(page, ['c0', 'c1', 'c2']);
+        await page.evaluate(() => {
+            const kids = window.folderChildren('fold1');
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== 'fold1');
+            kids.forEach(k => { delete k.folderId; window.placeOnGrid(k, 0); });
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+        const collisions = await page.evaluate(() => {
+            const slots = {};
+            window.OS_STATE.apps
+                .filter(a => (a.type === 'grid' && !a.folderId) || a.type === 'folder')
+                .forEach(a => { const k = `${a.page || 0}:${a.order}`; slots[k] = (slots[k] || 0) + 1; });
+            return Object.entries(slots).filter(([, v]) => v > 1).map(([k, v]) => `${k} x${v}`);
+        });
+        expect(collisions, `codes stacked on one square: ${collisions.join(', ')}`).toEqual([]);
+    });
+
+    test('a folder dissolving onto a full page overflows instead of stacking', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await page.evaluate(() => {
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type === 'dock');
+            window.OS_STATE.autoArrange = false;
+            for (let i = 0; i < 24; i++) {
+                window.OS_STATE.apps.push({ id: 'f' + i, title: 'F' + i, type: 'grid',
+                    page: 0, order: i, bcid: 'qrcode', data: 'f' + i });
+            }
+            window.OS_STATE.apps.push({ id: 'fold2', title: 'Folder', type: 'folder', page: 1, order: 0 });
+            ['f0', 'f1', 'f2'].forEach((cid, i) => {
+                const c = window.OS_STATE.apps.find(a => a.id === cid);
+                c.folderId = 'fold2'; c.order = i;
+            });
+            window.Renderer.render();
+            const kids = window.folderChildren('fold2');
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== 'fold2');
+            kids.forEach(k => { delete k.folderId; window.placeOnGrid(k, 1); });
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(500);
+        const collisions = await page.evaluate(() => {
+            const slots = {};
+            window.OS_STATE.apps.filter(a => (a.type === 'grid' && !a.folderId) || a.type === 'folder')
+                .forEach(a => { const k = `${a.page || 0}:${a.order}`; slots[k] = (slots[k] || 0) + 1; });
+            return Object.entries(slots).filter(([, v]) => v > 1).map(([k, v]) => `${k} x${v}`);
+        });
+        expect(collisions, 'dissolving onto a full page stacked codes').toEqual([]);
+    });
+
+    test('deleting a folder\'s codes from the Library does not strand the folder', async ({ page }) => {
+        // The Library's bulk delete filters `apps` directly and knows nothing about folders,
+        // which is exactly why the invariant is kept centrally rather than at each delete site.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+
+        for (const [toDelete, label] of [[['c0', 'c1', 'c2'], 'all of them'],
+                                         [['c0', 'c1'], 'all but one']]) {
+            await seedFolder(page, ['c0', 'c1', 'c2']);
+            await page.waitForTimeout(300);
+            await page.evaluate(async (ids) => {
+                window.showToast = () => {};
+                window.LibraryManager.open();
+                await new Promise(r => setTimeout(r, 300));
+                window.LibraryManager.source = 'saved';
+                window.LibraryManager.selected = new Set(ids);
+                window.LibraryManager.deleteSelected();
+                await new Promise(r => setTimeout(r, 300));
+                window.LibraryManager.close();
+                await new Promise(r => setTimeout(r, 200));
+            }, toDelete);
+            await page.evaluate(() => window.Renderer.render());
+            await page.waitForTimeout(400);
+
+            const left = await page.evaluate(() =>
+                window.OS_STATE.apps.filter(a => a.type === 'folder')
+                    .map(f => `${f.id} holding ${window.folderChildren(f.id).length}`));
+            expect(left, `deleting ${label} left a folder that makes no sense: ${left.join(', ')}`)
+                .toEqual([]);
+            expect(await hidden(page), `deleting ${label} hid a code`).toEqual([]);
+        }
+    });
+
+    test('a code pointing at a folder that is gone is rescued', async ({ page }) => {
+        // Invisible twice over: skipped by the grid because it has a folderId, and unreachable
+        // because there is no folder left to open.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1000);
+        await seedFolder(page, ['c0', 'c1']);
+        await page.evaluate(() => {
+            window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== 'fold1');  // folder only
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(500);
+        expect(await page.evaluate(() =>
+            window.OS_STATE.apps.filter(a => a.type === 'grid' && a.folderId).map(a => a.id)),
+            'codes were left pointing at a folder that no longer exists').toEqual([]);
+        expect(await hidden(page), 'orphaned codes are still not on the screen').toEqual([]);
+    });
+});
