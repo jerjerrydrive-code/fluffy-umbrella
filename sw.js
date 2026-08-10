@@ -1,6 +1,6 @@
-// Bumped to v2: the app shell moved from CDNs to ./vendor. A cache name change is what
-// evicts the old entries — without it, clients keep serving the stale CDN-era shell.
-const CACHE_NAME = 'xancode-os-v2';
+// Bumped to v3: the document is no longer served from cache first. A cache name change is
+// what evicts the old entries — without it, clients keep serving the stale shell.
+const CACHE_NAME = 'xancode-os-v3';
 
 // Every entry is same-origin now. That matters beyond tidiness: cache.add() on a cross-origin
 // URL yields an opaque response, which cannot be inspected for success, so a failed CDN fetch
@@ -59,10 +59,48 @@ self.addEventListener('activate', (event) => {
     );
 });
 
-// Stale-while-revalidate: serve from cache instantly, refresh in the background,
-// fall back to cache if the network is unavailable (offline support).
+// The document is fetched fresh; everything else is stale-while-revalidate.
+//
+// It used to be stale-while-revalidate for EVERYTHING, index.html included. Serving the cached
+// copy instantly and refreshing in the background means the page you are looking at is always
+// the PREVIOUS visit's build — a fix shipped today first appears on the load after next. The
+// person using the app described it exactly: "we have the old old old glitch... is this time
+// machine or wtf is going on". It was a time machine. Every deploy was verified byte-for-byte
+// on the server and none of it could reach the screen on the first load, and any visit where
+// the background refresh failed left them further behind still.
+//
+// Stale-while-revalidate is right for the vendored assets: they are large, they change only
+// when the app is rebuilt, and a version behind for one load costs nothing. It is wrong for the
+// one file that decides which version of the app you are running.
+const isDocument = (request) => {
+    if (request.mode === 'navigate') return true;
+    const url = new URL(request.url);
+    return url.origin === self.location.origin &&
+           (url.pathname.endsWith('/') || url.pathname.endsWith('/index.html'));
+};
+
 self.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET') return;
+
+    if (isDocument(event.request)) {
+        // Network first, cache only as the offline fallback. Offline still works: the shell is
+        // precached at install and refreshed on every successful load.
+        event.respondWith((async () => {
+            try {
+                const fresh = await fetch(event.request);
+                if (fresh && fresh.status === 200) {
+                    const clone = fresh.clone();
+                    caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+                }
+                return fresh;
+            } catch (e) {
+                return (await caches.match(event.request)) ||
+                       (await caches.match('./index.html')) ||
+                       Response.error();
+            }
+        })());
+        return;
+    }
 
     event.respondWith(
         caches.match(event.request).then((cached) => {

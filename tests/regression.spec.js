@@ -6011,3 +6011,164 @@ test.describe('A skin changes the interface, not just its colour', () => {
         }
     });
 });
+
+// ============================================================================================
+//  You are always looking at the build that is on the server
+//
+//  Reported, after three deploys that were each verified byte-for-byte on the server:
+//  "oh no you went backwards we have the old old old double page glitch and the old cant get
+//  out of edit glitch. or did it just idk what happened is this time machine".
+//
+//  It was a time machine. The service worker was stale-while-revalidate for EVERYTHING,
+//  index.html included: it served the cached copy instantly and refreshed in the background, so
+//  the page you were looking at was always the PREVIOUS visit's build. A fix shipped today
+//  first appeared on the load after next, and any visit where the background refresh failed
+//  left you further behind still. Nothing had regressed; none of it could reach the screen.
+// ============================================================================================
+test.describe('You are always looking at the build that is on the server', () => {
+    // A file on disk that the dev server really serves, rewritten between two navigations.
+    //
+    // The first version of this test changed the response with page.route() instead. That
+    // proves nothing: Playwright's routing does not intercept fetches made BY a service
+    // worker, so the worker got the real file either way and the test failed against a
+    // correct fix. Anything testing a service worker has to change what the SERVER has.
+    //
+    // A top-level navigation is `mode: 'navigate'` whatever the path, so this fixture takes
+    // the same branch of the worker as index.html does.
+    const fs = require('fs');
+    const path = require('path');
+    const FIXTURE_DIR = path.join(__dirname, 'fixtures');
+    const FIXTURE = path.join(FIXTURE_DIR, 'sw-freshness.html');
+    const writeFixture = (marker) => {
+        fs.mkdirSync(FIXTURE_DIR, { recursive: true });
+        fs.writeFileSync(FIXTURE, `<!doctype html><title>${marker}</title><p>${marker}</p>`);
+    };
+
+    test.afterAll(() => { try { fs.unlinkSync(FIXTURE); } catch (e) {} });
+
+    test('a reload shows what the server has now, not what it had last time', async ({ page }) => {
+        writeFixture('BUILD-ONE');
+        await page.goto('/index.html');
+        await page.waitForFunction(() => navigator.serviceWorker &&
+                                         navigator.serviceWorker.controller !== null,
+                                   null, { timeout: 20000 });
+
+        await page.goto('/tests/fixtures/sw-freshness.html');
+        expect(await page.title()).toBe('BUILD-ONE');
+        // If the worker is not handling this navigation the test is vacuous — it would pass
+        // against the cache-first worker too.
+        expect(await page.evaluate(() => !!navigator.serviceWorker.controller),
+               'the worker was not in charge of this navigation, so nothing was proved')
+            .toBe(true);
+
+        writeFixture('BUILD-TWO');
+        await page.goto('/tests/fixtures/sw-freshness.html');
+        expect(await page.title(),
+               'the worker served the previous build out of its cache — every deploy would ' +
+               'reach the user one visit late, which is exactly what was reported')
+            .toBe('BUILD-TWO');
+    });
+
+    test('the app still opens with no network at all', async ({ page, context }) => {
+        // The other half of the contract. Network-first must not mean network-only: the cache
+        // is still the offline fallback, and losing that would be a worse bug than the one
+        // being fixed.
+        await page.goto('/index.html');
+        await page.waitForFunction(() => navigator.serviceWorker &&
+                                         navigator.serviceWorker.controller !== null,
+                                   null, { timeout: 20000 });
+        await page.waitForTimeout(1200);
+
+        await context.setOffline(true);
+        await page.reload();
+        await page.waitForTimeout(1500);
+        const alive = await page.evaluate(() => !!document.getElementById('workspace-pager'));
+        await context.setOffline(false);
+        expect(alive, 'the app did not come up offline').toBe(true);
+    });
+});
+
+// ============================================================================================
+//  A page exists because there is something on it
+//
+//  "the old old old double page glitch". The pager was `Math.max(2, maxPage + 1)`, so the home
+//  screen always had an empty page you could swipe into and a second pagination dot that led
+//  nowhere, however few codes you had.
+// ============================================================================================
+test.describe('A page exists because there is something on it', () => {
+    const onePage = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        await page.evaluate(() => {
+            window.OS_STATE.apps.filter(a => a.type === 'grid')
+                .forEach((a, i) => { a.page = 0; a.order = i; delete a.folderId; });
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(500);
+    };
+    const view = (page) => page.evaluate(() => ({
+        pages: document.querySelectorAll('.page-wrapper').length,
+        dots: document.querySelectorAll('.pagination-dot').length,
+        dotsShown: !document.getElementById('pagination-container').classList.contains('opacity-0'),
+        cur: window.OS_STATE.currentPage || 0,
+    }));
+
+    test('one page of codes is one page, with no dots', async ({ page }) => {
+        await onePage(page);
+        const v = await view(page);
+        expect(v.pages, 'an empty second page you can swipe into').toBe(1);
+        expect(v.dotsShown, 'a single dot is decoration that looks like navigation').toBe(false);
+    });
+
+    test('arranging gives you a spare page to drag onto', async ({ page }) => {
+        // The spare page has a job — it is how a code gets to a new page at all. Removing it
+        // outright would trade one bug for a worse one.
+        await onePage(page);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+        const v = await view(page);
+        expect(v.pages, 'there is nowhere to drag a code to make a new page').toBe(2);
+        expect(v.dotsShown).toBe(true);
+    });
+
+    test('leaving edit mode from the spare page does not strand you on it', async ({ page }) => {
+        // The spare disappears when edit mode ends. If that was the page you were standing on,
+        // the pager is left scrolled past its own content: a blank screen, no dot lit, and
+        // nothing to say what happened.
+        await onePage(page);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(400);
+        await page.evaluate(() => window.LauncherInput.goTo(1));
+        await page.waitForTimeout(600);
+        expect((await view(page)).cur).toBe(1);
+
+        await page.evaluate(() => window.exitEditMode());
+        await page.waitForTimeout(900);
+        const v = await view(page);
+        expect(v.pages).toBe(1);
+        expect(v.cur, 'left standing on a page that no longer exists').toBe(0);
+    });
+
+    test('a real second page of codes still gets a page and a dot', async ({ page }) => {
+        await onePage(page);
+        await page.evaluate(() => {
+            for (let i = 0; i < 3; i++) {
+                window.OS_STATE.apps.push({ id: 'real2_' + i, title: 'P' + i, type: 'grid',
+                    page: 1, order: i, bcid: 'qrcode', data: 'p' + i });
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(600);
+        const v = await view(page);
+        expect(v.pages).toBe(2);
+        expect(v.dotsShown).toBe(true);
+    });
+});
