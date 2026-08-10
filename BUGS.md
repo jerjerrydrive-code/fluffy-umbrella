@@ -702,6 +702,46 @@ The fix was to stop driving the gesture from outside. The whole drag — every m
 
 ---
 
+## Reported: the themes were only ever a colour scheme
+
+> "refine the ui options not much changes and themes dont do much the styles barely change ui."
+
+| # | Defect | Status |
+|---|---|---|
+| 58 | **All six skins drew the same interface.** Hundreds of lines of per-skin CSS, and not one of them changed a shape: every skin used the same 22.5% squircle, the same 380px dock pill, the same 11.5px label and the same grid density. Switching read as a filter over one interface rather than a different one. | FIXED |
+| 59 | **The picker showed a Lucide glyph and a mood, not the skin.** A droplet next to "Frosted glass over an ambient colour field" tells you nothing about what you are about to get. | FIXED |
+
+### 58 — shape, not colour
+
+Eleven structural tokens now carry a skin's identity: icon radius, dock radius/padding/max-width/gap, label size/weight/tracking/case/offset, and row density. Measured across the six:
+
+| | radius | dock radius | label | density |
+|---|---|---|---|---|
+| Scan Card | 10% | 16px, full width | 9.5px / 800 / caps | 0.88x |
+| Classic | 17% | 21.6px | 12px / 700 | 0.94x |
+| iOS Dock | 22.5% | 36px | 11.5px / 500 | 1.00x |
+| Aurora | 28% | 30.4px | 11.5px / 500 | 1.04x |
+| Soft | 32% | 44px | 11px / 600 | 1.12x |
+| Glass | 38% | pill | 11px / 400 | 1.08x |
+
+Every token is transitioned, so a skin change is a morph rather than a jump.
+
+**Icon SIZE is deliberately not among them.** `--app-size` is computed from the viewport by LayoutManager and three other rules derive from it; a skin that scales it desyncs the label width and the empty-slot height, which is exactly how the dock once pushed the page 7px wider than the screen (defect 45). Shape is a skin's to change; size is not.
+
+Radius stops at 38% rather than going to a full circle because these plates hold real codes: a QR code's finder patterns live in its corners, and a plate round enough to clip them shows a code that could not be scanned. There is a test holding the line at 40%.
+
+### 59 — the preview is the skin
+
+Each row in the picker now renders the skin's own tokens at a sixth of the size — same corner radius, same dock geometry, same density. The token block is claimed by two selectors, `body[data-skin="x"]` and `.skin-tokens-x`, so the preview and the live skin cannot drift apart; a test compares all eight values between them. Descriptions say what changes ("Sharp cards, full-width bar, caps labels") rather than what it evokes.
+
+### One test had to change its mind
+
+`classic refines the treatment without moving any layout geometry` asserted the opposite of this work — that a skin changes shadows and nothing else. That was the design, and it was the design across all six. The person using the app disagreed in those words, so the contract changed. What survives is the load-bearing half: the icon **size** must not move. The test now asserts that, and that everything else does.
+
+A second test read the drawn values in the same task that set `data-skin`. With the tokens transitioned that returns the value the app is animating *away from* — it measured the density spread as 1.01x instead of 1.27x, which would have read as the tokens never being wired up.
+
+---
+
 ## Open — needs the account holder
 
 Neither is reachable from code. The app explains both in words rather than printing an error code.
