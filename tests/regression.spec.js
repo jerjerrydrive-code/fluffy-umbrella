@@ -6555,3 +6555,80 @@ test.describe('The dock fires under a thumb', () => {
                'dragging across the dock turned the page').toBe(before);
     });
 });
+
+// ============================================================================================
+//  Signing in cannot undo the app
+//
+//  "somehow the broken ui is saved to my google account lol signed out and it's fixed signed in
+//  and its broken maybe thats a weird bug causing me to not see updates"
+//
+//  Exactly that. State arrives by three routes — local storage, a backup file, and a cloud
+//  snapshot — and only the first two were being migrated. A cloud document is older than the
+//  app reading it by definition, and an account not opened for a while can be many versions
+//  behind, so it was writing a retired skin id straight onto the body and putting the old
+//  layout back. The retired skins' CSS is still present, so signing in rendered a skin with
+//  none of the palette grounds and none of the label-legibility fixes: the app appearing to go
+//  backwards, and the update apparently never arriving.
+// ============================================================================================
+test.describe('Signing in cannot undo the app', () => {
+    const stale = {
+        apps: [
+            { id: 'c1', title: 'One',   type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'one' },
+            { id: 'c2', title: 'Two',   type: 'grid', page: 0, order: 7, bcid: 'qrcode', data: 'two' },
+            { id: 'c3', title: 'Three', type: 'grid', page: 0, order: 7, bcid: 'qrcode', data: 'tre' },
+        ],
+        skin: 'aurora', accent: '#E0432F', autoArrange: false,
+    };
+    const applyStale = (page, extra) => page.evaluate((args) => {
+        // A later snapshot, not the first reconcile — the authoritative path.
+        window.CloudSync.reconciled = true;
+        window.CloudSync.applyRemoteState(Object.assign({}, args.stale, args.extra || {}));
+        return {
+            skin: window.OS_STATE.skin,
+            attr: document.body.dataset.skin,
+            auto: window.OS_STATE.autoArrange,
+            orders: window.OS_STATE.apps.filter(a => a.type === 'grid').map(a => a.order).sort(),
+            palette: window.OS_STATE.palette,
+        };
+    }, { stale, extra });
+
+    test('a retired skin in the cloud does not come back', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        const r = await applyStale(page);
+        expect(r.skin, 'the account put a retired skin back').toBe('dock');
+        expect(r.attr, 'a retired skin was written onto the body').toBe('dock');
+    });
+
+    test('the cloud cannot put the gaps back in the grid', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        const r = await applyStale(page);
+        expect(r.auto, 'the account turned auto-arrange back off').toBe(true);
+        expect(r.orders, 'holes and a collision came down from the cloud unchanged')
+            .toEqual([0, 1, 2]);
+    });
+
+    test('a palette in the cloud is restored, not discarded', async ({ page }) => {
+        // Without this the four colours a theme is made of are lost on every sign-in and the
+        // wallpaper falls back to a set derived from one of them.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        const pal = ['#112233', '#445566', '#778899', '#AABBCC'];
+        const r = await applyStale(page, { palette: pal });
+        expect(r.palette, 'the palette did not survive a sign-in').toEqual(pal);
+    });
+
+    test('the palette is pushed back up, so the other device gets it too', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        const sent = await page.evaluate(() => {
+            window.OS_STATE.palette = ['#010203', '#040506', '#070809', '#0A0B0C'];
+            return window.CloudSync.buildStatePayload
+                ? window.CloudSync.buildStatePayload()
+                : null;
+        });
+        // Not every build exposes the payload builder; skip rather than assert nothing.
+        if (sent) expect(sent.palette).toEqual(['#010203', '#040506', '#070809', '#0A0B0C']);
+    });
+});

@@ -2137,6 +2137,28 @@
 
         const freshDefaultState = () => JSON.parse(JSON.stringify(DEFAULT_STATE));
 
+        // Close every gap and resolve every collision, in place.
+        //
+        // One function because state arrives by THREE routes — local storage, a backup file,
+        // and a cloud snapshot — and only the first of them was doing this. That is why signing
+        // in looked like the app going backwards: the account's document predates every
+        // migration, and it was being written in raw.
+        window.normaliseLayout = function() {
+            const st = window.OS_STATE;
+            const per = Math.max(1, (st.gridCols || 4) * (st.gridRows || 6));
+            const grid = st.apps.filter(a => (a.type === 'grid' && !a.folderId) || a.type === 'folder');
+            const pages = new Map();
+            grid.forEach(a => {
+                const p = Math.max(0, a.page || 0);
+                if (!pages.has(p)) pages.set(p, []);
+                pages.get(p).push(a);
+            });
+            pages.forEach((items, p) => {
+                items.sort((x, y) => (x.order || 0) - (y.order || 0))
+                     .forEach((a, i) => { a.page = p; a.order = i % per; });
+            });
+        };
+
         try {
             const saved = localStorage.getItem('xancode_v2_state');
             window.OS_STATE = saved ? JSON.parse(saved) : freshDefaultState();
@@ -2151,22 +2173,9 @@
             // the layout you get would depend on when you first opened the app.
             window.OS_STATE.autoArrange = true;
             // Normalise orders that were saved with gaps in them, so the state matches what is
-            // actually on the screen rather than only looking right.
-            (() => {
-                const per = window.OS_STATE.gridCols * window.OS_STATE.gridRows;
-                const grid = window.OS_STATE.apps.filter(a =>
-                    (a.type === 'grid' && !a.folderId) || a.type === 'folder');
-                const pages = new Map();
-                grid.forEach(a => {
-                    const p = Math.max(0, a.page || 0);
-                    if (!pages.has(p)) pages.set(p, []);
-                    pages.get(p).push(a);
-                });
-                pages.forEach((items, p) => {
-                    items.sort((x, y) => (x.order || 0) - (y.order || 0))
-                         .forEach((a, i) => { a.page = p; a.order = i % per; });
-                });
-            })();
+            // actually on the screen rather than only looking right. Shared with the cloud
+            // snapshot handler — state arrives by three routes and they must all agree.
+            if (window.normaliseLayout) window.normaliseLayout();
             if(!window.OS_STATE.gridSize) window.OS_STATE.gridSize = 'auto';
             if(!window.OS_STATE.skin) window.OS_STATE.skin = 'dock';
             // A retired skin can arrive from a saved state OR from a backup file made before
@@ -6602,8 +6611,44 @@
                 if (data.gridSize) window.OS_STATE.gridSize = data.gridSize;
                 // autoArrange is deliberately NOT restored: it is no longer a setting, and a
                 // backup written while it was one would otherwise put holes back in the grid.
-                if (data.skin) { window.OS_STATE.skin = data.skin; if (window.SkinManager) { window.SkinManager.current = data.skin; document.body.setAttribute('data-skin', data.skin); window.SkinManager.render(); } }
-                if (data.accent) { window.OS_STATE.accent = data.accent; if (window.ThemeManager) { window.ThemeManager.applyAccent(data.accent, false); window.ThemeManager.render(); } }
+                // A cloud document is older than the app reading it, always — it was written
+                // by whatever version last signed in, and an account that has not been opened
+                // for a while can be many versions behind. So it goes through the same
+                // migrations as a saved state and a backup, rather than being trusted as-is.
+                //
+                // Reported as: "somehow the broken ui is saved to my google account lol signed
+                // out and it's fixed signed in and its broken". Exactly that. A retired skin id
+                // was written straight onto the body, and the retired skins' CSS is still
+                // present — so signing in rendered a skin that has none of the palette grounds
+                // and none of the label-legibility fixes, and looked like the app going
+                // backwards. It also explains "causing me to not see updates": the update was
+                // there, the account kept turning it off.
+                if (data.skin) {
+                    const skin = (window.RETIRED_SKINS && window.RETIRED_SKINS[data.skin]) || data.skin;
+                    window.OS_STATE.skin = skin;
+                    if (window.SkinManager) {
+                        window.SkinManager.current = skin;
+                        document.body.setAttribute('data-skin', skin);
+                        window.SkinManager.render();
+                    }
+                }
+                if (data.accent) {
+                    window.OS_STATE.accent = data.accent;
+                    // The palette travels with the accent. Without it the four colours a theme
+                    // is made of are lost on every sign-in and the wallpaper falls back to a
+                    // set derived from one of them — the whole point of a palette, gone.
+                    if (Array.isArray(data.palette) && data.palette.length === 4) {
+                        window.OS_STATE.palette = data.palette;
+                    }
+                    if (window.ThemeManager) {
+                        window.ThemeManager.applyAccent(data.accent, false, window.OS_STATE.palette);
+                        window.ThemeManager.render();
+                    }
+                }
+                // Auto-arrange is not a setting any more, and a document written while it was
+                // one carries the gaps and collisions that went with it.
+                window.OS_STATE.autoArrange = true;
+                if (window.normaliseLayout) window.normaliseLayout();
                 // Feedback & Motion sync too, so a device you set up carries its preferences over.
                 // Compared against undefined, not truthiness — these are booleans, and `false` is
                 // a real value a plain `if (data.haptics)` would silently drop.
@@ -6649,6 +6694,7 @@
                         // HARD RULE 4 — bulky, device-local, and of no use on another device).
                         apps: window.OS_STATE.apps,
                         pageNames: window.OS_STATE.pageNames,
+                        palette: window.OS_STATE.palette || null,
                         gridSize: window.OS_STATE.gridSize,
                         autoArrange: window.OS_STATE.autoArrange,
                         skin: window.OS_STATE.skin,
