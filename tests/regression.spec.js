@@ -4899,7 +4899,11 @@ test.describe('The page never scrolls sideways', () => {
     test('an icon fills its cell the way a launcher does', async ({ page }) => {
         // The point of the change: --app-size was a hardcoded 60px on every phone, so at 412px
         // wide with four columns the icon used 63% of its 94.8px cell and floated in the middle.
-        // A real home screen fills about three quarters, which is what makes rows read as dense.
+        //
+        // The upper bound moved down afterwards. "About three quarters" was my inference from a
+        // screenshot; the phone's own home screen was then measured directly and puts a system
+        // icon at 15.7% of the screen, which is ~0.685 of a cell. A measurement from the device
+        // beats a guess from a picture of it, so the guess is what changed.
         await page.setViewportSize({ width: 412, height: 892 });
         await page.goto('/index.html');
         await page.waitForTimeout(1100);
@@ -4908,8 +4912,8 @@ test.describe('The page never scrolls sideways', () => {
             const cols = getComputedStyle(document.querySelector('.os-grid')).gridTemplateColumns.split(' ');
             return icon.width / parseFloat(cols[0]);
         });
-        expect(fill, 'the icon no longer fills its cell').toBeGreaterThan(0.7);
-        expect(fill, 'the icon has outgrown its cell').toBeLessThanOrEqual(0.85);
+        expect(fill, 'the icon no longer fills its cell').toBeGreaterThan(0.62);
+        expect(fill, 'the icon has outgrown its cell').toBeLessThanOrEqual(0.75);
     });
 });
 
@@ -6680,4 +6684,55 @@ test.describe('The dock icons fit the dock', () => {
             }
         });
     }
+});
+
+// ============================================================================================
+//  A code is the size of an app icon
+//
+//  "lets get the sizing to match and stay as default no resizing just match mine I think mine
+//  is perfect size."
+//
+//  Measured off two screenshots taken at the same width: a system icon on the phone's own home
+//  screen is 15.7% of the screen, and this app's was 17.2% — about 10% too big, which is what
+//  made the grid read as crowded next to the real thing.
+// ============================================================================================
+test.describe('A code is the size of an app icon', () => {
+    for (const [w, h] of [[360, 640], [412, 892], [430, 932]]) {
+        test(`an icon is a system icon's size at ${w}x${h}`, async ({ page }) => {
+            await page.setViewportSize({ width: w, height: h });
+            await page.goto('/index.html');
+            await page.waitForTimeout(1300);
+            const pct = await page.evaluate(() =>
+                document.querySelector('#workspace-pager .app-icon').getBoundingClientRect().width
+                / window.innerWidth * 100);
+            // 15.7% is the measurement. A point either side covers rounding to whole pixels.
+            expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, not ~15.7%`)
+                .toBeGreaterThan(14.7);
+            expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, not ~15.7%`)
+                .toBeLessThan(16.7);
+        });
+    }
+
+    test('the size does not depend on how many codes there are', async ({ page }) => {
+        // "stay as default no resizing" — the ratio is fixed; only the cell it is a fraction of
+        // moves, and only with the viewport.
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+        const measure = () => page.evaluate(() =>
+            Math.round(document.querySelector('#workspace-pager .app-icon').getBoundingClientRect().width));
+        const few = await measure();
+        await page.evaluate(() => {
+            const src = window.OS_STATE.apps.find(a => a.type === 'grid');
+            for (let i = 0; i < 25; i++) {
+                const c = Object.assign({}, src, { id: 'many' + i });
+                delete c.folderId;
+                window.OS_STATE.apps.push(c);
+                window.placeOnGrid(c, 0);
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(700);
+        expect(await measure(), 'the icons resized themselves when the screen filled up').toBe(few);
+    });
 });
