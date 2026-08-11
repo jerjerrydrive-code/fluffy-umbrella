@@ -6736,3 +6736,100 @@ test.describe('A code is the size of an app icon', () => {
         expect(await measure(), 'the icons resized themselves when the screen filled up').toBe(few);
     });
 });
+
+// ============================================================================================
+//  Making a code works, on every template
+//
+//  "when I tapped custome the data erased but still let me name it but I could not create
+//  without manually typing the barcodes data inside. check all of the creations to make sure
+//  the work right during creating"
+// ============================================================================================
+test.describe('Making a code works, on every template', () => {
+    const openGen = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+        await page.evaluate(() => window.CodeGenerator.open());
+        await page.waitForTimeout(400);
+    };
+
+    test('switching to Custom keeps what the template already built', async ({ page }) => {
+        // Custom used to be a pure visibility toggle, so filling in a handle, watching the
+        // template compose the full link, and tapping Custom to look at it gave an EMPTY data
+        // field — while still letting you type a name, so it looked like it would work right up
+        // until it refused to save.
+        await openGen(page);
+        const r = await page.evaluate(async () => {
+            const G = window.CodeGenerator;
+            const t = window.QUICK_TEMPLATES.find(x => /instagram/i.test(x.label))
+                   || window.QUICK_TEMPLATES.find(x => x.id === 'url');
+            G.openTemplateForm(t.id);
+            await new Promise(r => setTimeout(r, 250));
+            document.getElementById(`tpl-${t.id}-${t.fields[0].id}`).value = 'myhandle';
+            G.setMode('custom');
+            await new Promise(r => setTimeout(r, 250));
+            return { data: G.inputData.value, title: G.inputTitle.value };
+        });
+        expect(r.data, 'the composed data was thrown away on the way to Custom').toContain('myhandle');
+        expect(r.data.length, 'Custom was handed a bare handle rather than the full payload')
+            .toBeGreaterThan('myhandle'.length);
+        expect(r.title, 'the title was thrown away too').toBeTruthy();
+    });
+
+    test('Custom never overwrites something typed by hand', async ({ page }) => {
+        await openGen(page);
+        const kept = await page.evaluate(async () => {
+            const G = window.CodeGenerator;
+            G.inputData.value = 'MINE';
+            const t = window.QUICK_TEMPLATES.find(x => x.id === 'url');
+            G.openTemplateForm(t.id);
+            await new Promise(r => setTimeout(r, 250));
+            document.getElementById(`tpl-${t.id}-${t.fields[0].id}`).value = 'example.com';
+            G.setMode('custom');
+            await new Promise(r => setTimeout(r, 250));
+            return G.inputData.value;
+        });
+        expect(kept, 'switching to Custom clobbered data that was already there').toBe('MINE');
+    });
+
+    test('no template throws while building, and none builds nothing', async ({ page }) => {
+        // All twenty-two, from representative values. The Event template was the one that threw:
+        // new Date('...').toISOString() raises RangeError on an invalid date, and it came all
+        // the way out of the save, so a half-typed date took the form down with no message.
+        await openGen(page);
+        const bad = await page.evaluate(() => {
+            const sample = (f) => {
+                if (f.type === 'select') return (f.options && f.options[0] && f.options[0].value) || '';
+                if (f.type === 'datetime-local') return '2026-08-07T14:30';
+                const k = ((f.id || '') + (f.label || '')).toLowerCase();
+                if (/mail/.test(k)) return 'name@example.com';
+                if (/phone|tel|number/.test(k)) return '15551234567';
+                if (/url|site|link/.test(k)) return 'example.com';
+                if (/lat/.test(k)) return '37.7749';
+                if (/lon|lng/.test(k)) return '-122.4194';
+                return 'TestValue';
+            };
+            return window.QUICK_TEMPLATES.map(t => {
+                const v = {};
+                (t.fields || []).forEach(f => { v[f.id] = sample(f); });
+                try {
+                    const out = t.build(v);
+                    if (!out || !out.data) return `${t.id}: built nothing`;
+                    if (!out.title) return `${t.id}: no title`;
+                    if (/undefined|null|\[object/.test(String(out.data))) return `${t.id}: ${out.data}`;
+                    return null;
+                } catch (e) { return `${t.id}: threw ${e}`; }
+            }).filter(Boolean);
+        });
+        expect(bad, `templates that cannot build: ${bad.join(' | ')}`).toEqual([]);
+    });
+
+    test('a half-typed date does not take the whole form down', async ({ page }) => {
+        await openGen(page);
+        const r = await page.evaluate(() => {
+            const t = window.QUICK_TEMPLATES.find(x => x.id === 'event');
+            try { return { threw: false, data: t.build({ summary: 'Standup', start: 'not a date' }).data }; }
+            catch (e) { return { threw: true, err: String(e) }; }
+        });
+        expect(r.threw, `the Event template threw: ${r.err}`).toBe(false);
+    });
+});
