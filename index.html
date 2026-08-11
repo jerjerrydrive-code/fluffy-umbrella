@@ -71,8 +71,8 @@
                palette was visible at all. That is what "themes still really dont do shit" meant.
                Mixed against a near-black rather than replacing it, so a pale palette cannot
                produce a dark skin nothing can be read on. */
-            --wall-ink-a: color-mix(in srgb, var(--pal-4) 38%, #05070f);
-            --wall-ink-b: color-mix(in srgb, var(--pal-1) 26%, #04050c);
+            --wall-ink-a: color-mix(in srgb, var(--pal-4) 62%, #05070f);
+            --wall-ink-b: color-mix(in srgb, var(--pal-1) 50%, #04050c);
             --wall-bloom: 78%;
             /* What a bloom is mixed INTO. This is the difference between a palette tinting a
                dark screen and a palette turning it into a light one.
@@ -634,15 +634,15 @@
            could tint, which reads as glare rather than as a light interface. Mixed with the
            palette it becomes a tinted daylight instead of a blank one. */
         body[data-skin="glass"] {
-            --wall-ink-a: color-mix(in srgb, var(--pal-1) 26%, #ffffff);
-            --wall-ink-b: color-mix(in srgb, var(--pal-3) 30%, #f4f6fd);
-            --wall-bloom: 52%;
+            --wall-ink-a: color-mix(in srgb, var(--pal-1) 52%, #ffffff);
+            --wall-ink-b: color-mix(in srgb, var(--pal-3) 56%, #f4f6fd);
+            --wall-bloom: 84%;
             --wall-tint-base: #ffffff;      /* light skins tint towards light, symmetrically */
         }
         body[data-skin="soft"] {
-            --wall-ink-a: color-mix(in srgb, var(--pal-1) 14%, #f4f6fa);
-            --wall-ink-b: color-mix(in srgb, var(--pal-3) 18%, #e8ecf4);
-            --wall-bloom: 30%;
+            --wall-ink-a: color-mix(in srgb, var(--pal-1) 40%, #f4f6fa);
+            --wall-ink-b: color-mix(in srgb, var(--pal-3) 46%, #e8ecf4);
+            --wall-bloom: 62%;
             --wall-tint-base: #ffffff;
         }
 
@@ -876,10 +876,10 @@
                surface — the dock, the header buttons, the panels — stayed the same grey however
                the theme changed, which is half of why a theme "did nothing". Kept close to the
                original lightness so the raised/inset shadows still read as moulded. */
-            --soft-bg: color-mix(in srgb, var(--pal-1) 10%, #e6ebf2);
-            --soft-light: rgba(255, 255, 255, 0.92);
-            --soft-shade: rgba(160, 174, 196, 0.55);
-            --soft-ink: #2b3442;
+            --soft-bg: color-mix(in srgb, var(--pal-1) 34%, #eef1f6);
+            --soft-light: color-mix(in srgb, var(--pal-2) 22%, rgba(255, 255, 255, 0.95));
+            --soft-shade: color-mix(in srgb, var(--pal-4) 55%, rgba(150, 165, 190, 0.6));
+            --soft-ink: color-mix(in srgb, var(--pal-4) 45%, #232a36);
             --soft-ink-soft: #66718a;
             --soft-raised: 6px 6px 14px var(--soft-shade), -6px -6px 14px var(--soft-light);
             --soft-raised-sm: 4px 4px 9px var(--soft-shade), -4px -4px 9px var(--soft-light);
@@ -893,9 +893,9 @@
         body[data-skin="soft"]::before {
             content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
             background:
-                radial-gradient(62% 46% at 18% 10%, color-mix(in srgb, var(--pal-1) 20%, transparent) 0%, transparent 66%),
-                radial-gradient(58% 44% at 88% 30%, color-mix(in srgb, var(--pal-2) 16%, transparent) 0%, transparent 62%),
-                radial-gradient(66% 50% at 55% 96%, color-mix(in srgb, var(--pal-3) 18%, transparent) 0%, transparent 64%),
+                radial-gradient(62% 46% at 18% 10%, color-mix(in srgb, var(--pal-1) 52%, transparent) 0%, transparent 66%),
+                radial-gradient(58% 44% at 88% 30%, color-mix(in srgb, var(--pal-2) 46%, transparent) 0%, transparent 62%),
+                radial-gradient(66% 50% at 55% 96%, color-mix(in srgb, var(--pal-3) 50%, transparent) 0%, transparent 64%),
                 var(--soft-bg);
         }
 
