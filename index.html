@@ -104,7 +104,7 @@
             --dock-pad: 0.75rem;
             --dock-max: 380px;
             --dock-gap: 0.25rem;
-            --label-size: 11.5px;
+            --label-size: 12.5px;
             --label-weight: 500;
             --label-track: 0.2px;
             --label-case: none;
@@ -589,7 +589,7 @@
         .skin-tokens-dock {
             --squircle-radius: 22.5%;
             --dock-radius: 2.25rem; --dock-pad: 0.75rem; --dock-max: 380px; --dock-gap: 0.25rem;
-            --label-size: 11.5px; --label-weight: 500; --label-track: 0.2px;
+            --label-size: 12.5px; --label-weight: 500; --label-track: 0.2px;
             --label-case: none; --label-gap: 6px; --row-scale: 1;
             --preview-bg: linear-gradient(150deg, #3a3a44, #1d1d24);
             --dock-preview-w: 88%;
@@ -600,7 +600,7 @@
         body[data-skin="scancard"], .skin-tokens-scancard {
             --squircle-radius: 10%;
             --dock-radius: 1rem; --dock-pad: 0.55rem; --dock-max: 100%; --dock-gap: 0.125rem;
-            --label-size: 9.5px; --label-weight: 800; --label-track: 0.75px;
+            --label-size: 10.5px; --label-weight: 800; --label-track: 0.75px;
             --label-case: uppercase; --label-gap: 7px; --row-scale: 0.88;
             --preview-bg: linear-gradient(150deg, #4a4a55, #26262e);
             --dock-preview-w: 100%;
@@ -630,7 +630,7 @@
         body[data-skin="glass"], .skin-tokens-glass {
             --squircle-radius: 38%;
             --dock-radius: 999px; --dock-pad: 0.9rem; --dock-max: 344px; --dock-gap: 0.375rem;
-            --label-size: 11px; --label-weight: 400; --label-track: 0.35px;
+            --label-size: 12px; --label-weight: 400; --label-track: 0.35px;
             --label-case: none; --label-gap: 9px; --row-scale: 1.08;
             --preview-bg: linear-gradient(150deg, #cfd6f5, #eef0ff);
             --dock-preview-w: 76%;
@@ -640,7 +640,7 @@
         body[data-skin="soft"], .skin-tokens-soft {
             --squircle-radius: 32%;
             --dock-radius: 2.75rem; --dock-pad: 1rem; --dock-max: 360px; --dock-gap: 0.375rem;
-            --label-size: 11px; --label-weight: 600; --label-track: 0.1px;
+            --label-size: 12px; --label-weight: 600; --label-track: 0.1px;
             --label-case: none; --label-gap: 8px; --row-scale: 1.12;
             --preview-bg: linear-gradient(150deg, #eef1f7, #dfe4ee);
             --dock-preview-w: 80%;
@@ -649,7 +649,7 @@
         body[data-skin="aurora"], .skin-tokens-aurora {
             --squircle-radius: 28%;
             --dock-radius: 1.9rem; --dock-pad: 0.8rem; --dock-max: 400px; --dock-gap: 0.25rem;
-            --label-size: 11.5px; --label-weight: 500; --label-track: 0.45px;
+            --label-size: 12.5px; --label-weight: 500; --label-track: 0.45px;
             --label-case: none; --label-gap: 7px; --row-scale: 1.04;
             --preview-bg: linear-gradient(150deg, #4c2f7a, #0b1a3a);
             --dock-preview-w: 92%;
@@ -659,7 +659,7 @@
         body[data-skin="classic"], .skin-tokens-classic {
             --squircle-radius: 17%;
             --dock-radius: 1.35rem; --dock-pad: 0.625rem; --dock-max: 420px; --dock-gap: 0.25rem;
-            --label-size: 12px; --label-weight: 700; --label-track: 0.05px;
+            --label-size: 13px; --label-weight: 700; --label-track: 0.05px;
             --label-case: none; --label-gap: 5px; --row-scale: 0.94;
             --preview-bg: linear-gradient(150deg, #2b2f38, #14161b);
             --dock-preview-w: 96%;
@@ -2585,13 +2585,13 @@
                 // tiles as 145px; a clearer pair put them at 154px, and 0.685 landed the app at
                 // 15.6% — too SMALL, the opposite of the error it was fixing. 0.73 is 16.7%.
                 // The number has moved twice because the measurement improved twice.
-                return Math.round(Math.max(52, Math.min(96, cell * 0.73)));
+                return Math.round(Math.max(58, Math.min(110, cell * 0.80)));
             }
 
             // The label sits under the icon, so a row is the icon plus its label plus the gap.
             // Measuring it from the real numbers is what keeps rows-per-page honest when the
             // icon size changes; it used to be a constant 88 that no longer described anything.
-            rowHeightFor(size, gap) { return size + 22 + gap; }
+            rowHeightFor(size, gap) { return size + 24 + gap; }
 
             // How far apart rows sit, measured the same way as the icon size.
             //
