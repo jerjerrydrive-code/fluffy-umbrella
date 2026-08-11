@@ -6869,3 +6869,87 @@ test.describe('Making a code works, on every template', () => {
         expect(r.threw, `the Event template threw: ${r.err}`).toBe(false);
     });
 });
+
+test.describe('The dock glyph grows with the dock', () => {
+    // "dog the dock has been like 20% too small the entire time. now it still looks the same."
+    //
+    // The tiles had been growing; the glyph inside them was hardcoded at 28px and never moved.
+    // Measured before: tiles 53-64px across skins and widths, every one holding a 28px glyph.
+    // The glyph is the part you actually see, so enlarging everything else changed nothing here.
+    for (const [w, h] of [[360, 640], [412, 892], [430, 932]]) {
+        test(`the glyph is a fraction of its tile at ${w}x${h}`, async ({ page }) => {
+            await page.setViewportSize({ width: w, height: h });
+            await page.goto('/index.html');
+            await page.waitForTimeout(1300);
+            for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+                const r = await page.evaluate((skin) => {
+                    document.body.dataset.skin = skin;
+                    const row = document.getElementById('dock-container');
+                    const tile = row.querySelector('.app-icon').getBoundingClientRect();
+                    const g = row.querySelector('.nav-glyph');
+                    return {
+                        tile: tile.width,
+                        glyph: g ? g.getBoundingClientRect().width : 0,
+                        overflow: row.scrollWidth - row.clientWidth,
+                    };
+                }, skin);
+                await page.waitForTimeout(120);
+                expect(r.glyph, `${skin} at ${w}x${h}: no dock glyph found`).toBeGreaterThan(0);
+                expect(r.glyph, `${skin} at ${w}x${h}: the glyph is still ~28px, not scaled`)
+                    .toBeGreaterThan(30);
+                const frac = r.glyph / r.tile;
+                expect(frac, `${skin} at ${w}x${h}: glyph is ${(frac * 100).toFixed(0)}% of its tile`)
+                    .toBeGreaterThan(0.48);
+                expect(frac, `${skin} at ${w}x${h}: glyph is ${(frac * 100).toFixed(0)}% of its tile`)
+                    .toBeLessThan(0.68);
+                expect(r.overflow, `${skin} at ${w}x${h}: the wider dock now overflows`)
+                    .toBeLessThanOrEqual(0);
+            }
+        });
+    }
+});
+
+test.describe('The dock pill itself is the thing that grows', () => {
+    // "the dock in the bottom fucking row background fucking pill shape or whatever do you not
+    // understand thats what we are making bigger"
+    //
+    // Two separate mistakes had kept it the same size. Its padding was CUT while everything else
+    // was enlarged, which made the bar thinner; and the bar is `w-full max-w-[--dock-max]`, so
+    // the width it can reach is whatever its parent leaves it — the parent's px-4 capped it at
+    // 380px at 412 wide, however large the token was set. Raising the token alone did nothing.
+    for (const [w, h] of [[360, 640], [412, 892], [430, 932]]) {
+        test(`the bar is big and still fits at ${w}x${h}`, async ({ page }) => {
+            await page.setViewportSize({ width: w, height: h });
+            await page.goto('/index.html');
+            await page.waitForTimeout(1300);
+            for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+                const r = await page.evaluate((skin) => {
+                    document.body.dataset.skin = skin;
+                    const nav = document.getElementById('main-dock');
+                    const row = document.getElementById('dock-container');
+                    const b = nav.getBoundingClientRect();
+                    return {
+                        w: b.width, h: b.height,
+                        pad: parseFloat(getComputedStyle(nav).paddingLeft),
+                        tile: row.querySelector('.app-icon').getBoundingClientRect().width,
+                        overflow: row.scrollWidth - row.clientWidth,
+                        offLeft: -b.left, offRight: b.right - window.innerWidth,
+                    };
+                }, skin);
+                await page.waitForTimeout(120);
+                // Takes most of the width it is given, rather than stopping short of it.
+                expect(r.w / window_w(w), `${skin} at ${w}x${h}: the bar is only ${Math.round(r.w)}px wide`)
+                    .toBeGreaterThan(0.9);
+                // Tall enough to read as a bar, not a strip.
+                expect(r.h, `${skin} at ${w}x${h}: the bar is only ${Math.round(r.h)}px tall`)
+                    .toBeGreaterThan(r.tile + 24);
+                expect(r.pad, `${skin} at ${w}x${h}: the padding was cut again`).toBeGreaterThan(12);
+                // ...and none of that may push it off screen or overflow its own row.
+                expect(r.overflow, `${skin} at ${w}x${h}: the row overflows the bar`).toBeLessThanOrEqual(0);
+                expect(r.offLeft, `${skin} at ${w}x${h}: the bar hangs off the left`).toBeLessThanOrEqual(1);
+                expect(r.offRight, `${skin} at ${w}x${h}: the bar hangs off the right`).toBeLessThanOrEqual(1);
+            }
+        });
+    }
+    function window_w(w) { return w; }
+});
