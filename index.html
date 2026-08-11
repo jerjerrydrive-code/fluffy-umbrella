@@ -4062,8 +4062,17 @@
                     { id: 'end', label: 'Ends (optional)', type: 'datetime-local' }
                 ],
                 build: (v) => {
-                    // iCalendar wants basic-format UTC stamps: 20260807T143000Z
-                    const stamp = (s) => s ? new Date(s).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z' : '';
+                    // iCalendar wants basic-format UTC stamps: 20260807T143000Z.
+                    // Guards INVALID as well as empty: new Date('whatever').toISOString() throws
+                    // RangeError, and it threw all the way out of the save, so a half-typed date
+                    // took the whole form down with no message. Found by building every template
+                    // from sample values — this was the only one of the twenty-two that threw.
+                    const stamp = (s) => {
+                        if (!s) return '';
+                        const d = new Date(s);
+                        return isNaN(d.getTime())
+                            ? '' : d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+                    };
                     return {
                         data: ['BEGIN:VEVENT', `SUMMARY:${v.summary}`,
                                v.location ? `LOCATION:${v.location}` : '',
@@ -4975,11 +4984,53 @@
             }
 
             setMode(mode) {
+                // Switching to Custom carries across whatever the template has already built.
+                //
+                // It used to be a pure visibility toggle, so filling in a handle, watching the
+                // template compose https://instagram.com/handle, and then tapping Custom to look
+                // at it gave you an EMPTY data field — while still letting you type a name, so it
+                // looked like it was going to work right up until it refused to save. Reported as
+                // "when I tapped custom the data erased but still let me name it but I could not
+                // create without manually typing the barcodes data inside".
+                //
+                // Custom is the same code one level down, not a different code. Anything the
+                // template can build, it hands over.
+                if (mode === 'custom' && this.activeTemplate) {
+                    const built = this.buildActive();
+                    if (built && built.data) {
+                        // Only fills what is still empty, so switching back and forth cannot
+                        // overwrite something typed by hand.
+                        if (this.inputData && !this.inputData.value.trim()) {
+                            this.inputData.value = built.data;
+                        }
+                        if (this.inputTitle && !this.inputTitle.value.trim() && built.title) {
+                            this.inputTitle.value = built.title;
+                        }
+                        // The format travels too: a WiFi or Event payload is only scannable as a
+                        // QR code, and arriving in Custom set to something else would produce a
+                        // code that cannot be read.
+                        if (built.bcid) this.selectFormat(built.bcid);
+                    }
+                }
                 this.tabButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mode));
                 this.templatesView.classList.toggle('hidden', mode !== 'templates');
                 this.customView.classList.toggle('hidden', mode !== 'custom');
                 this.customView.classList.toggle('flex', mode === 'custom');
                 if (mode === 'templates') this.closeTemplateForm();
+            }
+
+            // What the open template would produce right now, or null. Never throws: a template
+            // that cannot build from what has been typed so far is an ordinary state during
+            // typing, not an error worth losing the form over.
+            buildActive() {
+                const t = this.tpl(this.activeTemplate);
+                if (!t) return null;
+                const v = {};
+                for (const f of t.fields) v[f.id] = this.val(`tpl-${t.id}-${f.id}`);
+                try {
+                    const out = t.build(v);
+                    return out && out.data ? Object.assign({ bcid: t.bcid }, out) : null;
+                } catch (e) { return null; }
             }
 
             field(label, inputHtml) {
