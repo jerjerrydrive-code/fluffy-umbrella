@@ -102,8 +102,8 @@
             --squircle-radius: 22.5%;
             --dock-radius: 2.4rem;
             --dock-pad: 1.05rem;
-            --dock-max: 430px;
-            --dock-gap: 0.2rem;
+            --dock-max: 440px;
+            --dock-gap: 0.55rem;
             --label-size: 12.5px;
             --label-weight: 500;
             --label-track: 0.2px;
@@ -150,17 +150,25 @@
            thumbnails, the folder previews. A tinted plate lowers the contrast a 1D reader needs,
            and scannability is functional, not decorative (same principle as checkScannability). */
         :root {
-            --surface-1:       color-mix(in srgb, var(--accent) 8%,  #1c1c1e);
-            --surface-2:       color-mix(in srgb, var(--accent) 10%, #2c2c2e);
-            --surface-raised:  color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.10));
-            --surface-raised-2:color-mix(in srgb, var(--accent) 26%, rgba(255, 255, 255, 0.20));
-            --surface-line:    color-mix(in srgb, var(--accent) 32%, rgba(255, 255, 255, 0.11));
-            --surface-sunken:  color-mix(in srgb, var(--accent) 12%, rgba(0, 0, 0, 0.35));
-            --surface-glass:   color-mix(in srgb, var(--accent) 14%, rgba(20, 20, 20, 0.65));
-            --veil:            color-mix(in srgb, var(--accent) 16%, rgba(0, 0, 0, 0.55));
-            --surface-light:   color-mix(in srgb, var(--accent) 5%,  #ffffff);
-            --surface-light-2: color-mix(in srgb, var(--accent) 9%,  #f3f4f6);
-            --veil-light:      color-mix(in srgb, var(--accent) 9%,  rgba(255, 255, 255, 0.85));
+            /* Turned up, hard. These were 5-32% tints, which is a suggestion of a theme
+               rather than a theme — "id really like theme palletes to aggressively color the app
+               like my old alpha". Roughly doubled, and drawing on the palette's OTHER colours
+               rather than the accent over and over, so a panel and a raised control are not the
+               same hue as each other.
+               The dark bases stay dominant enough for white text, and the per-skin contrast test
+               holds every surface to 3:1 — which is what makes it safe to push this far rather
+               than guess at a number that feels cautious. */
+            --surface-1:       color-mix(in srgb, var(--pal-4, var(--accent)) 20%, #16161a);
+            --surface-2:       color-mix(in srgb, var(--accent) 24%, #26262a);
+            --surface-raised:  color-mix(in srgb, var(--accent) 40%, rgba(255, 255, 255, 0.10));
+            --surface-raised-2:color-mix(in srgb, var(--pal-2, var(--accent)) 46%, rgba(255, 255, 255, 0.20));
+            --surface-line:    color-mix(in srgb, var(--accent) 58%, rgba(255, 255, 255, 0.11));
+            --surface-sunken:  color-mix(in srgb, var(--pal-3, var(--accent)) 28%, rgba(0, 0, 0, 0.35));
+            --surface-glass:   color-mix(in srgb, var(--accent) 32%, rgba(18, 18, 20, 0.62));
+            --veil:            color-mix(in srgb, var(--pal-1, var(--accent)) 32%, rgba(0, 0, 0, 0.55));
+            --surface-light:   color-mix(in srgb, var(--accent) 13%, #ffffff);
+            --surface-light-2: color-mix(in srgb, var(--pal-3, var(--accent)) 20%, #f3f4f6);
+            --veil-light:      color-mix(in srgb, var(--accent) 20%, rgba(255, 255, 255, 0.85));
         }
 
         :root { --accent-readable: var(--accent-on-dark, var(--accent)); }
@@ -599,7 +607,7 @@
 
         .skin-tokens-dock {
             --squircle-radius: 22.5%;
-            --dock-radius: 2.4rem; --dock-pad: 1.05rem; --dock-max: 430px; --dock-gap: 0.2rem;
+            --dock-radius: 2.4rem; --dock-pad: 1.05rem; --dock-max: 440px; --dock-gap: 0.55rem;
             --label-size: 12.5px; --label-weight: 500; --label-track: 0.2px;
             --label-case: none; --label-gap: 6px; --row-scale: 1;
             --preview-bg: linear-gradient(150deg, #3a3a44, #1d1d24);
@@ -610,7 +618,7 @@
            and small hard-set caps under each code. */
         body[data-skin="scancard"], .skin-tokens-scancard {
             --squircle-radius: 10%;
-            --dock-radius: 1.15rem; --dock-pad: 0.95rem; --dock-max: 100%; --dock-gap: 0.125rem;
+            --dock-radius: 1.15rem; --dock-pad: 0.95rem; --dock-max: 100%; --dock-gap: 0.4rem;
             --label-size: 10.5px; --label-weight: 800; --label-track: 0.75px;
             --label-case: uppercase; --label-gap: 7px; --row-scale: 0.88;
             --preview-bg: linear-gradient(150deg, #4a4a55, #26262e);
@@ -640,7 +648,7 @@
 
         body[data-skin="glass"], .skin-tokens-glass {
             --squircle-radius: 38%;
-            --dock-radius: 999px; --dock-pad: 1.1rem; --dock-max: 410px; --dock-gap: 0.25rem;
+            --dock-radius: 999px; --dock-pad: 1.1rem; --dock-max: 420px; --dock-gap: 0.6rem;
             --label-size: 12px; --label-weight: 400; --label-track: 0.35px;
             --label-case: none; --label-gap: 9px; --row-scale: 1.08;
             --preview-bg: linear-gradient(150deg, #cfd6f5, #eef0ff);
@@ -650,7 +658,7 @@
         /* Pillowy and generous — everything a little rounder and further apart. */
         body[data-skin="soft"], .skin-tokens-soft {
             --squircle-radius: 32%;
-            --dock-radius: 2.9rem; --dock-pad: 1.15rem; --dock-max: 418px; --dock-gap: 0.25rem;
+            --dock-radius: 2.9rem; --dock-pad: 1.15rem; --dock-max: 428px; --dock-gap: 0.6rem;
             --label-size: 12px; --label-weight: 600; --label-track: 0.1px;
             --label-case: none; --label-gap: 8px; --row-scale: 1.12;
             --preview-bg: linear-gradient(150deg, #eef1f7, #dfe4ee);
@@ -1366,7 +1374,7 @@
              actually reach is the width THIS leaves it: at 412px wide, px-4 capped the bar at
              380px however large --dock-max was set. Raising the token alone did nothing, which
              is why the pill kept coming back the same size. -->
-        <div class="absolute bottom-4 left-0 right-0 z-30 flex flex-col items-center gap-3 pointer-events-none px-2">
+        <div class="absolute bottom-4 left-0 right-0 z-30 flex flex-col items-center gap-3 pointer-events-none px-1">
             <div id="page-move-row" class="hidden pointer-events-auto flex items-center gap-2">
                 <button id="btn-page-left" class="tap44 flex items-center justify-center rounded-full bg-black/35 backdrop-blur-md border border-white/15 text-white active:scale-90 transition-transform"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
                 <button id="btn-page-right" class="tap44 flex items-center justify-center rounded-full bg-black/35 backdrop-blur-md border border-white/15 text-white active:scale-90 transition-transform"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
@@ -2628,7 +2636,7 @@
                 // whenever the bar was given more padding, cancelling the change out.
                 const nav = document.getElementById('main-dock');
                 const pad = nav ? parseFloat(getComputedStyle(nav).paddingLeft) || 12 : 12;
-                const bar = Math.min(430, width - 16);
+                const bar = Math.min(440, width - 8);
                 const items = (window.OS_STATE.apps || []).filter(a => a.type === 'dock').length || 5;
                 const inner = bar - pad * 2 - 8 - Math.max(0, items - 1) * 3;
                 return Math.round(Math.max(48, Math.min(gridSize, inner / items - 1)));
