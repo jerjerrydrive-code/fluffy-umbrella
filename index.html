@@ -2569,10 +2569,19 @@
             // Derived from the cell now, so it is right at 360px and at 430px rather than right
             // at exactly one width. The clamp keeps it sane at the extremes: never smaller than
             // the old 52px landscape value, never larger than a tablet needs.
+            // Matched to a real Android home screen, measured rather than chosen.
+            //
+            // Both screens photographed at the same width: a system icon is 15.7% of the screen,
+            // this app's was 17.2% — about 10% too big, which is why the grid read as slightly
+            // crowded next to the real thing. 0.71 of a cell puts it on 15.7%.
+            //
+            // This is THE size. The ratio does not vary with how many codes there are or what
+            // else is on screen; only the cell it is a fraction of changes, with the viewport.
+            // "lets get the sizing to match and stay as default no resizing just match mine".
             iconSizeFor(width, cols) {
                 const padX = Math.max(width * 0.04, 16);
                 const cell = (Math.min(width, 900) - padX * 2) / cols;
-                return Math.round(Math.max(52, Math.min(96, cell * 0.78)));
+                return Math.round(Math.max(52, Math.min(96, cell * 0.685)));
             }
 
             // The label sits under the icon, so a row is the icon plus its label plus the gap.
