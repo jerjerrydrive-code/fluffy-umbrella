@@ -4912,8 +4912,8 @@ test.describe('The page never scrolls sideways', () => {
             const cols = getComputedStyle(document.querySelector('.os-grid')).gridTemplateColumns.split(' ');
             return icon.width / parseFloat(cols[0]);
         });
-        expect(fill, 'the icon no longer fills its cell').toBeGreaterThan(0.62);
-        expect(fill, 'the icon has outgrown its cell').toBeLessThanOrEqual(0.75);
+        expect(fill, 'the icon no longer fills its cell').toBeGreaterThan(0.72);
+        expect(fill, 'the icon has outgrown its cell').toBeLessThanOrEqual(0.86);
     });
 });
 
@@ -6708,10 +6708,15 @@ test.describe('A code is the size of an app icon', () => {
             // 16.7% is the measurement, taken off a larger screenshot pair than the first
             // attempt at this — which read the tiles as 145px, set the app to 15.7%, and made it
             // too SMALL. A point either side covers rounding to whole pixels.
-            expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, not ~16.7%`)
-                .toBeGreaterThan(15.7);
-            expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, not ~16.7%`)
-                .toBeLessThan(17.7);
+            // 16.7% matched the phone's own home screen exactly, and was then asked to go
+            // bigger — "enlarge everything a little", after six requests for the same thing.
+            // 18.4% sits a little ABOVE the phone rather than level with it, which is what was
+            // actually being asked for. The floor is the part that matters: this must never
+            // quietly shrink back towards the size that kept getting reported.
+            expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, and has shrunk again`)
+                .toBeGreaterThan(17.4);
+            expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, which is oversized`)
+                .toBeLessThan(19.6);
         });
     }
 
