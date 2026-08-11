@@ -2581,13 +2581,25 @@
             iconSizeFor(width, cols) {
                 const padX = Math.max(width * 0.04, 16);
                 const cell = (Math.min(width, 900) - padX * 2) / cols;
-                return Math.round(Math.max(52, Math.min(96, cell * 0.685)));
+                // 0.685 came from a first measurement off a smaller screenshot that read the
+                // tiles as 145px; a clearer pair put them at 154px, and 0.685 landed the app at
+                // 15.6% — too SMALL, the opposite of the error it was fixing. 0.73 is 16.7%.
+                // The number has moved twice because the measurement improved twice.
+                return Math.round(Math.max(52, Math.min(96, cell * 0.73)));
             }
 
             // The label sits under the icon, so a row is the icon plus its label plus the gap.
             // Measuring it from the real numbers is what keeps rows-per-page honest when the
             // icon size changes; it used to be a constant 88 that no longer described anything.
             rowHeightFor(size, gap) { return size + 22 + gap; }
+
+            // How far apart rows sit, measured the same way as the icon size.
+            //
+            // A row on the phone's own home screen pitches at 1.40x its icon; this app sat at
+            // 1.68x, which is why the grid still looked airy and unlike the thing it imitates
+            // even once the icons matched. A row is the icon plus its label plus this gap, so
+            // 1.40x an icon of 69px leaves about 6px — 0.09 of the icon, not the 0.30 it was.
+            rowGapFor(size) { return Math.max(6, Math.round(size * 0.09)); }
 
             // What one dock icon may be, given the bar it has to fit inside.
             //
@@ -2617,10 +2629,10 @@
                     // up; asking for 4 should not be punished with a small icon.
                     const uiOverhead = (isLandscape && height < 500) ? 140 : 180;
                     let size = this.iconSizeFor(width, cols);
-                    let gap = Math.round(size * 0.30);
+                    let gap = this.rowGapFor(size);
                     while (size > 44 && this.rowHeightFor(size, gap) * rows > height - uiOverhead) {
                         size -= 2;
-                        gap = Math.max(10, Math.round(size * 0.30));
+                        gap = this.rowGapFor(size);
                     }
                     document.documentElement.style.setProperty('--app-size', size + 'px');
                     document.documentElement.style.setProperty('--grid-gap-y', gap + 'px');
@@ -2640,7 +2652,8 @@
                     // the binding constraint, so the cell-derived size is capped there.
                     let size = this.iconSizeFor(width, window.OS_STATE.gridCols);
                     if (isLandscape && height < 500) size = Math.min(size, 52);
-                    const gap = Math.max(10, Math.round(size * (isLandscape && height < 500 ? 0.22 : 0.30)));
+                    const gap = (isLandscape && height < 500)
+                        ? Math.max(6, Math.round(size * 0.07)) : this.rowGapFor(size);
 
                     document.documentElement.style.setProperty('--app-size', size + 'px');
                     document.documentElement.style.setProperty('--grid-gap-y', gap + 'px');

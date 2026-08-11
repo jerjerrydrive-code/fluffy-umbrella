@@ -6705,14 +6705,45 @@ test.describe('A code is the size of an app icon', () => {
             const pct = await page.evaluate(() =>
                 document.querySelector('#workspace-pager .app-icon').getBoundingClientRect().width
                 / window.innerWidth * 100);
-            // 15.7% is the measurement. A point either side covers rounding to whole pixels.
-            expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, not ~15.7%`)
-                .toBeGreaterThan(14.7);
-            expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, not ~15.7%`)
-                .toBeLessThan(16.7);
+            // 16.7% is the measurement, taken off a larger screenshot pair than the first
+            // attempt at this — which read the tiles as 145px, set the app to 15.7%, and made it
+            // too SMALL. A point either side covers rounding to whole pixels.
+            expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, not ~16.7%`)
+                .toBeGreaterThan(15.7);
+            expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, not ~16.7%`)
+                .toBeLessThan(17.7);
         });
     }
 
+
+    test('rows sit as close together as they do on the phone', async ({ page }) => {
+        // Matching the icon size alone still left the grid looking airy: a row on the phone's
+        // own home screen pitches at 1.40x its icon, and this app was at 1.68x.
+        await page.setViewportSize({ width: 412, height: 892 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+        await page.evaluate(() => {
+            const src = window.OS_STATE.apps.find(a => a.type === 'grid');
+            for (let i = 0; i < 8; i++) {
+                const c = Object.assign({}, src, { id: 'pitch' + i });
+                delete c.folderId; window.OS_STATE.apps.push(c); window.placeOnGrid(c, 0);
+            }
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(600);
+        const ratio = await page.evaluate(() => {
+            const page0 = document.querySelector('#workspace-pager .sortable-page');
+            const ic = page0.querySelectorAll('.app-icon-wrapper');
+            const cols = window.OS_STATE.gridCols;
+            const a = ic[0].getBoundingClientRect();
+            const b = ic[cols].getBoundingClientRect();
+            return (b.top - a.top) / ic[0].querySelector('.app-icon').getBoundingClientRect().width;
+        });
+        expect(ratio, `rows pitch at ${ratio.toFixed(2)}x the icon, not ~1.40x`)
+            .toBeGreaterThan(1.30);
+        expect(ratio, `rows pitch at ${ratio.toFixed(2)}x the icon, not ~1.40x`)
+            .toBeLessThan(1.52);
+    });
     test('the size does not depend on how many codes there are', async ({ page }) => {
         // "stay as default no resizing" — the ratio is fixed; only the cell it is a fraction of
         // moves, and only with the viewport.
