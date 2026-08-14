@@ -71,8 +71,8 @@
                palette was visible at all. That is what "themes still really dont do shit" meant.
                Mixed against a near-black rather than replacing it, so a pale palette cannot
                produce a dark skin nothing can be read on. */
-            --wall-ink-a: color-mix(in srgb, var(--pal-4) 62%, #05070f);
-            --wall-ink-b: color-mix(in srgb, var(--pal-1) 50%, #04050c);
+            --wall-ink-a: color-mix(in srgb, var(--pal-1) 46%, #070a14);
+            --wall-ink-b: color-mix(in srgb, var(--pal-3) 42%, #05060e);
             --wall-bloom: 78%;
             /* What a bloom is mixed INTO. This is the difference between a palette tinting a
                dark screen and a palette turning it into a light one.
@@ -158,7 +158,7 @@
                The dark bases stay dominant enough for white text, and the per-skin contrast test
                holds every surface to 3:1 — which is what makes it safe to push this far rather
                than guess at a number that feels cautious. */
-            --surface-1:       color-mix(in srgb, var(--pal-4, var(--accent)) 20%, #16161a);
+            --surface-1:       color-mix(in srgb, var(--accent) 20%, #17171b);
             --surface-2:       color-mix(in srgb, var(--accent) 24%, #26262a);
             --surface-raised:  color-mix(in srgb, var(--accent) 40%, rgba(255, 255, 255, 0.10));
             --surface-raised-2:color-mix(in srgb, var(--pal-2, var(--accent)) 46%, rgba(255, 255, 255, 0.20));
@@ -640,8 +640,8 @@
             --wall-tint-base: #ffffff;      /* light skins tint towards light, symmetrically */
         }
         body[data-skin="soft"] {
-            --wall-ink-a: color-mix(in srgb, var(--pal-1) 40%, #f4f6fa);
-            --wall-ink-b: color-mix(in srgb, var(--pal-3) 46%, #e8ecf4);
+            --wall-ink-a: color-mix(in srgb, var(--pal-1) 32%, #f7f9fd);
+            --wall-ink-b: color-mix(in srgb, var(--pal-3) 38%, #eef2f8);
             --wall-bloom: 62%;
             --wall-tint-base: #ffffff;
         }
@@ -876,10 +876,10 @@
                surface — the dock, the header buttons, the panels — stayed the same grey however
                the theme changed, which is half of why a theme "did nothing". Kept close to the
                original lightness so the raised/inset shadows still read as moulded. */
-            --soft-bg: color-mix(in srgb, var(--pal-1) 34%, #eef1f6);
+            --soft-bg: color-mix(in srgb, var(--pal-1) 26%, #f2f5fa);
             --soft-light: color-mix(in srgb, var(--pal-2) 22%, rgba(255, 255, 255, 0.95));
-            --soft-shade: color-mix(in srgb, var(--pal-4) 55%, rgba(150, 165, 190, 0.6));
-            --soft-ink: color-mix(in srgb, var(--pal-4) 45%, #232a36);
+            --soft-shade: color-mix(in srgb, var(--pal-1) 28%, rgba(158, 172, 196, 0.55));
+            --soft-ink: color-mix(in srgb, var(--pal-1) 14%, #2b3442);
             --soft-ink-soft: #66718a;
             --soft-raised: 6px 6px 14px var(--soft-shade), -6px -6px 14px var(--soft-light);
             --soft-raised-sm: 4px 4px 9px var(--soft-shade), -4px -4px 9px var(--soft-light);
