@@ -1,0 +1,14 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://localhost:4173",
+      "localStorage": [
+        {
+          "name": "xancode_v2_state",
+          "value": "{\"currentPage\":0,\"gridCols\":4,\"gridRows\":6,\"isEditMode\":false,\"autoArrange\":true,\"gridSize\":\"auto\",\"wallpaper\":null,\"skin\":\"dock\",\"accent\":\"#3b82f6\",\"palette\":null,\"haptics\":true,\"animations\":true,\"history\":[],\"pageNames\":[],\"apps\":[{\"id\":\"bc_1\",\"title\":\"My WiFi\",\"type\":\"grid\",\"page\":0,\"order\":0,\"bcid\":\"qrcode\",\"data\":\"WIFI:S:MyNetwork;T:WPA;P:Password;;\"},{\"id\":\"bc_2\",\"title\":\"Website\",\"type\":\"grid\",\"page\":0,\"order\":1,\"bcid\":\"azteccode\",\"data\":\"https://neodrag.dev\"},{\"id\":\"bc_3\",\"title\":\"Boarding Pass\",\"type\":\"grid\",\"page\":1,\"order\":0,\"bcid\":\"pdf417\",\"data\":\"BOARDING12345\"},{\"id\":\"nav_home\",\"title\":\"Home\",\"icon\":\"grid\",\"type\":\"dock\",\"order\":0},{\"id\":\"nav_gen\",\"title\":\"Create\",\"icon\":\"plus-circle\",\"type\":\"dock\",\"order\":1},{\"id\":\"nav_wifi\",\"title\":\"WiFi\",\"icon\":\"wifi\",\"type\":\"dock\",\"order\":2},{\"id\":\"nav_lib\",\"title\":\"Library\",\"icon\":\"layout-list\",\"type\":\"dock\",\"order\":3},{\"id\":\"nav_scan\",\"title\":\"Scan\",\"icon\":\"scan-line\",\"type\":\"dock\",\"order\":4}]}"
+        }
+      ]
+    }
+  ]
+}
