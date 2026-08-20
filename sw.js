@@ -1,6 +1,6 @@
 // Bumped to v3: the document is no longer served from cache first. A cache name change is
 // what evicts the old entries — without it, clients keep serving the stale shell.
-const CACHE_NAME = 'xancode-os-v3';
+const CACHE_NAME = 'xancode-os-v5';
 
 // Every entry is same-origin now. That matters beyond tidiness: cache.add() on a cross-origin
 // URL yields an opaque response, which cannot be inspected for success, so a failed CDN fetch
