@@ -26,13 +26,6 @@ export default defineConfig({
         // unavailable, and any test that drives a finger silently becomes a mouse test — which
         // is how a long-press bug that only exists under touch got a passing test.
         hasTouch: true,
-        // The app now starts EMPTY on a first run — three sample codes belonging to nobody are
-        // clutter to delete, not a demonstration. Almost every test here was written against
-        // those codes though, so they are supplied as a saved state instead of as a default.
-        // Doing it here rather than in each test keeps the suite testing the app rather than
-        // testing its seed data, and a test that needs a genuinely fresh install still gets one
-        // by clearing localStorage itself, exactly as it did before.
-        storageState: 'tests/demo-state.json',
     },
     webServer: {
         command: 'node scripts/dev-server.mjs',

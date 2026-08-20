@@ -2118,11 +2118,10 @@
             currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: true,
             gridSize: 'auto', wallpaper: null, skin: 'dock', accent: '#3b82f6', palette: null,
             haptics: true, animations: true, history: [], pageNames: [],
-            // No sample codes. A first run — and every guest session — starts on an empty
-            // home screen, because three fake codes belonging to nobody are clutter to delete
-            // rather than a demonstration of anything. The dock below is the app; the grid is
-            // yours.
             apps: [
+                { id: 'bc_1', title: 'My WiFi', type: 'grid', page: 0, order: 0, bcid: 'qrcode', data: 'WIFI:S:MyNetwork;T:WPA;P:Password;;' },
+                { id: 'bc_2', title: 'Website', type: 'grid', page: 0, order: 1, bcid: 'azteccode', data: 'https://neodrag.dev' },
+                { id: 'bc_3', title: 'Boarding Pass', type: 'grid', page: 1, order: 0, bcid: 'pdf417', data: 'BOARDING12345' },
                 
                 { id: 'nav_home', title: 'Home', icon: 'grid', type: 'dock', order: 0 },
                 { id: 'nav_gen', title: 'Create', icon: 'plus-circle', type: 'dock', order: 1 },
