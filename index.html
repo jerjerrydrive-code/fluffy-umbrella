@@ -390,14 +390,36 @@
                         margin-top 0.45s var(--spring-smooth);
         }
 
+        /* Rows are TRACKS, and the tracks fill the page.
+           
+           This grid used to be `align-content: start` with a fixed row-gap, which packed every
+           row against the top of the screen and left whatever was left over as dead space above
+           the dock. Measured at 412x915: five rows of codes ended at y=567 with 230px of empty
+           wallpaper under them, so a full home screen read as a small cluster in the top half —
+           reported as "you shrunk my ui", though no icon had actually got smaller.
+           
+           A phone's home screen does the opposite: it commits N row tracks to the page and
+           spreads them over the whole height between the status bar and the dock, so the grid
+           always looks the same size whether it holds four codes or twenty-four. That is what
+           `repeat(--grid-rows, minmax(--row-min, 1fr))` plus `align-content: stretch` buys —
+           the tracks divide the space instead of the gap being a number someone chose.
+           
+           --row-min is the floor: an icon plus its label. A track can grow past it, never
+           under it, so a short screen overflows visibly instead of silently overlapping. */
         .os-grid {
+            --row-min: calc(var(--app-size) + 24px);
             display: grid;
             grid-template-columns: repeat(var(--grid-cols), minmax(0, 1fr));
+            grid-template-rows: repeat(var(--grid-rows, 6), minmax(var(--row-min), 1fr));
             row-gap: calc(var(--grid-gap-y) * var(--row-scale));
-            padding: max(2vh, 20px) max(4vw, 16px);
-            justify-items: center; align-content: start;
+            /* The dock floats over the page, so the grid has to be told the page is shorter
+               than it looks. Measured from the real bottom stack rather than guessed: dock
+               padding is a per-skin token, and a magic number here goes stale the moment a
+               skin changes it. */
+            padding: max(2vh, 20px) max(4vw, 16px) var(--dock-reserve, 120px);
+            justify-items: center; align-content: stretch;
             width: 100%; height: 100%; max-width: 900px; 
-            transition: row-gap 0.3s ease;
+            transition: row-gap 0.3s ease, padding-bottom 0.3s ease;
         }
 
         .pagination-dot {
@@ -415,7 +437,7 @@
             display: flex; justify-content: center; align-items: flex-start;
         }
 
-        @media (min-width: 1024px) { .os-grid { max-width: 1200px; padding: 40px 32px; } }
+        @media (min-width: 1024px) { .os-grid { max-width: 1200px; padding: 40px 32px var(--dock-reserve, 140px); } }
 
         /* The dock's geometry is a skin's most visible signature after the icon shape: a
            narrow circle-ended pill and a full-width squared-off bar are recognisably different
@@ -1375,7 +1397,7 @@
              actually reach is the width THIS leaves it: at 412px wide, px-4 capped the bar at
              380px however large --dock-max was set. Raising the token alone did nothing, which
              is why the pill kept coming back the same size. -->
-        <div class="absolute bottom-4 left-0 right-0 z-30 flex flex-col items-center gap-3 pointer-events-none px-1">
+        <div id="bottom-stack" class="absolute bottom-4 left-0 right-0 z-30 flex flex-col items-center gap-3 pointer-events-none px-1">
             <div id="page-move-row" class="hidden pointer-events-auto flex items-center gap-2">
                 <button id="btn-page-left" class="tap44 flex items-center justify-center rounded-full bg-black/35 backdrop-blur-md border border-white/15 text-white active:scale-90 transition-transform"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
                 <button id="btn-page-right" class="tap44 flex items-center justify-center rounded-full bg-black/35 backdrop-blur-md border border-white/15 text-white active:scale-90 transition-transform"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
@@ -2606,11 +2628,20 @@
             iconSizeFor(width, cols) {
                 const padX = Math.max(width * 0.04, 16);
                 const cell = (Math.min(width, 900) - padX * 2) / cols;
-                // 0.685 came from a first measurement off a smaller screenshot that read the
-                // tiles as 145px; a clearer pair put them at 154px, and 0.685 landed the app at
-                // 15.6% — too SMALL, the opposite of the error it was fixing. 0.73 is 16.7%.
-                // The number has moved twice because the measurement improved twice.
-                return Math.round(Math.max(58, Math.min(110, cell * 0.80)));
+                // The ratio has moved four times, and only the last move was not a measurement.
+                // 0.685 came off a small screenshot that read the tiles as 145px; a clearer pair
+                // put them at 154px (0.73); 0.80 was the first deliberate enlargement.
+                //
+                // 0.88 is a stated preference, not a measurement, and it is recorded as one:
+                // "enlarge everything a little what is your problem lol. I have asked like6
+                // times", then "you shrunk my ui". Chasing a photograph of somebody else's home
+                // screen to two significant figures was the wrong instrument for a question
+                // about how big they want their own icons.
+                //
+                // The ceiling is not arbitrary either: six rows have to keep fitting between the
+                // header and the dock, and 6*(size+24) + 5*gap <= the space that leaves puts the
+                // limit at 88px on a 412px screen. 0.88 of a cell lands at 83.
+                return Math.round(Math.max(58, Math.min(128, cell * 0.88)));
             }
 
             // The label sits under the icon, so a row is the icon plus its label plus the gap.
@@ -2644,9 +2675,27 @@
                 return Math.round(Math.max(48, Math.min(gridSize, inner / items - 1)));
             }
 
+            // How much of the bottom of the page the floating dock stack actually owns.
+            //
+            // Measured, not assumed. The stack holds page dots, an optional page-name chip and
+            // the dock pill, and the pill's padding, radius and icon size are all per-skin
+            // tokens — every constant anyone has written here has gone stale within a skin or
+            // two. Falls back to an estimate only on the very first pass, before the dock has
+            // been rendered once.
+            dockReserve() {
+                const stack = document.getElementById('bottom-stack');
+                const h = stack ? stack.getBoundingClientRect().height : 0;
+                if (h > 40) return Math.round(h + 20);
+                const size = parseFloat(getComputedStyle(document.documentElement)
+                    .getPropertyValue('--dock-size')) || 64;
+                return Math.round(size + 72);
+            }
+
             calculateGrid() {
                 const width = window.innerWidth; const height = window.innerHeight;
                 const isLandscape = width > height;
+                const reserve = this.dockReserve();
+                document.documentElement.style.setProperty('--dock-reserve', reserve + 'px');
                 
                 if (window.OS_STATE.gridSize !== 'auto') {
                     const [cols, rows] = window.OS_STATE.gridSize.split('x').map(Number);
@@ -2666,6 +2715,7 @@
                     }
                     document.documentElement.style.setProperty('--app-size', size + 'px');
                     document.documentElement.style.setProperty('--grid-gap-y', gap + 'px');
+                    document.documentElement.style.setProperty('--grid-rows', rows);
                     document.documentElement.style.setProperty('--dock-size',
                         this.dockSizeFor(width, size) + 'px');
                 } else {
@@ -2675,8 +2725,15 @@
                     
                     document.documentElement.style.setProperty('--grid-cols', window.OS_STATE.gridCols);
 
-                    let uiOverhead = (isLandscape && height < 500) ? 140 : 180;
-                    const availableHeight = height - uiOverhead;
+                    // The space a row may actually occupy: the pager, less the grid's own top
+                    // padding, less the part of the screen the dock floats over. This used to
+                    // be `height - 180` — a single number standing in for a header, a dock and
+                    // two paddings at once, which is why rows-per-page never matched what the
+                    // page could really show.
+                    const main = document.querySelector('main');
+                    const mainH = main ? main.getBoundingClientRect().height : height - 60;
+                    const padTop = Math.max(height * 0.02, 20);
+                    const availableHeight = Math.max(120, mainH - padTop - reserve);
 
                     // Landscape on a short screen is the one case where height, not width, is
                     // the binding constraint, so the cell-derived size is capped there.
@@ -2692,8 +2749,22 @@
 
                     const rowHeight = this.rowHeightFor(size, gap);
                     window.OS_STATE.gridRows = Math.max(2, Math.min(7, Math.floor(availableHeight / rowHeight)));
+                    document.documentElement.style.setProperty('--grid-rows', window.OS_STATE.gridRows);
                 }
                 this.renderer.render();
+
+                // The dock's height depends on the icon size this pass just chose, and the row
+                // tracks depend on the dock's height — so the first pass on a cold load reserves
+                // space for a dock that has not been drawn yet. One re-run once it has, and only
+                // when the measurement actually moved, so this settles instead of oscillating.
+                if (!this._remeasuring) {
+                    this._remeasuring = true;
+                    requestAnimationFrame(() => {
+                        const settled = this.dockReserve();
+                        this._remeasuring = false;
+                        if (Math.abs(settled - reserve) > 4) this.calculateGrid();
+                    });
+                }
             }
         }
 
