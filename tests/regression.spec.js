@@ -7156,3 +7156,141 @@ test.describe('The grid fills the page', () => {
         }
     });
 });
+
+// ============================================================================================
+//  A code reads as an app icon
+//
+//  A home screen full of codes was a home screen full of identical white squares — twenty
+//  photocopies with nothing to tell them apart but the label underneath. The tile carries the
+//  identity now: a palette-derived colour frame around a white plate holding the code.
+//
+//  Two things must stay true forever. The colour has to come from the palette and nowhere
+//  else, and it must never touch the code itself.
+// ============================================================================================
+test.describe('A code reads as an app icon', () => {
+    const seed = async (page, n = 8) => {
+        await page.evaluate(async (count) => {
+            for (let i = 0; i < count; i++) {
+                const c = { id: 'tile' + i, title: 'Tile ' + i, type: 'grid',
+                            bcid: 'qrcode', data: 'payload-' + i };
+                window.OS_STATE.apps.push(c);
+                window.placeOnGrid(c, 0);
+            }
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 500));
+        }, n);
+    };
+
+    test('the plate under a code is pure white, on every skin', async ({ page }) => {
+        // The whole point of the plate. A barcode's contrast is what makes it scan at the
+        // counter; tinting the surface it sits on to match the tile would look lovely and
+        // quietly break the product.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        await seed(page);
+
+        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            await page.evaluate(s => {
+                window.OS_STATE.skin = s;
+                document.body.dataset.skin = s;
+            }, skin);
+            await page.waitForTimeout(400);
+            const bg = await page.evaluate(() =>
+                getComputedStyle(document.querySelector('#workspace-pager .code-plate')).backgroundColor);
+            expect(bg, `${skin}: the plate under the code is ${bg}, not white`)
+                .toMatch(/^rgba?\(255,\s*255,\s*255(,\s*1)?\)$/);
+        }
+    });
+
+    test('nothing is painted over the code', async ({ page }) => {
+        // The tile has a specular sweep and a rim highlight. Both are what make it read as an
+        // object rather than a coloured rectangle — and both would sit ON the barcode if the
+        // plate did not out-stack them. A sheen across a code is a contrast reduction.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        await seed(page, 2);
+
+        const z = await page.evaluate(() => {
+            const tile = document.querySelector('#workspace-pager .code-tile');
+            const plate = tile.querySelector('.code-plate');
+            const num = v => parseInt(v, 10) || 0;
+            return {
+                plate: num(getComputedStyle(plate).zIndex),
+                gloss: num(getComputedStyle(tile, '::after').zIndex),
+                rim: num(getComputedStyle(tile, '::before').zIndex),
+            };
+        });
+        expect(z.plate, `the gloss (z${z.gloss}) paints over the plate (z${z.plate})`)
+            .toBeGreaterThan(z.gloss);
+        expect(z.plate, `the rim (z${z.rim}) paints over the plate (z${z.plate})`)
+            .toBeGreaterThan(z.rim);
+    });
+
+    test('a tile keeps its colour when it is moved', async ({ page }) => {
+        // Derived from the id, never the position. Position would mean a code changed colour
+        // when you rearranged the grid, which is exactly the kind of thing that makes a
+        // launcher feel unreliable.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        await seed(page);
+
+        const classOf = id => page.evaluate(i => {
+            const el = document.querySelector(`#workspace-pager [data-id="${i}"] .code-tile`);
+            return [...el.classList].find(c => c.startsWith('tile-'));
+        }, id);
+
+        const before = await classOf('tile5');
+        await page.evaluate(async () => {
+            // Send it to the front of the page and re-render.
+            const app = window.OS_STATE.apps.find(a => a.id === 'tile5');
+            window.OS_STATE.apps.filter(a => a.type === 'grid' && !a.folderId)
+                .forEach(a => { a.order = (a.order || 0) + 1; });
+            app.order = 0;
+            window.normaliseLayout();
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 400));
+        });
+        const after = await classOf('tile5');
+        expect(after, `the tile changed colour from ${before} to ${after} just by moving`)
+            .toBe(before);
+    });
+
+    test('the tile colours come from the palette and nowhere else', async ({ page }) => {
+        // "remember those pallettes were made with my heart and soul they need to bleed on our
+        // canvas". Changing the palette must repaint every tile on the page.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        await seed(page);
+
+        const gradients = () => page.evaluate(() =>
+            [...document.querySelectorAll('#workspace-pager .code-tile')]
+                .slice(0, 6)
+                .map(el => getComputedStyle(el).backgroundImage));
+
+        const before = await gradients();
+        await page.evaluate(() =>
+            window.ThemeManager.applyAccent('#7DD87D', false, ['#7DD87D', '#4C9173', '#5B446A', '#906387']));
+        await page.waitForTimeout(500);
+        const after = await gradients();
+
+        expect(before.some(g => g.includes('gradient')), 'a tile is not painted with a gradient at all')
+            .toBe(true);
+        for (let i = 0; i < before.length; i++) {
+            expect(after[i], `tile ${i} did not repaint when the palette changed`)
+                .not.toBe(before[i]);
+        }
+    });
+
+    test('six variants, and a real spread across them', async ({ page }) => {
+        // A hash that lands everything on one variant is the same wall of identical squares
+        // with extra steps.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        const spread = await page.evaluate(() => {
+            const seen = new Set();
+            for (let i = 0; i < 200; i++) seen.add(window.tileVariant('code_' + i + '_' + (i * 7919)));
+            return [...seen].sort();
+        });
+        expect(spread, `the hash only ever produces ${spread.join(',')}`).toEqual([0, 1, 2, 3, 4, 5]);
+    });
+});

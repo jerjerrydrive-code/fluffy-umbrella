@@ -373,6 +373,85 @@
                         border-radius 0.45s var(--spring-smooth);
             will-change: transform, width, height;
         }
+
+        /* ============================ THE CODE TILE ============================
+           A home screen full of codes used to be a home screen full of identical white
+           squares — twenty photocopies in a grid, with nothing to tell one from another
+           except the label underneath. Every launcher this app is measured against solves
+           the same problem the same way: the TILE carries the identity and the content sits
+           on a plate inside it.
+
+           So the tile is coloured, and its colour comes from the palette. Six variants,
+           chosen by a hash of the code's id, so the grid has rhythm without being random —
+           the same code is the same colour every time you open the app, on every device.
+
+           The code itself never touches the colour. It stays pure black on pure white on an
+           inset plate, because a barcode's contrast is the difference between a code that
+           scans at the counter and one that does not. The colour is a frame, never a
+           background. */
+        .code-tile {
+            background: linear-gradient(150deg,
+                        var(--tile-a, var(--pal-1)) 0%,
+                        var(--tile-b, var(--pal-3)) 100%);
+            padding: 13%;
+            position: relative;
+            isolation: isolate;
+        }
+        /* The plate. Pure white, never mixed with the palette — see above. */
+        /* z-5 puts the plate above the tile's gloss and rim. A specular sweep across a
+           barcode is a contrast reduction, and contrast is the difference between a code
+           that scans at the counter and one that does not — so the sheen stops at the
+           plate's edge, exactly as it does on a real icon with a card inside it. */
+        .code-plate {
+            /* Set here, not with a z-[5] utility: the vendored Tailwind build only contains
+               the arbitrary values that were used when it was generated, so a new one
+               silently produces no rule at all. The test caught this as a gloss painting
+               over the barcode. */
+            position: relative;
+            z-index: 5;
+            background: #ffffff;
+            border-radius: calc(var(--squircle-radius) * 0.66);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.18), 0 6px 14px -6px rgba(0,0,0,0.35);
+        }
+        /* A single specular sweep across the top third. This is the whole difference between
+           a flat coloured rectangle and something that reads as a physical object, and it is
+           one gradient — no blur, no extra layer, nothing that costs a frame on a phone. */
+        .code-tile::after {
+            content: ''; position: absolute; inset: 0; z-index: 2;
+            border-radius: inherit; pointer-events: none;
+            background: linear-gradient(160deg,
+                        rgba(255,255,255,0.38) 0%,
+                        rgba(255,255,255,0.10) 34%,
+                        rgba(255,255,255,0) 55%);
+        }
+        /* Hairline rim. Light along the top edge, dark along the bottom — the same trick a
+           physical key cap uses, and the reason the tile sits ON the wallpaper rather than
+           being a hole cut in it. */
+        .code-tile::before {
+            content: ''; position: absolute; inset: 0; z-index: 3;
+            border-radius: inherit; pointer-events: none;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.45),
+                        inset 0 -1px 0 rgba(0,0,0,0.18),
+                        inset 0 0 0 1px rgba(255,255,255,0.10);
+        }
+        /* Six palette pairings. Every one of them is built from --pal-*, so a palette change
+           repaints the entire grid — "those pallettes were made with my heart and soul they
+           need to bleed on our canvas". No literal colour appears in this block. */
+        .tile-0 { --tile-a: var(--pal-1); --tile-b: var(--pal-3); }
+        .tile-1 { --tile-a: var(--pal-2); --tile-b: var(--pal-1); }
+        .tile-2 { --tile-a: var(--pal-4); --tile-b: var(--pal-2); }
+        .tile-3 { --tile-a: var(--pal-3); --tile-b: var(--pal-4); }
+        .tile-4 { --tile-a: var(--pal-1); --tile-b: var(--pal-2); }
+        .tile-5 { --tile-a: var(--pal-4); --tile-b: var(--pal-1); }
+
+        /* Two shadows, not one. The tight one anchors the tile to the surface, the wide soft
+           one is the ambient occlusion that makes a grid of them read as objects on a plane
+           instead of stickers. */
+        .app-icon-wrapper .app-icon {
+            box-shadow: 0 1px 2px rgba(0,0,0,0.16),
+                        0 10px 24px -10px rgba(0,0,0,0.45);
+        }
+        #dock-container .app-icon { box-shadow: none; }
         
         body:not(.edit-mode) .app-icon:active { transform: scale(0.92); }
 
@@ -452,6 +531,41 @@
                         max-width 0.45s var(--spring-smooth);
         }
         #dock-container { gap: var(--dock-gap); }
+
+        /* The dock, given the same treatment as the tiles.
+           
+           It was a flat slab with a hairline border — correct, and completely inert. Three
+           layers make it an object: a rim that is light on top and dark underneath, a
+           specular sweep across the upper third, and a wide ambient shadow that lifts it off
+           the wallpaper. Each dock tile then gets its own recessed well, so the icons read as
+           set INTO the bar rather than printed on it. */
+        #main-dock {
+            position: relative;
+            isolation: isolate;
+            box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset,
+                        0 -1px 0 rgba(0,0,0,0.20) inset,
+                        0 18px 44px -14px rgba(0,0,0,0.55),
+                        0 4px 12px -6px rgba(0,0,0,0.35);
+        }
+        #main-dock::before {
+            content: ''; position: absolute; inset: 0; z-index: 0;
+            border-radius: inherit; pointer-events: none;
+            background: linear-gradient(170deg,
+                        rgba(255,255,255,0.16) 0%,
+                        rgba(255,255,255,0.04) 38%,
+                        rgba(255,255,255,0) 62%);
+        }
+        #dock-container { position: relative; z-index: 1; }
+        /* The well. color-mix against the palette rather than a flat black so a light skin
+           gets a light recess instead of a smudge. */
+        #dock-container .app-icon-wrapper {
+            border-radius: calc(var(--squircle-radius) * 0.9);
+            background: color-mix(in srgb, var(--pal-1) 14%, rgba(255,255,255,0.07));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.16),
+                        inset 0 -1px 0 rgba(0,0,0,0.14);
+            transition: background 0.35s ease, transform 0.2s var(--spring-snappy);
+        }
+        #dock-container .app-icon-wrapper:active { transform: scale(0.93); }
         body.edit-mode #main-dock { transform: translateY(150%); opacity: 0; pointer-events: none; }
         
         .custom-drag-ghost { opacity: 0 !important; }
@@ -2202,6 +2316,27 @@
 
         const freshDefaultState = () => JSON.parse(JSON.stringify(DEFAULT_STATE));
 
+        // Which of the six palette pairings a tile wears.
+        //
+        // Hashed from the id, not from the position, not from a counter, and never stored.
+        // Position would mean a code changed colour when you rearranged the grid; a counter
+        // would mean it changed when you deleted the one above it; storing it would mean two
+        // devices disagreed until they synced. The id is the only thing about a code that is
+        // both stable and unique, so the colour follows the code and nothing else.
+        //
+        // FNV-1a, 32-bit. Any spreading hash would do — this one is four lines and has no
+        // clustering on the short, similar strings ids actually are.
+        window.tileVariant = function(id) {
+            let h = 0x811c9dc5;
+            const str = String(id || '');
+            for (let i = 0; i < str.length; i++) {
+                h ^= str.charCodeAt(i);
+                h = Math.imul(h, 0x01000193) >>> 0;
+            }
+            return h % 6;
+        };
+
+
         // Close every gap and resolve every collision, in place.
         //
         // One function because state arrives by THREE routes — local storage, a backup file,
@@ -2811,16 +2946,20 @@
                     // A 2x2 peek at what is inside, the way a folder is legible at a glance.
                     const kids = window.folderChildren(itemData.id).slice(0, 4);
                     const cells = Array.from({ length: 4 }, (_, i) => kids[i]
-                        ? `<div class="bg-white rounded-[3px] overflow-hidden flex items-center justify-center"><canvas id="fdr-${itemData.id}-${i}" class="w-full h-full object-contain pixelated"></canvas></div>`
-                        : '<div class="bg-white/25 rounded-[3px]"></div>').join('');
+                        ? `<div class="code-plate relative z-[5] overflow-hidden flex items-center justify-center p-[6%]" style="border-radius:calc(var(--squircle-radius) * 0.5)"><canvas id="fdr-${itemData.id}-${i}" class="w-full h-full object-contain pixelated"></canvas></div>`
+                        : '<div class="relative z-[5] bg-white/20" style="border-radius:calc(var(--squircle-radius) * 0.5)"></div>').join('');
                     iconInnerHtml = `
-                        <div class="w-full h-full grid grid-cols-2 grid-rows-2 gap-[3px] p-[5px] bg-white/25 backdrop-blur-xl pointer-events-none">
+                        <div class="code-tile tile-${window.tileVariant(itemData.id)} w-full h-full grid grid-cols-2 grid-rows-2 gap-[4px] pointer-events-none">
                             ${cells}
                         </div>`;
                 } else if (itemData.type === 'grid' && itemData.bcid) {
+                    // Coloured tile, white plate, black code. See .code-tile in the stylesheet
+                    // for why the colour stops at the plate's edge.
                     iconInnerHtml = `
-                        <div class="w-full h-full bg-white flex items-center justify-center p-2.5 shadow-[0_2px_10px_rgba(0,0,0,0.15)] pointer-events-none">
-                            <canvas id="can-${itemData.id}" class="w-full h-full object-contain pixelated"></canvas>
+                        <div class="code-tile tile-${window.tileVariant(itemData.id)} w-full h-full flex items-center justify-center pointer-events-none">
+                            <div class="code-plate w-full h-full flex items-center justify-center p-[9%] relative z-[5]">
+                                <canvas id="can-${itemData.id}" class="w-full h-full object-contain pixelated"></canvas>
+                            </div>
                         </div>`;
                 } else {
                     iconInnerHtml = `
