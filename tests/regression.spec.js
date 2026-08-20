@@ -4912,8 +4912,8 @@ test.describe('The page never scrolls sideways', () => {
             const cols = getComputedStyle(document.querySelector('.os-grid')).gridTemplateColumns.split(' ');
             return icon.width / parseFloat(cols[0]);
         });
-        expect(fill, 'the icon no longer fills its cell').toBeGreaterThan(0.72);
-        expect(fill, 'the icon has outgrown its cell').toBeLessThanOrEqual(0.86);
+        expect(fill, 'the icon no longer fills its cell').toBeGreaterThan(0.80);
+        expect(fill, 'the icon has outgrown its cell').toBeLessThanOrEqual(0.94);
     });
 });
 
@@ -6705,18 +6705,17 @@ test.describe('A code is the size of an app icon', () => {
             const pct = await page.evaluate(() =>
                 document.querySelector('#workspace-pager .app-icon').getBoundingClientRect().width
                 / window.innerWidth * 100);
-            // 16.7% is the measurement, taken off a larger screenshot pair than the first
-            // attempt at this — which read the tiles as 145px, set the app to 15.7%, and made it
-            // too SMALL. A point either side covers rounding to whole pixels.
-            // 16.7% matched the phone's own home screen exactly, and was then asked to go
-            // bigger — "enlarge everything a little", after six requests for the same thing.
-            // 18.4% sits a little ABOVE the phone rather than level with it, which is what was
-            // actually being asked for. The floor is the part that matters: this must never
-            // quietly shrink back towards the size that kept getting reported.
+            // The band has been raised three times and never lowered, and the reason is the
+            // same every time: measuring a photograph of the phone was the wrong instrument for
+            // a question about preference. 15.7% -> 16.7% -> 18.4% -> 20.1%, the last two after
+            // "enlarge everything a little... I have asked like6 times" and "you shrunk my ui".
+            //
+            // The FLOOR is the assertion that matters. An icon may not quietly drift back down
+            // towards a size that has now been reported as too small four separate times.
             expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, and has shrunk again`)
-                .toBeGreaterThan(17.4);
+                .toBeGreaterThan(19.2);
             expect(pct, `an icon is ${pct.toFixed(1)}% of the screen, which is oversized`)
-                .toBeLessThan(19.6);
+                .toBeLessThan(21.4);
         });
     }
 
@@ -7022,5 +7021,138 @@ test.describe('A first run starts on a clean slate', () => {
         });
         expect(r.id, 'the first code did not land in the first square').toBe('first');
         expect(r.drawn).toBe(1);
+    });
+});
+
+// ============================================================================================
+//  The grid fills the page
+//
+//  "no you shrunk my ui... before it was the regular size."
+//
+//  Nothing had actually got smaller when this was reported. The grid was `align-content: start`
+//  with a fixed row gap, so it packed its rows against the top of the screen and left whatever
+//  was left over as dead wallpaper above the dock: at 412x915 a full five rows ended at y=567
+//  with 230px of nothing under them. A home screen that occupies the top half of the screen
+//  reads as a small home screen, however big its icons measure.
+//
+//  The fix is to commit N row TRACKS to the page and let them divide the height, which is what
+//  a phone's own launcher does. These tests pin both halves of that: the grid has to reach the
+//  dock, and it must never reach THROUGH it.
+// ============================================================================================
+test.describe('The grid fills the page', () => {
+    const VIEWPORTS = [[360, 740], [390, 844], [412, 915], [430, 932], [412, 780]];
+
+    // A full page of codes, so the last track is genuinely occupied.
+    const fillPage = async (page) => {
+        await page.evaluate(async () => {
+            const src = window.OS_STATE.apps.find(a => a.type === 'grid')
+                || { type: 'grid', bcid: 'qrcode', data: 'x' };
+            for (let i = 0; i < 30; i++) {
+                const c = Object.assign({}, src, { id: 'fill' + i, title: 'Fill ' + i });
+                delete c.folderId;
+                window.OS_STATE.apps.push(c);
+                window.placeOnGrid(c, 0);
+            }
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 500));
+        });
+    };
+
+    for (const [w, h] of VIEWPORTS) {
+        test(`rows reach the dock without going under it at ${w}x${h}`, async ({ page }) => {
+            await page.setViewportSize({ width: w, height: h });
+            await page.goto('/index.html');
+            await page.waitForTimeout(1400);
+            await fillPage(page);
+
+            const r = await page.evaluate(() => {
+                const stack = document.getElementById('bottom-stack').getBoundingClientRect();
+                const grid = document.querySelector('#workspace-pager .sortable-page');
+                const icons = [...grid.querySelectorAll('.app-icon-wrapper')];
+                const bottoms = icons.map(e => e.getBoundingClientRect().bottom);
+                const labels = [...grid.querySelectorAll('.app-label')]
+                    .map(e => e.getBoundingClientRect().bottom);
+                return {
+                    lastBottom: Math.max(...bottoms, ...labels),
+                    stackTop: stack.top,
+                    headerBottom: document.querySelector('header').getBoundingClientRect().bottom,
+                    scrollH: grid.scrollHeight,
+                    clientH: grid.clientHeight,
+                };
+            });
+
+            // Never through the dock. This is the hard one — a row hidden behind the dock is a
+            // code you cannot tap.
+            expect(r.lastBottom,
+                   `the last row ends at ${r.lastBottom.toFixed(0)}, under a dock that starts at ${r.stackTop.toFixed(0)}`)
+                .toBeLessThanOrEqual(r.stackTop);
+
+            // ...and the page must not have grown taller than the space it was given, which is
+            // the other way rows end up somewhere you cannot see them.
+            expect(r.scrollH, 'the grid is taller than the page it sits in')
+                .toBeLessThanOrEqual(r.clientH + 1);
+
+            // Reaching the dock is the actual complaint. A full page has to use the height it
+            // has: the gap left between the last row and the dock may not be another row's
+            // worth of empty wallpaper.
+            const usable = r.stackTop - r.headerBottom;
+            const slack = r.stackTop - r.lastBottom;
+            expect(slack / usable,
+                   `a full page leaves ${slack.toFixed(0)}px of ${usable.toFixed(0)}px empty above the dock`)
+                .toBeLessThan(0.12);
+        });
+    }
+
+    test('a half-full page keeps the same row pitch as a full one', async ({ page }) => {
+        // The tracks are the page's, not the content's. Three codes must sit exactly where the
+        // first three of thirty would, or the grid would appear to resize itself as it fills —
+        // which is the "no resizing" half of "stay as default no resizing just match mine".
+        await page.setViewportSize({ width: 412, height: 915 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+
+        const pitchOf = () => page.evaluate(() => {
+            const grid = document.querySelector('#workspace-pager .sortable-page');
+            const cells = [...grid.children];
+            const cols = window.OS_STATE.gridCols;
+            const a = cells[0].getBoundingClientRect();
+            const b = cells[cols].getBoundingClientRect();
+            return +(b.top - a.top).toFixed(1);
+        });
+
+        const sparse = await pitchOf();
+        await fillPage(page);
+        const full = await pitchOf();
+        expect(Math.abs(full - sparse),
+               `rows pitch at ${sparse} when the page is nearly empty and ${full} when it is full`)
+            .toBeLessThanOrEqual(1);
+    });
+
+    test('the dock reserve is measured, not guessed, so a skin cannot hide a row', async ({ page }) => {
+        // Dock padding, radius and icon size are all per-skin tokens. Every constant anyone has
+        // written for "how tall is the dock" has gone stale within a skin or two, and a stale
+        // one puts the bottom row behind the pill.
+        await page.setViewportSize({ width: 412, height: 915 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+        await fillPage(page);
+
+        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            await page.evaluate(s => {
+                window.OS_STATE.skin = s;
+                document.body.dataset.skin = s;
+                window.Layout.calculateGrid();
+            }, skin);
+            await page.waitForTimeout(700);
+            const r = await page.evaluate(() => {
+                const stack = document.getElementById('bottom-stack').getBoundingClientRect();
+                const grid = document.querySelector('#workspace-pager .sortable-page');
+                const bottoms = [...grid.querySelectorAll('.app-label')]
+                    .map(e => e.getBoundingClientRect().bottom);
+                return { last: Math.max(...bottoms), stackTop: stack.top };
+            });
+            expect(r.last, `${skin}: the bottom row is behind the dock`)
+                .toBeLessThanOrEqual(r.stackTop + 1);
+        }
     });
 });
