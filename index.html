@@ -85,6 +85,13 @@
                not happen; it could, because it only covered half of the wallpaper. */
             --wall-tint-base: #05070f;
 
+            /* Ink. There was no such token: everything on the wallpaper was hardcoded
+               `text-white` with a drop shadow, and the two light skins each had to undo that
+               with their own override list. One pair of tokens instead, so a new piece of
+               chrome is readable on every skin the moment it is written. */
+            --ink-strong: #ffffff;
+            --ink-soft: rgba(255,255,255,0.62);
+
             /* ---- Structural skin tokens -------------------------------------------------
                A skin used to be a colour scheme and nothing else. Every one of the six drew the
                same 22.5% squircle, the same 380px dock pill and the same 11.5px label, so
@@ -485,6 +492,35 @@
            
            --row-min is the floor: an icon plus its label. A track can grow past it, never
            under it, so a short screen overflows visibly instead of silently overlapping. */
+        /* The greeting. One line, two weights — the reference designs all do this and it is
+           what makes a screen read as designed rather than assembled. Sized in vw with a
+           clamp so it is the same proportion of the screen on a 360 as on a 430, which a
+           fixed px size is not. */
+        .os-hello {
+            font-size: clamp(26px, 8.2vw, 36px);
+            letter-spacing: -0.02em;
+            display: flex; align-items: baseline; gap: 0.28em;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.28), 0 2px 12px rgba(0,0,0,0.18);
+        }
+        body[data-skin="glass"] .os-hello,
+        body[data-skin="soft"] .os-hello { text-shadow: 0 1px 1px rgba(255,255,255,0.5); }
+        .os-hello-soft { font-weight: 300; color: var(--ink-soft); }
+        .os-hello-name { font-weight: 700; color: var(--ink-strong); }
+
+        /* The count. Small, palette-tinted, and it disappears when it would read "0 codes" —
+           an empty home screen does not need a label telling it so. */
+        .os-chip {
+            font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em;
+            padding: 5px 11px; border-radius: 999px;
+            color: var(--ink-strong);
+            background: color-mix(in srgb, var(--pal-1) 34%, rgba(255,255,255,0.12));
+            border: 0.5px solid color-mix(in srgb, var(--pal-2) 44%, rgba(255,255,255,0.18));
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            box-shadow: 0 4px 14px -6px rgba(0,0,0,0.4);
+            transition: opacity 0.35s ease, background 0.35s ease;
+        }
+        .os-chip:empty { opacity: 0; }
+
         .os-grid {
             --row-min: calc(var(--app-size) + 24px);
             display: grid;
@@ -771,12 +807,16 @@
            could tint, which reads as glare rather than as a light interface. Mixed with the
            palette it becomes a tinted daylight instead of a blank one. */
         body[data-skin="glass"] {
+            --ink-strong: color-mix(in srgb, var(--pal-1) 22%, #16181f);
+            --ink-soft: color-mix(in srgb, var(--pal-1) 30%, rgba(30,33,42,0.55));
             --wall-ink-a: color-mix(in srgb, var(--pal-1) 52%, #ffffff);
             --wall-ink-b: color-mix(in srgb, var(--pal-3) 56%, #f4f6fd);
             --wall-bloom: 84%;
             --wall-tint-base: #ffffff;      /* light skins tint towards light, symmetrically */
         }
         body[data-skin="soft"] {
+            --ink-strong: color-mix(in srgb, var(--pal-1) 22%, #16181f);
+            --ink-soft: color-mix(in srgb, var(--pal-1) 30%, rgba(30,33,42,0.55));
             --wall-ink-a: color-mix(in srgb, var(--pal-1) 32%, #f7f9fd);
             --wall-ink-b: color-mix(in srgb, var(--pal-3) 38%, #eef2f8);
             --wall-bloom: 62%;
@@ -1475,8 +1515,13 @@
 
     <div id="workspace-container" class="w-full h-full flex flex-col relative z-10">
         
-        <header id="os-header" class="w-full h-12 flex justify-between items-center px-6 z-40 shrink-0 pt-2 pointer-events-none">
-            <div id="os-clock" class="text-white font-bold text-[15px] tracking-wide drop-shadow-md w-14">
+        <!-- The header used to be a clock and two grey circles, and it was the clearest tell
+             that this was a prototype rather than a product: every launcher and every app it
+             is measured against opens with a line of type big enough to own the screen. The
+             greeting is that line. It is also the only place the app ever says your name. -->
+        <header id="os-header" class="w-full flex flex-col px-6 z-40 shrink-0 pt-2 pb-1 pointer-events-none">
+          <div class="w-full h-10 flex justify-between items-center">
+            <div id="os-clock" class="text-[color:var(--ink-strong)] font-bold text-[15px] tracking-wide drop-shadow-md w-14">
                 --:--
             </div>
             
@@ -1493,6 +1538,16 @@
                      there did nothing at all. Reported as "I cant get out of edit mode". -->
                 <button id="btn-done-editing" class="hidden tap44 items-center justify-center px-4 rounded-full bg-white text-black text-[14px] font-bold shadow-lg active:scale-95 transition-transform">Done</button>
             </div>
+          </div>
+          <!-- Two weights on one line, the way the reference designs do it: the greeting
+               recedes and the name carries. Set as textContent from JS — a display name can
+               come from a Google account, which is not this app's string to trust. -->
+          <div id="os-greeting" class="w-full flex items-end justify-between gap-3 mt-2.5 pointer-events-none">
+            <h1 class="os-hello leading-[1.05] truncate">
+                <span class="os-hello-soft">Hey,</span><span class="os-hello-name" id="os-hello-name">there</span>
+            </h1>
+            <span id="os-count-chip" class="os-chip shrink-0 mb-1.5"></span>
+          </div>
         </header>
 
         <main class="flex-1 w-full relative overflow-hidden flex flex-col -mt-2">
@@ -2347,16 +2402,28 @@
             const st = window.OS_STATE;
             const per = Math.max(1, (st.gridCols || 4) * (st.gridRows || 6));
             const grid = st.apps.filter(a => (a.type === 'grid' && !a.folderId) || a.type === 'folder');
-            const pages = new Map();
-            grid.forEach(a => {
-                const p = Math.max(0, a.page || 0);
-                if (!pages.has(p)) pages.set(p, []);
-                pages.get(p).push(a);
-            });
-            pages.forEach((items, p) => {
-                items.sort((x, y) => (x.order || 0) - (y.order || 0))
-                     .forEach((a, i) => { a.page = p; a.order = i % per; });
-            });
+
+            // One ordered sequence, then dealt back out page by page.
+            //
+            // This used to normalise each page independently with `order = i % per`, and the
+            // modulo was a silent collision: a page holding more codes than it has squares
+            // wrapped the extras back onto orders 0, 1, 2 — on top of the codes already there.
+            // Only one of each pair was ever drawn.
+            //
+            // It took a shorter page to expose it. The header grew by a row of type, the grid
+            // lost a row, and pages that used to hold 24 now hold 20 — so a merge from the
+            // cloud that had been fitting exactly began overflowing, and the test that checks
+            // every code gets its own slot caught two sharing one. The bug was always there;
+            // it just needed a page small enough to overflow.
+            //
+            // Dealing the whole sequence out means an overflow spills onto the NEXT page,
+            // which is what "forced auto-arrange to the next open spot" has to mean when the
+            // next open spot is not on this page.
+            grid.sort((x, y) => (x.page || 0) - (y.page || 0) || (x.order || 0) - (y.order || 0))
+                .forEach((a, i) => {
+                    a.page = Math.floor(i / per);
+                    a.order = i % per;
+                });
         };
 
         try {
@@ -2643,6 +2710,39 @@
                 this.clockEl.innerText = `${h}:${m}`;
             }
         }
+
+        // The greeting and the count.
+        //
+        // Both are set as textContent, never interpolated. The name can come from a Google
+        // account, and a display name is not this app's string to trust — same rule as a
+        // scanned payload. HARD RULE 9.
+        window.HomeHeader = {
+            greetingFor(hour) {
+                if (hour < 5)  return 'Still up,';
+                if (hour < 12) return 'Morning,';
+                if (hour < 18) return 'Hey,';
+                return 'Evening,';
+            },
+            render(name) {
+                const soft = document.querySelector('.os-hello-soft');
+                const nameEl = document.getElementById('os-hello-name');
+                const chip = document.getElementById('os-count-chip');
+                if (soft) soft.textContent = this.greetingFor(new Date().getHours());
+                if (nameEl) {
+                    const n = name !== undefined ? name : this.lastName;
+                    this.lastName = n;
+                    // First name only. "Catherine Elizabeth Thompson-Hughes" is not a headline,
+                    // and the reference this is modelled on greets you by one word.
+                    nameEl.textContent = (n && String(n).trim().split(/\s+/)[0]) || 'there';
+                }
+                if (chip) {
+                    const n = (window.OS_STATE.apps || []).filter(a => a.type === 'grid').length;
+                    // Empty string, not "0 codes": .os-chip:empty fades the pill out entirely,
+                    // so a clean slate is not labelled as one.
+                    chip.textContent = n ? `${n} ${n === 1 ? 'code' : 'codes'}` : '';
+                }
+            }
+        };
 
         class OSSearchEngine {
             constructor() {
@@ -3243,6 +3343,10 @@
                 }
                 
                 this.updatePageChip(state.currentPage || 0);
+                // The count in the header is derived at render for the same reason the Library
+                // badge is: a number kept in state goes stale the moment the thing it counts
+                // changes, and then it disagrees with what is on the screen.
+                if (window.HomeHeader) window.HomeHeader.render();
                 safeCreateIcons();
                 if (window.DragEngine) window.DragEngine.init(document.querySelectorAll('.sortable-page'));
             }
@@ -7047,7 +7151,11 @@
                     this.syncedView.classList.toggle('hidden', !signedIn);
                     this.syncedView.classList.toggle('flex', signedIn);
                 }
-                if (!signedIn) return;
+                if (!signedIn) {
+                    // Signing out has to take the name off the home screen with it.
+                    if (window.HomeHeader) window.HomeHeader.render('');
+                    return;
+                }
 
                 const nameEl = document.getElementById('account-name');
                 const emailEl = document.getElementById('account-email');
@@ -7056,6 +7164,7 @@
                 const iconFallback = document.getElementById('account-icon-fallback');
 
                 if (nameEl) nameEl.textContent = user.displayName || 'XanCode User';
+                if (window.HomeHeader) window.HomeHeader.render(user.displayName || '');
                 if (emailEl) emailEl.textContent = user.email || '';
 
                 if (user.photoURL && avatarImg) {
