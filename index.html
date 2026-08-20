@@ -509,17 +509,19 @@
 
         /* The count. Small, palette-tinted, and it disappears when it would read "0 codes" —
            an empty home screen does not need a label telling it so. */
-        .os-chip {
-            font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em;
-            padding: 5px 11px; border-radius: 999px;
-            color: var(--ink-strong);
-            background: color-mix(in srgb, var(--pal-1) 34%, rgba(255,255,255,0.12));
-            border: 0.5px solid color-mix(in srgb, var(--pal-2) 44%, rgba(255,255,255,0.18));
-            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-            box-shadow: 0 4px 14px -6px rgba(0,0,0,0.4);
-            transition: opacity 0.35s ease, background 0.35s ease;
+        .os-eyebrow {
+            font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ink-soft);
+            height: 15px; line-height: 15px;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+            transition: opacity 0.35s ease;
         }
-        .os-chip:empty { opacity: 0; }
+        body[data-skin="glass"] .os-eyebrow,
+        body[data-skin="soft"] .os-eyebrow { text-shadow: none; }
+        /* Empty, not hidden: the line keeps its height so the headline does not jump when the
+           first code is added. */
+        .os-eyebrow:empty { opacity: 0; }
 
         .os-grid {
             --row-min: calc(var(--app-size) + 24px);
@@ -1542,11 +1544,15 @@
           <!-- Two weights on one line, the way the reference designs do it: the greeting
                recedes and the name carries. Set as textContent from JS — a display name can
                come from a Google account, which is not this app's string to trust. -->
-          <div id="os-greeting" class="w-full flex items-end justify-between gap-3 mt-2.5 pointer-events-none">
+          <div id="os-greeting" class="w-full flex flex-col mt-1.5 pointer-events-none">
+            <!-- Eyebrow above headline, which is how every one of the reference screens is
+                 built: a small quiet line establishing what you are looking at, then one big
+                 line that owns the width. Right-hand chips were tried first and collided with
+                 the action buttons directly above them. -->
+            <span id="os-count-chip" class="os-eyebrow"></span>
             <h1 class="os-hello leading-[1.05] truncate">
                 <span class="os-hello-soft">Hey,</span><span class="os-hello-name" id="os-hello-name">there</span>
             </h1>
-            <span id="os-count-chip" class="os-chip shrink-0 mb-1.5"></span>
           </div>
         </header>
 
@@ -3334,10 +3340,21 @@
                 // One page needs no dots. A single dot is not navigation, it is decoration
                 // that looks like navigation.
                 this.pagination.innerHTML = '';
-                this.pagination.classList.toggle('opacity-0', totalPages < 2);
+                // Faded AND unhittable. Fading alone left the dots catching taps in a strip
+                // across the middle of the screen — invisible, still hit-testable, and each
+                // one wired to jump to a page. The dots are `pointer-events-auto` for the
+                // case where there ARE several pages, which is what made the invisible ones
+                // clickable too.
+                const oneScreen = totalPages < 2;
+                this.pagination.classList.toggle('opacity-0', oneScreen);
+                this.pagination.classList.toggle('pointer-events-none', oneScreen);
                 for (let i = 0; i < totalPages; i++) {
                     const dot = document.createElement('div');
-                    dot.className = `pagination-dot pointer-events-auto ${i === state.currentPage ? 'active' : ''}`;
+                    // pointer-events-auto only when there is somewhere to go. A child set to
+                    // `auto` re-enables hit-testing regardless of a parent set to `none`, so
+                    // fading the container was never going to be enough on its own — the dots
+                    // stayed tappable through it.
+                    dot.className = `pagination-dot ${oneScreen ? '' : 'pointer-events-auto'} ${i === state.currentPage ? 'active' : ''}`;
                     dot.onclick = () => window.LauncherInput.goTo(i);
                     this.pagination.appendChild(dot);
                 }
