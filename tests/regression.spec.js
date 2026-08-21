@@ -451,14 +451,25 @@ test.describe('Self-contained rendering (regression: CDN outage blanked the layo
         await expect(page.locator('.app-icon-wrapper')).not.toHaveCount(0);
         await expect(page.locator('#dock-container svg')).not.toHaveCount(0);
 
-        const drew = await page.evaluate(() => {
-            const c = document.querySelector('.app-icon-wrapper canvas');
+        // bwip-js is still what has to work offline, but the home screen no longer draws a
+        // code — the tile carries a monogram and the code lives in the viewer, where it is
+        // big enough to actually scan. So draw one the way the viewer does and check real
+        // bars came out, rather than reaching for a canvas the grid no longer has.
+        const drew = await page.evaluate(async () => {
+            const app = { id: 'offline_probe', title: 'Offline', type: 'grid',
+                          bcid: 'qrcode', data: 'offline-check' };
+            window.OS_STATE.apps.push(app);
+            window.placeOnGrid(app, 0);
+            window.Renderer.render();
+            window.InteractionManager.openEnlarge(app);
+            await new Promise(r => setTimeout(r, 700));
+            const c = document.getElementById('fullscreen-canvas');
             if (!c || !c.width) return false;
             const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
             for (let i = 0; i < d.length; i += 4) if (d[i] !== d[0] || d[i + 1] !== d[1]) return true;
             return false; // uniform canvas => nothing rendered
         });
-        expect(drew, 'barcode canvas should contain rendered bars').toBe(true);
+        expect(drew, 'bwip-js drew no bars with every external host blocked').toBe(true);
 
         // And a wallpaper is present without any network fetch.
         const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundImage);
@@ -1282,7 +1293,14 @@ test.describe('Code styling and scannability (Phase 2)', () => {
             window.Renderer.render();
             await new Promise(r => setTimeout(r, 400));
 
-            const cv = document.getElementById('can-bc_styled');
+            // The viewer, not the home tile. A code is drawn in exactly two places now —
+            // the fullscreen viewer and the share/export path — because a barcode shrunk to
+            // an 83px icon was noise nobody could scan anyway.
+            window.InteractionManager.openEnlarge(
+                window.OS_STATE.apps.find(a => a.id === 'bc_styled'));
+            await new Promise(r => setTimeout(r, 600));
+
+            const cv = document.getElementById('fullscreen-canvas');
             if (!cv || !cv.width) return { drawn: false };
             const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
             const seen = new Set();
@@ -1298,8 +1316,11 @@ test.describe('Code styling and scannability (Phase 2)', () => {
     test('a code with no stored colours still renders black on white', async ({ page }) => {
         await page.goto('/index.html');
         await page.waitForTimeout(1200);
-        const painted = await page.evaluate(() => {
-            const cv = document.querySelector('.app-icon-wrapper canvas');
+        const painted = await page.evaluate(async () => {
+            const app = window.OS_STATE.apps.find(a => a.type === 'grid');
+            window.InteractionManager.openEnlarge(app);
+            await new Promise(r => setTimeout(r, 600));
+            const cv = document.getElementById('fullscreen-canvas');
             const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
             const seen = new Set();
             for (let i = 0; i < d.length; i += 4) seen.add(`${d[i]},${d[i+1]},${d[i+2]}`);
@@ -3412,25 +3433,42 @@ test.describe('Nothing blocks a frame, and nothing claims success it did not hav
         expect(ms, `opening the Library blocked for ${Math.round(ms)}ms`).toBeLessThan(BUDGET);
     });
 
-    test('only the thumbnails you can see are drawn', async ({ page }) => {
+    test('the Library rasterises nothing at all', async ({ page }) => {
+        // This used to check that thumbnails were drawn lazily, on an IntersectionObserver,
+        // because drawing a barcode per row froze the list for 452ms at 43 codes.
+        //
+        // The rows carry monograms now, so there is nothing to rasterise on any of them —
+        // strictly better than drawing them late, and it makes the guard simpler: no canvas
+        // may appear in the list at all. If someone puts a code back on a row, they get the
+        // 452ms freeze back with it, and this fails before that ships.
         await loaded(page);
         await page.evaluate(() => window.LibraryManager.open());
         await page.waitForTimeout(700);
 
         const state = await page.evaluate(() => ({
             rows: document.querySelectorAll('#library-list > div').length,
-            pending: window.LibraryManager.pendingThumbs.size,
+            canvases: document.querySelectorAll('#library-list canvas').length,
+            faces: [...document.querySelectorAll('#library-list .lib-mono')]
+                .filter(m => m.textContent.trim().length > 0).length,
         }));
-        expect(state.rows).toBeGreaterThan(30);
-        expect(state.pending, 'every thumbnail was drawn up front').toBeGreaterThan(0);
-        expect(state.pending, 'nothing was drawn at all').toBeLessThan(state.rows);
+        expect(state.rows, 'no rows to check').toBeGreaterThan(30);
+        expect(state.canvases, 'the Library is drawing barcodes per row again').toBe(0);
+        expect(state.faces, 'the rows have no monogram on them').toBe(state.rows);
 
-        // And scrolling brings the rest in rather than leaving blanks.
-        const before = state.pending;
-        await page.evaluate(() => { const l = document.getElementById('library-list'); l.scrollTop = l.scrollHeight; });
-        await page.waitForTimeout(900);
-        expect(await page.evaluate(() => window.LibraryManager.pendingThumbs.size),
-               'scrolling did not draw the rows it revealed').toBeLessThan(before);
+        // And scrolling reveals rows that are already complete, not blanks waiting on work.
+        await page.evaluate(() => {
+            const l = document.getElementById('library-list');
+            l.scrollTop = l.scrollHeight;
+        });
+        await page.waitForTimeout(600);
+        const bottom = await page.evaluate(() => {
+            const rows = [...document.querySelectorAll('#library-list > div')].slice(-5);
+            return rows.every(r => {
+                const m = r.querySelector('.lib-mono');
+                return m && m.textContent.trim().length > 0;
+            });
+        });
+        expect(bottom, 'rows at the bottom of the list came up blank').toBe(true);
     });
 
     test('a toast costs nothing and still appears', async ({ page }) => {
@@ -5790,31 +5828,38 @@ test.describe('The home screen does not blink', () => {
         await page.goto('/index.html');
         await page.waitForTimeout(1500);
 
-        const r = await page.evaluate((src) => {
-            const ink = eval(src);
-            const before = [...document.querySelectorAll('#workspace-pager canvas')];
-            const ids = before.map(c => c.id);
-            const inkBefore = before.map(ink);
+        // The medium changed — a tile carries a monogram now, not a drawn barcode — but the
+        // defect this guards did not: render() must MOVE the existing nodes, not rebuild them,
+        // or every icon is empty for the frame between being created and being filled in.
+        const r = await page.evaluate(() => {
+            const wrappers = [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')];
+            const ids = wrappers.map(w => w.dataset.id);
+            const face = w => {
+                const m = w && w.querySelector('.tile-mono');
+                return m ? m.textContent.trim() : '';
+            };
+            const faceBefore = wrappers.map(face);
 
             window.Renderer.render();
 
-            // Read back in the SAME task, before the 10ms redraw timer can rescue it. This is
+            // Read back in the SAME task, before any deferred work could rescue it. This is
             // the frame the user was seeing as a flash.
-            const after = ids.map(id => document.getElementById(id));
+            const after = ids.map(id =>
+                document.querySelector(`#workspace-pager .app-icon-wrapper[data-id="${id}"]`));
             return {
                 ids,
-                inkBefore,
-                reused: after.every((el, i) => el === before[i]),
-                inkAfter: after.map(ink),
+                faceBefore,
+                reused: after.every((el, i) => el === wrappers[i]),
+                faceAfter: after.map(face),
             };
-        }, inkFn);
+        });
 
         expect(r.ids.length, 'no code icons on the home screen to check').toBeGreaterThan(0);
-        expect(Math.min(...r.inkBefore), 'a code icon was blank before the test even ran')
-            .toBeGreaterThan(0);
+        expect(r.faceBefore.every(f => f.length > 0), 'an icon was blank before the test even ran')
+            .toBe(true);
         expect(r.reused, 'render() destroyed the icons instead of moving them').toBe(true);
-        expect(Math.min(...r.inkAfter), 'the home screen went blank for a frame')
-            .toBeGreaterThan(0);
+        expect(r.faceAfter.every(f => f.length > 0), 'the home screen went blank for a frame')
+            .toBe(true);
     });
 
     test('entering and leaving edit mode does not blank the grid', async ({ page }) => {
@@ -5823,9 +5868,12 @@ test.describe('The home screen does not blink', () => {
 
         for (const step of ['enter', 'leave']) {
             const r = await page.evaluate(({ src, step }) => {
-                const ink = eval(src);
-                const before = [...document.querySelectorAll('#workspace-pager canvas')];
-                const inkBefore = before.map(ink);
+                const face = w => {
+                    const m = w.querySelector('.tile-mono');
+                    return m ? m.textContent.trim() : '';
+                };
+                const before = [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')];
+                const inkBefore = before.map(face);
                 if (step === 'enter') {
                     window.OS_STATE.isEditMode = true;
                     document.body.classList.add('edit-mode');
@@ -5833,12 +5881,12 @@ test.describe('The home screen does not blink', () => {
                 } else {
                     window.exitEditMode();
                 }
-                const after = [...document.querySelectorAll('#workspace-pager canvas')];
-                return { inkBefore, inkAfter: after.map(ink) };
+                const after = [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')];
+                return { inkBefore, inkAfter: after.map(face) };
             }, { src: inkFn, step });
 
-            expect(Math.min(...r.inkAfter), `the grid blanked when it went ${step} edit mode`)
-                .toBeGreaterThan(0);
+            expect(r.inkAfter.every(f => f.length > 0),
+                   `the grid blanked when it went ${step} edit mode`).toBe(true);
         }
     });
 
@@ -5848,11 +5896,14 @@ test.describe('The home screen does not blink', () => {
         await page.goto('/index.html');
         await page.waitForTimeout(1500);
 
-        const r = await page.evaluate(async (src) => {
-            const ink = eval(src);
+        const r = await page.evaluate(async () => {
             const item = window.OS_STATE.apps.find(a => a.type === 'grid' && a.bcid && !a.folderId);
-            const id = `can-${item.id}`;
-            const inkBefore = ink(document.getElementById(id));
+            const mono = () => {
+                const m = document.querySelector(
+                    `.app-icon-wrapper[data-id="${item.id}"] .tile-mono`);
+                return m ? m.textContent.trim() : '';
+            };
+            const before = mono();
 
             item.title = 'Retitled By Test';
             item.data = '9781234567897';
@@ -5861,16 +5912,15 @@ test.describe('The home screen does not blink', () => {
             await new Promise(r => setTimeout(r, 400));
 
             const wrapper = document.querySelector(`.app-icon-wrapper[data-id="${item.id}"]`);
-            return {
-                inkBefore,
-                inkAfter: ink(document.getElementById(id)),
-                label: wrapper.querySelector('.app-label').textContent,
-            };
-        }, inkFn);
+            return { before, after: mono(), label: wrapper.querySelector('.app-label').textContent };
+        });
 
         expect(r.label).toBe('Retitled By Test');
-        expect(r.inkAfter, 'the redrawn icon is blank').toBeGreaterThan(0);
-        expect(r.inkAfter, 'the icon still shows the code it used to hold').not.toBe(r.inkBefore);
+        expect(r.after, 'the renamed icon has no monogram at all').toBeTruthy();
+        // "Retitled By Test" -> RB. If the node were reused without being refreshed it would
+        // still be showing the initials of the name it used to have.
+        expect(r.after, 'the icon still shows the name it used to hold').not.toBe(r.before);
+        expect(r.after).toBe('RB');
     });
 
     test('a folder face keeps up with what is inside it', async ({ page }) => {
@@ -5885,8 +5935,9 @@ test.describe('The home screen does not blink', () => {
             const folder = window.createFolderFrom(ids[1], ids[0]);
             window.Renderer.render();
             await new Promise(r => setTimeout(r, 300));
-            const filled = () => document.querySelectorAll(
-                `.app-icon-wrapper[data-id="${folder.id}"] canvas`).length;
+            const filled = () => [...document.querySelectorAll(
+                `.app-icon-wrapper[data-id="${folder.id}"] .folder-cell`)]
+                .filter(c => c.textContent.trim().length > 0).length;
             const two = filled();
             window.addToFolder(folder.id, ids[2]);
             window.Renderer.render();
@@ -7184,13 +7235,18 @@ test.describe('A code reads as an app icon', () => {
         }, n);
     };
 
-    test('the plate under a code is pure white, on every skin', async ({ page }) => {
-        // The whole point of the plate. A barcode's contrast is what makes it scan at the
-        // counter; tinting the surface it sits on to match the tile would look lovely and
-        // quietly break the product.
+    test('the panel under a code is pure white, on every skin', async ({ page }) => {
+        // A barcode's contrast is what makes it scan at the counter. Tinting the surface it
+        // sits on to match the skin would look lovely and quietly break the product — so the
+        // viewer's panel is exempt from every skin, and this is what says so.
         await page.goto('/index.html');
         await page.waitForTimeout(1300);
         await seed(page);
+        await page.evaluate(async () => {
+            window.InteractionManager.openEnlarge(
+                window.OS_STATE.apps.find(a => a.id === 'tile0'));
+            await new Promise(r => setTimeout(r, 500));
+        });
 
         for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
             await page.evaluate(s => {
@@ -7199,34 +7255,40 @@ test.describe('A code reads as an app icon', () => {
             }, skin);
             await page.waitForTimeout(400);
             const bg = await page.evaluate(() =>
-                getComputedStyle(document.querySelector('#workspace-pager .code-plate')).backgroundColor);
-            expect(bg, `${skin}: the plate under the code is ${bg}, not white`)
+                getComputedStyle(document.querySelector('.fullscreen-canvas-panel')).backgroundColor);
+            expect(bg, `${skin}: the panel under the code is ${bg}, not white`)
                 .toMatch(/^rgba?\(255,\s*255,\s*255(,\s*1)?\)$/);
         }
     });
 
-    test('nothing is painted over the code', async ({ page }) => {
-        // The tile has a specular sweep and a rim highlight. Both are what make it read as an
-        // object rather than a coloured rectangle — and both would sit ON the barcode if the
-        // plate did not out-stack them. A sheen across a code is a contrast reduction.
+    test('nothing is painted over the code in the viewer', async ({ page }) => {
+        // The tile's specular sweep and rim are what make it read as an object rather than a
+        // coloured rectangle, and neither may follow the code into the viewer: a sheen across
+        // a barcode is a contrast reduction, and contrast is whether it scans.
         await page.goto('/index.html');
         await page.waitForTimeout(1300);
         await seed(page, 2);
+        await page.evaluate(async () => {
+            window.InteractionManager.openEnlarge(
+                window.OS_STATE.apps.find(a => a.id === 'tile0'));
+            await new Promise(r => setTimeout(r, 500));
+        });
 
-        const z = await page.evaluate(() => {
-            const tile = document.querySelector('#workspace-pager .code-tile');
-            const plate = tile.querySelector('.code-plate');
-            const num = v => parseInt(v, 10) || 0;
+        const clean = await page.evaluate(() => {
+            const panel = document.querySelector('.fullscreen-canvas-panel');
+            const canvas = document.getElementById('fullscreen-canvas');
+            const r = canvas.getBoundingClientRect();
+            // Whatever the browser says is on top at the middle of the code had better be the
+            // code, or something transparent that belongs to the panel itself.
+            const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
             return {
-                plate: num(getComputedStyle(plate).zIndex),
-                gloss: num(getComputedStyle(tile, '::after').zIndex),
-                rim: num(getComputedStyle(tile, '::before').zIndex),
+                onTop: top === canvas || panel.contains(top),
+                topWas: top ? (top.id || top.className.toString().slice(0, 40)) : 'nothing',
+                tiled: !!panel.querySelector('.code-tile'),
             };
         });
-        expect(z.plate, `the gloss (z${z.gloss}) paints over the plate (z${z.plate})`)
-            .toBeGreaterThan(z.gloss);
-        expect(z.plate, `the rim (z${z.rim}) paints over the plate (z${z.plate})`)
-            .toBeGreaterThan(z.rim);
+        expect(clean.tiled, 'the viewer wrapped the code in a coloured tile').toBe(false);
+        expect(clean.onTop, `${clean.topWas} is painted over the code`).toBe(true);
     });
 
     test('a tile keeps its colour when it is moved', async ({ page }) => {
@@ -7350,24 +7412,27 @@ test.describe('Library is a screen, not a scrim', () => {
         expect(same.homeVariant, 'the home tile lost its variant class').toBeTruthy();
     });
 
-    test('the thumbnail actually has the code in it', async ({ page }) => {
-        // A percentage padding resolves against the containing block's WIDTH, so the plate's
-        // 100% height had nothing definite to resolve against and collapsed to zero. The row
-        // still looked plausible — a coloured chip — with no code in it at all, which is worse
-        // than the plain white one it replaced.
+    test('the thumbnail actually has something in it', async ({ page }) => {
+        // A coloured chip with nothing on it is worse than the plain white one it replaced,
+        // and it is an easy thing to ship: the previous version of this row collapsed its
+        // inner box to 0x0 because a percentage padding resolves against the containing
+        // block's WIDTH, so a 100% height had nothing definite to resolve against.
         await open(page);
         const box = await page.evaluate(() => {
-            const plate = document.querySelector('#library-list .lib-thumb > .code-plate');
-            const canvas = plate && plate.querySelector('canvas');
-            const r = e => e.getBoundingClientRect();
-            return plate && canvas
-                ? { pw: r(plate).width, ph: r(plate).height, cw: r(canvas).width }
-                : null;
+            const thumb = document.querySelector('#library-list .lib-thumb');
+            const mono = thumb && thumb.querySelector('.lib-mono');
+            if (!thumb || !mono) return null;
+            const r = thumb.getBoundingClientRect();
+            const mr = mono.getBoundingClientRect();
+            return { w: r.width, h: r.height, text: mono.textContent.trim(),
+                     mw: mr.width, mh: mr.height };
         });
-        expect(box, 'there is no plate inside the library thumbnail').not.toBeNull();
-        expect(box.pw, `the plate collapsed to ${box.pw}px wide`).toBeGreaterThan(20);
-        expect(box.ph, `the plate collapsed to ${box.ph}px tall`).toBeGreaterThan(20);
-        expect(box.cw, 'the canvas inside the plate has no width').toBeGreaterThan(20);
+        expect(box, 'there is no monogram inside the library thumbnail').not.toBeNull();
+        expect(box.w, `the thumbnail collapsed to ${box.w}px wide`).toBeGreaterThan(30);
+        expect(box.h, `the thumbnail collapsed to ${box.h}px tall`).toBeGreaterThan(30);
+        expect(box.text, 'the monogram is blank').toBeTruthy();
+        expect(box.mw, 'the monogram has no width').toBeGreaterThan(4);
+        expect(box.mh, 'the monogram has no height').toBeGreaterThan(4);
     });
 
     test('every dock icon says what it is', async ({ page }) => {
@@ -7380,5 +7445,236 @@ test.describe('Library is a screen, not a scrim', () => {
         expect(labels.length, 'the dock has no labels').toBeGreaterThanOrEqual(4);
         expect(labels.every(t => t.length > 0), `a dock label is blank: ${JSON.stringify(labels)}`)
             .toBe(true);
+    });
+});
+
+// ============================================================================================
+//  Every dock button does something
+//
+//  "keep cooking the buttons dont actually work"
+//
+//  Two separate defects, and neither one showed up when the action was called directly, which
+//  is what made them look like one broken feature instead of two broken routes:
+//
+//  1. The action lookup was an if/else chain on exact ids, and anything it did not recognise
+//     fell through to "coming soon" — a button that looks live, taps like a button, and does
+//     nothing. Dock ids drift: a cloud document written by an older build, a restored backup,
+//     a hand-edited export.
+//  2. Settings was implemented as btn-open-settings.click(). LauncherInput swallows the next
+//     click at the document's capture phase after every tap, to stop the browser's own
+//     synthesised click firing the same button twice — and it cannot tell that click from a
+//     deliberate one. A dock action routed through a DOM click is dead by construction.
+//
+//  So these tests tap with real touch events. Calling __activate() directly would have passed
+//  against both bugs.
+// ============================================================================================
+test.describe('Every dock button does something', () => {
+    const LAYER = {
+        nav_lib: 'library-overlay',
+        nav_gen: 'create-modal',
+        nav_wifi: 'create-modal',
+        nav_settings: 'settings-modal',
+    };
+
+    const boot = async (page, dock) => {
+        await page.addInitScript((apps) => {
+            localStorage.setItem('xancode_v2_state', JSON.stringify({
+                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
+                autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
+            }));
+        }, dock.map(([id, title, icon], i) => ({ id, title, icon, type: 'dock', order: i })));
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+    };
+
+    // A real touch, not element.click() and not __activate(). The click-swallow bug only
+    // exists on the gesture path.
+    const touchTap = async (page, selector) => {
+        const box = await page.locator(selector).first().boundingBox();
+        if (!box) throw new Error('no box for ' + selector);
+        const cdp = await page.context().newCDPSession(page);
+        const x = box.x + box.width / 2, y = box.y + box.height / 2;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+        await page.waitForTimeout(60);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await page.waitForTimeout(800);
+    };
+
+    const opacityOf = (page, id) =>
+        page.evaluate(i => parseFloat(getComputedStyle(document.getElementById(i)).opacity), id);
+
+    const shut = async (page) => {
+        await page.evaluate(() => {
+            window.LibraryManager && window.LibraryManager.close && window.LibraryManager.close();
+            window.CodeGenerator && window.CodeGenerator.close && window.CodeGenerator.close();
+            window.SettingsManager && window.SettingsManager.close && window.SettingsManager.close();
+        });
+        await page.waitForTimeout(450);
+    };
+
+    test('the stock dock opens what it says it opens', async ({ page }) => {
+        await boot(page, [
+            ['nav_home', 'Home', 'grid'], ['nav_gen', 'Create', 'plus-circle'],
+            ['nav_wifi', 'WiFi', 'wifi'], ['nav_lib', 'Library', 'layout-list'],
+            ['nav_settings', 'Settings', 'settings'],
+        ]);
+        for (const id of Object.keys(LAYER)) {
+            await shut(page);
+            await touchTap(page, `#dock-container [data-id="${id}"]`);
+            const op = await opacityOf(page, LAYER[id]);
+            expect(op, `tapping ${id} opened nothing — ${LAYER[id]} is still at opacity ${op}`)
+                .toBeGreaterThan(0.5);
+        }
+    });
+
+    test('a dock saved under older ids still works', async ({ page }) => {
+        // The names these same five buttons have gone by across builds. A state carrying them
+        // used to render five live-looking buttons, four of which were dead.
+        await boot(page, [
+            ['nav_grid', 'Home', 'grid'], ['nav_add', 'Add', 'plus'],
+            ['nav_wifi', 'WiFi', 'wifi'], ['nav_library', 'Library', 'library'],
+            ['nav_prefs', 'Settings', 'settings'],
+        ]);
+        const cases = [['nav_add', 'create-modal'], ['nav_library', 'library-overlay'],
+                       ['nav_prefs', 'settings-modal']];
+        for (const [id, layer] of cases) {
+            await shut(page);
+            await touchTap(page, `#dock-container [data-id="${id}"]`);
+            const op = await opacityOf(page, layer);
+            expect(op, `the aliased id ${id} is a dead button`).toBeGreaterThan(0.5);
+        }
+    });
+
+    test('an unknown id still resolves by its icon', async ({ page }) => {
+        // Last resort. Whatever an item is called, a dock entry drawn as a scan-line is the
+        // scanner and one drawn as a cog is settings.
+        await boot(page, [
+            ['nav_home', 'Home', 'grid'],
+            ['xyzzy_unknown', 'Mystery', 'settings'],
+        ]);
+        await touchTap(page, '#dock-container [data-id="xyzzy_unknown"]');
+        expect(await opacityOf(page, 'settings-modal'),
+               'an unrecognised dock id with a settings icon did nothing').toBeGreaterThan(0.5);
+    });
+
+    test('no dock action is routed through a synthesised click', async ({ page }) => {
+        // The bug that hid behind every direct-call test that passed. Guarding the shape
+        // rather than the symptom, because the symptom only appears on a real gesture.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const offenders = await page.evaluate(() => {
+            const bad = [];
+            for (const item of window.OS_STATE.apps.filter(a => a.type === 'dock')) {
+                const fn = window.dockAction(item);
+                if (fn && /\.click\s*\(\s*\)/.test(Function.prototype.toString.call(fn))) {
+                    bad.push(item.id);
+                }
+            }
+            return bad;
+        });
+        expect(offenders,
+               `these dock actions fire a DOM click, which LauncherInput swallows: ${offenders.join(', ')}`)
+            .toEqual([]);
+    });
+});
+
+// ============================================================================================
+//  A tile shows a name, not a barcode
+//
+//  "its visually disgusting to to see the barcodes like that"
+//
+//  It was: an Aztec matrix shrunk to 83px, twenty of them in a grid. Nobody has ever scanned a
+//  code off a home screen at that size — the viewer exists for that, full-bleed, which is
+//  where the code is actually used. All the grid got out of it was noise.
+// ============================================================================================
+test.describe('A tile shows a name, not a barcode', () => {
+    test('no barcode is drawn anywhere on the home screen', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        const n = await page.evaluate(() =>
+            document.querySelectorAll('#workspace-pager canvas').length);
+        expect(n, `${n} barcodes are still being drawn into the grid`).toBe(0);
+    });
+
+    test('the code is still there when you open it', async ({ page }) => {
+        // The other half. Taking the barcode off the tile is only correct if opening the tile
+        // still puts a real, scannable code on the screen.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        const ink = await page.evaluate(async () => {
+            const app = window.OS_STATE.apps.find(a => a.type === 'grid');
+            window.InteractionManager.openEnlarge(app);
+            await new Promise(r => setTimeout(r, 700));
+            const c = document.getElementById('fullscreen-canvas');
+            if (!c || !c.width) return -1;
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            // Opaque and dark. An undrawn canvas is transparent black, whose red channel is 0,
+            // so counting dark pixels on colour alone scores a blank one at 45,000.
+            let dark = 0;
+            for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] < 128) dark++;
+            return dark;
+        });
+        expect(ink, 'the viewer shows no code at all').toBeGreaterThan(200);
+    });
+
+    test('initials come from the name, and stop at two', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const got = await page.evaluate(() => {
+            const f = window.tileMonogram;
+            return {
+                two:     f('Kris Kringle'),
+                one:     f('Docksort'),
+                // Three words still gives two: at tile size a third glyph costs more
+                // legibility than it adds meaning.
+                three:   f('Bank of America'),
+                digits:  f('24 Hour Gym'),
+                // Leading punctuation is skipped rather than shown.
+                punct:   f('  "Front Door" fob'),
+                empty:   f(''),
+                missing: f(undefined),
+                // A payload with no letters at all still has to produce something.
+                symbols: f('***'),
+            };
+        });
+        expect(got.two).toBe('KK');
+        expect(got.one).toBe('D');
+        expect(got.three).toBe('BO');
+        expect(got.digits).toBe('2H');
+        expect(got.punct).toBe('FD');
+        expect(got.empty, 'an untitled code has no monogram').toBe('?');
+        expect(got.missing, 'a missing title threw or produced nothing').toBe('?');
+        expect(got.symbols, 'a title with no letters produced nothing').toBe('?');
+    });
+
+    test('a title is never interpolated into the markup', async ({ page }) => {
+        // A title is whatever a scanned payload contained, and a QR code is attacker-controlled
+        // by definition — anyone can print one. HARD RULE 9: untrusted input reaches the DOM as
+        // text or not at all. The monogram is the newest thing to take a title, so it is the
+        // newest way to get this wrong.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        const r = await page.evaluate(async () => {
+            window.__xss = false;
+            const app = { id: 'xss_probe', type: 'grid', bcid: 'qrcode', data: 'x',
+                          title: '<img src=x onerror="window.__xss=true">' };
+            window.OS_STATE.apps.push(app);
+            window.placeOnGrid(app, 0);
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 600));
+            const w = document.querySelector('.app-icon-wrapper[data-id="xss_probe"]');
+            return {
+                fired: window.__xss,
+                injected: !!w.querySelector('img'),
+                mono: w.querySelector('.tile-mono').textContent,
+            };
+        });
+        expect(r.fired, 'a title executed script on the home screen').toBe(false);
+        expect(r.injected, 'a title created an element').toBe(false);
+        // "<img src=x ..." -> the angle bracket is skipped and the initials come out of
+        // the words themselves. That it reads IS rather than <S is the point: the monogram
+        // takes letters, and the markup never gets near the DOM as markup.
+        expect(r.mono, 'the monogram is not derived from the title text').toBe('IS');
     });
 });

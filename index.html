@@ -412,6 +412,50 @@
             isolation: isolate;
         }
         /* The plate. Pure white, never mixed with the palette — see above. */
+        /* The monogram. Sized off the tile rather than in px so it is the same weight on a
+           360 and on a 430, and set in the tile's own colour lightened — white at full
+           strength reads as a sticker, white at 88% with a shadow under it reads as printed
+           into the surface. */
+        .tile-mono {
+            position: relative; z-index: 5;
+            font-size: calc(var(--app-size) * 0.40);
+            font-weight: 700; letter-spacing: -0.03em;
+            line-height: 1;
+            color: rgba(255,255,255,0.94);
+            text-shadow: 0 1px 1px rgba(0,0,0,0.22), 0 2px 10px rgba(0,0,0,0.16);
+            user-select: none;
+            /* Optical centring: caps sit high in the em box, so mathematical centring leaves
+               them looking a pixel or two north of centre. */
+            transform: translateY(0.02em);
+        }
+        /* Two letters need to be narrower than one, or "KK" overruns a tile that "K" sits
+           comfortably inside. */
+        .tile-mono[data-len="2"] { font-size: calc(var(--app-size) * 0.30); letter-spacing: -0.04em; }
+
+        /* The monogram at list size. Sized off the thumb, not off --app-size, because a row
+           chip does not grow when the home screen's icons do. */
+        .lib-thumb .tile-mono  { font-size: 23px; }
+        .lib-thumb .tile-mono[data-len="2"] { font-size: 18px; }
+        .search-thumb {
+            box-sizing: border-box;
+            width: 48px; height: 48px;
+            border-radius: calc(var(--squircle-radius) * 0.8);
+            padding: 5px;
+        }
+        .search-thumb .tile-mono  { font-size: 18px; }
+        .search-thumb .tile-mono[data-len="2"] { font-size: 14px; }
+
+        .folder-cell {
+            position: relative; z-index: 5;
+            border-radius: calc(var(--squircle-radius) * 0.5);
+            background: rgba(255,255,255,0.20);
+            display: flex; align-items: center; justify-content: center;
+            font-size: calc(var(--app-size) * 0.16);
+            font-weight: 700; color: rgba(255,255,255,0.95);
+            overflow: hidden;
+        }
+        .folder-cell-empty { background: rgba(255,255,255,0.10); }
+
         /* z-5 puts the plate above the tile's gloss and rim. A specular sweep across a
            barcode is a contrast reduction, and contrast is the difference between a code
            that scans at the counter and one that does not — so the sheen stops at the
@@ -2448,6 +2492,115 @@
         //
         // FNV-1a, 32-bit. Any spreading hash would do — this one is four lines and has no
         // clustering on the short, similar strings ids actually are.
+        // What a code shows on the home screen.
+        //
+        // It used to show the code itself: an Aztec matrix, shrunk to 83px, twenty of them in
+        // a grid. Nobody has ever scanned a barcode off a home screen at that size — the
+        // viewer exists for that, full-bleed, which is where the code is actually used. All
+        // the grid got out of it was noise, and it was reported exactly that way: "its
+        // visually disgusting to see the barcodes like that".
+        //
+        // So the tile shows a monogram, the way a contact avatar or an album tile does. One
+        // or two letters lifted from the title, on the palette gradient the tile already had.
+        window.tileMonogram = function(title) {
+            const t = String(title || '').trim();
+            if (!t) return '?';
+            // Two initials when the name is two words ("Kris Kringle" -> KK), one otherwise.
+            // Not three: at tile size a third letter costs more legibility than it adds
+            // meaning, and every extra glyph shrinks the other two.
+            const words = t.split(/\s+/).filter(w => /[\p{L}\p{N}]/u.test(w));
+            if (words.length >= 2) {
+                return (first(words[0]) + first(words[1])).toUpperCase();
+            }
+            return first(t).toUpperCase() || '?';
+
+            function first(w) {
+                const m = String(w).match(/[\p{L}\p{N}]/u);
+                return m ? m[0] : '';
+            }
+        };
+
+        // What a dock button does.
+        //
+        // This was an if/else chain on exact ids, and anything it did not recognise fell
+        // through to "coming soon" — a button that looks live, taps like a button, and does
+        // nothing. That is not hypothetical: a dock item can arrive from a cloud document
+        // written by an older build, from a restored backup, or from a hand-edited export, and
+        // ids drift. Every one of those produced a dead dock.
+        //
+        // A table, plus aliases for the names the same five buttons have gone by, plus a last
+        // resort that reads the ICON — because whatever an item is called, a dock entry drawn
+        // as a scan-line is the scanner.
+        const DOCK_ACTIONS = {
+            nav_home:  () => window.LauncherInput.goTo(0),
+            nav_gen:   () => window.CodeGenerator && window.CodeGenerator.open(),
+            nav_lib:   () => window.LibraryManager && window.LibraryManager.open(),
+            nav_scan:  () => window.ScannerEngine && window.ScannerEngine.start(),
+            // Sharing a network is the single most common reason to make a QR code, which is
+            // why it earns a dock slot; it opens the WiFi form directly rather than the picker.
+            nav_wifi:  () => {
+                if (!window.CodeGenerator) return;
+                window.CodeGenerator.open();
+                window.CodeGenerator.openTemplateForm('wifi');
+            },
+            // Calls the manager, NOT btn-open-settings.click().
+            //
+            // A dock action implemented as a synthesised click cannot work, by construction:
+            // LauncherInput swallows the next click at the document's capture phase after
+            // every tap, to stop the browser's own synthesised click firing the same button
+            // twice. The swallower cannot tell that click from this one, so Settings opened
+            // from the dock was eaten a frame after it was dispatched — the button looked
+            // completely dead, and every debug path that called the action directly worked
+            // fine, which is what made it look like the action was broken rather than the
+            // route to it.
+            nav_settings: () => window.SettingsManager && window.SettingsManager.open(),
+        };
+        const DOCK_ALIASES = {
+            nav_add: 'nav_gen', nav_create: 'nav_gen', nav_new: 'nav_gen',
+            nav_library: 'nav_lib', nav_codes: 'nav_lib', nav_list: 'nav_lib',
+            nav_scanner: 'nav_scan', nav_camera: 'nav_scan',
+            nav_grid: 'nav_home', nav_pages: 'nav_home',
+            nav_prefs: 'nav_settings', nav_config: 'nav_settings',
+        };
+        const DOCK_BY_ICON = {
+            grid: 'nav_home', 'layout-grid': 'nav_home',
+            plus: 'nav_gen', 'plus-circle': 'nav_gen', 'plus-square': 'nav_gen',
+            library: 'nav_lib', 'layout-list': 'nav_lib', list: 'nav_lib',
+            'scan-line': 'nav_scan', scan: 'nav_scan', 'qr-code': 'nav_scan', camera: 'nav_scan',
+            wifi: 'nav_wifi',
+            settings: 'nav_settings', 'settings-2': 'nav_settings', cog: 'nav_settings',
+        };
+        window.dockAction = function(item) {
+            if (!item) return null;
+            const id = item.id;
+            const key = DOCK_ACTIONS[id] ? id
+                      : DOCK_ALIASES[id] ? DOCK_ALIASES[id]
+                      : DOCK_BY_ICON[item.icon];
+            return key ? DOCK_ACTIONS[key] : null;
+        };
+
+        // Tap-outside-to-close, minus the case where the tap that OPENED the layer is the one
+        // arriving.
+        //
+        // Opening Settings from the dock did nothing at all: the dock's activate ran
+        // btn-open-settings.click(), the panel opened, and then the browser's synthesized
+        // click from that same touch landed on the freshly uncovered backdrop and closed it
+        // again, one frame later and invisibly. Every layer with a backdrop had the same hole;
+        // Settings was just the one reachable from a dock button.
+        //
+        // Stamped rather than debounced by a constant: what has to be ignored is "the gesture
+        // that opened this", not "the next N milliseconds of the user's life". 250ms is longer
+        // than a click follows its own touchend by, and far shorter than anyone reaches back
+        // to dismiss something they just opened.
+        window.markLayerOpened = function(el) { if (el) el.__openedAt = performance.now(); };
+        window.backdropDismiss = function(modal, close) {
+            modal.addEventListener('click', (e) => {
+                if (e.target !== modal) return;
+                if (performance.now() - (modal.__openedAt || 0) < 250) return;
+                close();
+            });
+        };
+
         window.tileVariant = function(id) {
             let h = 0x811c9dc5;
             const str = String(id || '');
@@ -2847,7 +3000,7 @@
                     
                     let iconHtml = '';
                     if (app.type === 'grid' && app.bcid) {
-                        iconHtml = `<div class="w-12 h-12 bg-white rounded-[0.85rem] p-1.5 flex flex-shrink-0 items-center justify-center shadow-sm"><canvas id="search-can-${app.id}" class="max-w-full max-h-full pixelated"></canvas></div>`;
+                        iconHtml = `<div class="search-thumb code-tile tile-${window.tileVariant(app.id)} flex flex-shrink-0 items-center justify-center"><span class="tile-mono search-mono"></span></div>`;
                     } else {
                         iconHtml = `<div class="w-12 h-12 accent-bg-soft accent-border-soft border rounded-[0.85rem] flex items-center justify-center flex-shrink-0 shadow-sm"><i data-lucide="${app.icon}" class="w-6 h-6 accent-text"></i></div>`;
                     }
@@ -2885,10 +3038,11 @@
 
                     this.resultsContainer.appendChild(el);
 
-                    if (app.type === 'grid' && app.bcid) {
-                        setTimeout(() => {
-                            window.renderCode(`search-can-${app.id}`, app, { scale: 2 });
-                        }, 10);
+                    const smono = el.querySelector('.search-mono');
+                    if (smono) {
+                        const g = window.tileMonogram(app.title);
+                        smono.textContent = g;
+                        smono.dataset.len = String(g.length);
                     }
                 });
                 safeCreateIcons();
@@ -3113,8 +3267,8 @@
                     // A 2x2 peek at what is inside, the way a folder is legible at a glance.
                     const kids = window.folderChildren(itemData.id).slice(0, 4);
                     const cells = Array.from({ length: 4 }, (_, i) => kids[i]
-                        ? `<div class="code-plate relative z-[5] overflow-hidden flex items-center justify-center p-[6%]" style="border-radius:calc(var(--squircle-radius) * 0.5)"><canvas id="fdr-${itemData.id}-${i}" class="w-full h-full object-contain pixelated"></canvas></div>`
-                        : '<div class="relative z-[5] bg-white/20" style="border-radius:calc(var(--squircle-radius) * 0.5)"></div>').join('');
+                        ? `<div class="folder-cell" data-mono="${i}"></div>`
+                        : '<div class="folder-cell folder-cell-empty"></div>').join('');
                     iconInnerHtml = `
                         <div class="code-tile tile-${window.tileVariant(itemData.id)} w-full h-full grid grid-cols-2 grid-rows-2 gap-[4px] pointer-events-none">
                             ${cells}
@@ -3124,9 +3278,7 @@
                     // for why the colour stops at the plate's edge.
                     iconInnerHtml = `
                         <div class="code-tile tile-${window.tileVariant(itemData.id)} w-full h-full flex items-center justify-center pointer-events-none">
-                            <div class="code-plate w-full h-full flex items-center justify-center p-[9%] relative z-[5]">
-                                <canvas id="can-${itemData.id}" class="w-full h-full object-contain pixelated"></canvas>
-                            </div>
+                            <span class="tile-mono"></span>
                         </div>`;
                 } else {
                     iconInnerHtml = `
@@ -3174,6 +3326,14 @@
                 // Verified: the script executed, it was not merely markup appearing.
                 // HARD RULE 9 — untrusted input reaches the DOM as text or not at all.
                 wrapper.innerHTML = iconHtml;
+                // Set as text, never interpolated into the markup above. A monogram comes from
+                // the title, and a title is whatever a scanned payload contained. HARD RULE 9.
+                const mono = wrapper.querySelector('.tile-mono');
+                if (mono) {
+                    const glyphs = window.tileMonogram(itemData.title);
+                    mono.textContent = glyphs;
+                    mono.dataset.len = String(glyphs.length);
+                }
                 {
                     // The dock gets labels too. Five identical line glyphs in a row is a
                     // guessing game — the reference dock this is modelled on names every one
@@ -3204,25 +3364,10 @@
                         if (window.FolderManager) window.FolderManager.open(itemData.id);
                     } else if (itemData.type === 'grid') {
                         if (window.InteractionManager) window.InteractionManager.openEnlarge(live());
-                    } else if (itemData.id === 'nav_gen') {
-                        if (window.CodeGenerator) window.CodeGenerator.open();
-                    } else if (itemData.id === 'nav_home') {
-                        window.LauncherInput.goTo(0);
-                    } else if (itemData.id === 'nav_scan') {
-                        if (window.ScannerEngine) window.ScannerEngine.start();
-                    } else if (itemData.id === 'nav_lib') {
-                        if (window.LibraryManager) window.LibraryManager.open();
-                    } else if (itemData.id === 'nav_wifi') {
-                        // Was falling through to "WiFi coming soon" — a dead button sitting in
-                        // the dock, exactly like the Library one before it. Sharing a network is
-                        // the single most common reason to make a QR code, which is why it earns
-                        // a dock slot; it opens the WiFi form directly rather than the picker.
-                        if (window.CodeGenerator) {
-                            window.CodeGenerator.open();
-                            window.CodeGenerator.openTemplateForm('wifi');
-                        }
                     } else {
-                        window.showToast(`${itemData.title} coming soon.`);
+                        const run = window.dockAction(itemData);
+                        if (run) run();
+                        else window.showToast(`${itemData.title} coming soon.`);
                     }
                 };
                 wrapper.__activate = activate;
@@ -3238,15 +3383,12 @@
                 if (itemData.type === 'folder') {
                     setTimeout(() => {
                         window.folderChildren(itemData.id).slice(0, 4).forEach((kid, i) => {
-                            window.renderCode(`fdr-${itemData.id}-${i}`, kid, { scale: 1 });
+                            const cell = wrapper.querySelector(`.folder-cell[data-mono="${i}"]`);
+                            if (cell) cell.textContent = window.tileMonogram(kid.title);
                         });
                     }, 10);
                 }
-                if (itemData.type === 'grid' && itemData.bcid) {
-                    setTimeout(() => {
-                        window.renderCode(`can-${itemData.id}`, itemData, { scale: 3 });
-                    }, 10);
-                }
+
                 
                 const removeBtn = wrapper.querySelector('.edit-only');
                 if (removeBtn) {
@@ -5370,7 +5512,7 @@
 
                 document.getElementById('btn-close-create').addEventListener('click', () => this.close());
                 document.getElementById('btn-save-create').addEventListener('click', () => this.saveFromCustomForm());
-                this.modal.addEventListener('click', (e) => { if(e.target === this.modal) this.close(); });
+                window.backdropDismiss(this.modal, () => this.close());
 
                 this.tabButtons.forEach(btn => btn.addEventListener('click', () => this.setMode(btn.dataset.mode)));
 
@@ -5741,6 +5883,7 @@
                 this.closeTemplateForm();
                 this.setMode(prefillData ? 'custom' : 'templates');
 
+                window.markLayerOpened(this.modal);
                 this.modal.classList.remove('opacity-0', 'pointer-events-none');
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
 
@@ -5938,6 +6081,7 @@
             }
 
             async start() {
+                window.markLayerOpened(this.modal);
                 this.modal.classList.remove('opacity-0', 'pointer-events-none');
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
                 this.resetScanUI();
@@ -6331,7 +6475,7 @@
 
                 document.getElementById('btn-open-settings').addEventListener('click', () => this.open());
                 document.getElementById('btn-close-settings').addEventListener('click', () => this.close());
-                this.modal.addEventListener('click', (e) => { if (e.target === this.modal) this.close(); });
+                window.backdropDismiss(this.modal, () => this.close());
 
                 this.gridButtons.forEach(btn => {
                     btn.addEventListener('click', () => this.setGridSize(btn.dataset.grid));
@@ -6376,6 +6520,7 @@
 
             open() {
                 this.syncGridButtonsUI();
+                window.markLayerOpened(this.modal);
                 this.modal.classList.remove('opacity-0', 'pointer-events-none');
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
                 this.panel.classList.remove('scale-90');
@@ -6985,7 +7130,7 @@
 
                 document.getElementById('btn-open-account').addEventListener('click', () => this.open());
                 document.getElementById('btn-close-account').addEventListener('click', () => this.close());
-                this.modal.addEventListener('click', (e) => { if (e.target === this.modal) this.close(); });
+                window.backdropDismiss(this.modal, () => this.close());
                 document.getElementById('btn-google-signin').addEventListener('click', () => this.signInGoogle());
                 document.getElementById('btn-sign-out').addEventListener('click', () => this.signOutAndReset());
 
@@ -7268,6 +7413,7 @@
             open() {
                 if (this.guestError) this.guestError.classList.add('hidden');
                 if (!this.ready) this.showGuestError("Cloud sync isn't available right now (offline or blocked) — your codes are still safe on this device.");
+                window.markLayerOpened(this.modal);
                 this.modal.classList.remove('opacity-0', 'pointer-events-none');
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
                 this.panel.classList.remove('scale-90');
@@ -7693,9 +7839,7 @@
                     row.className = 'lib-row flex items-center gap-3.5 p-3 active:scale-[0.98] transition-transform cursor-pointer shrink-0';
                     row.innerHTML = `
                         <div class="lib-thumb code-tile tile-${window.tileVariant(app.id)} shrink-0 flex items-center justify-center">
-                            <div class="code-plate w-full h-full flex items-center justify-center p-[9%]">
-                                <canvas id="lib-can-${app.id}" class="max-w-full max-h-full pixelated"></canvas>
-                            </div>
+                            <span class="tile-mono lib-mono"></span>
                         </div>
                         <div class="flex-1 min-w-0">
                             <h4 class="text-white font-bold text-[15px] truncate tracking-wide"></h4>
@@ -7742,9 +7886,14 @@
 
                     this.list.appendChild(row);
 
-                    // Queued, not drawn. See watchThumbs().
-                    const canvas = row.querySelector(`#lib-can-${app.id}`);
-                    if (canvas) { this.pendingThumbs.set(canvas, app); this.thumbObserver.observe(canvas); }
+                    // No canvas to queue any more — the row shows a monogram, so there is
+                    // nothing to rasterise and the whole lazy-thumbnail path stays idle here.
+                    const lmono = row.querySelector('.lib-mono');
+                    if (lmono) {
+                        const g = window.tileMonogram(app.title);
+                        lmono.textContent = g;
+                        lmono.dataset.len = String(g.length);
+                    }
                 });
 
                 safeCreateIcons();
