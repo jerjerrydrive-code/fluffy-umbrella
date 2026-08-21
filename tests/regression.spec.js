@@ -3401,7 +3401,10 @@ test.describe('No dead ends in the dock', () => {
         await boot(page);
         const badges = () => page.evaluate(() =>
             [...document.querySelectorAll('#main-dock .app-icon-wrapper')].map(el => {
-                const b = el.querySelector('[class*="bg-red"]');
+                // .os-badge, not [class*="bg-red"]. The badge's colour lives in a stylesheet
+                // rule now rather than a utility class, because it also needs a ring in the
+                // key's own fill so it reads as attached to that button.
+                const b = el.querySelector('.os-badge');
                 return { id: el.dataset.id, badge: b ? b.textContent.trim() : null };
             }));
 
@@ -6965,7 +6968,15 @@ test.describe('The dock glyph grows with the dock', () => {
                 const r = await page.evaluate((skin) => {
                     document.body.dataset.skin = skin;
                     const row = document.getElementById('dock-container');
-                    const tile = row.querySelector('.app-icon').getBoundingClientRect();
+                    // The KEY, not the glyph plate inside it.
+                    //
+                    // This used to measure against .app-icon, which was the full width of the
+                    // key. The glyph is inset to 74% of the key now — the padding that stops a
+                    // dock key reading as top-heavy has to come out of the glyph, because the
+                    // key's width is what dockSizeFor computed for the bar to fit. Measuring
+                    // the glyph against the shrunken plate reported 80% for what is still 56%
+                    // of the button you actually press.
+                    const tile = row.querySelector('.app-icon-wrapper').getBoundingClientRect();
                     const g = row.querySelector('.nav-glyph');
                     return {
                         tile: tile.width,
