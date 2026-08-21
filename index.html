@@ -424,7 +424,33 @@
         /* The tile is two levels down — wrapper > .jiggle-target > .app-icon — and
            .jiggle-target is shrink-to-fit, so a percentage on the tile alone resolved against
            the 28px glyph inside it and collapsed the icon instead of capping it. */
-        #dock-container .app-icon-wrapper > .jiggle-target { width: 100%; }
+        /* Inset, not full-bleed. The key's width is what dockSizeFor computed for it, so the
+           padding has to come out of the GLYPH rather than out of the key — otherwise every
+           key grows by the padding and the bar stops fitting. 74% leaves an even margin on
+           all four sides with the label below. */
+        .os-badge {
+            position: absolute; top: -5px; right: -5px; z-index: 10;
+            min-width: 18px; height: 18px; padding: 0 5px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 999px;
+            font-size: 10px; font-weight: 800; letter-spacing: -0.01em;
+            color: #fff; background: #e5484d;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.35), 0 0 0 2px var(--badge-ring, transparent);
+            transition: opacity 0.3s ease;
+        }
+        /* On a dock key the badge sits INSIDE the key, ringed in the key's own fill so it
+           reads as attached to that button rather than floating over the bar. */
+        #dock-container .os-badge {
+            top: 3px; right: 3px;
+            min-width: 17px; height: 17px; font-size: 9.5px;
+            --badge-ring: color-mix(in srgb, var(--pal-1) 30%, rgba(255,255,255,0.10));
+        }
+
+        /* :not(.os-badge) — the badge is a .jiggle-target too, so that it shakes with the icon
+           in edit mode, and once it was reparented to the key it started matching this rule
+           and stretching to 74% of the key's width: a red lozenge across the top instead of a
+           disc in the corner. */
+        #dock-container .app-icon-wrapper > .jiggle-target:not(.os-badge) { width: 74%; }
         #dock-container .app-icon {
             width: 100%;
             height: auto;
@@ -976,7 +1002,7 @@
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
             pointer-events: none;
         }
-        #dock-container .app-icon-wrapper { flex-direction: column; padding-bottom: 2px; }
+        #dock-container .app-icon-wrapper { flex-direction: column; }
 
         /* The dock, given the same treatment as the tiles.
            
@@ -1011,14 +1037,41 @@
         #dock-container { position: relative; z-index: 1; }
         /* The well. color-mix against the palette rather than a flat black so a light skin
            gets a light recess instead of a smudge. */
+        /* One button, one press, one radius.
+           
+           Three things were wrong here and together they are what made a dock key look like
+           two shapes stuck together:
+           
+           1. TWO nested press animations. The well scaled to 0.93 and the .app-icon inside it
+              scaled to 0.92 at the same time, so pushing a key visibly separated the glyph
+              from the label under it — reported as "it shows the top half of the button so we
+              see you merged two buttons for each". One press, on the whole key.
+           
+           2. A PERCENTAGE radius on a non-square box. 20.25% of a 65x84 well is 13px across
+              and 17px down: every corner an ellipse, and every key subtly lopsided. That is
+              most of the "hand drawn" look. Derived from --dock-size instead, so it is a real
+              radius in pixels and the same on all four corners.
+           
+           3. No padding. The glyph sat flush against the top edge with all the slack below the
+              label, which is why the key read as top-heavy even at rest.
+        */
         #dock-container .app-icon-wrapper {
-            border-radius: calc(var(--squircle-radius) * 0.9);
+            border-radius: calc(var(--dock-size, 64px) * 0.30);
+            padding: 7px 0 6px;
             background: color-mix(in srgb, var(--pal-1) 14%, rgba(255,255,255,0.07));
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.16),
                         inset 0 -1px 0 rgba(0,0,0,0.14);
-            transition: background 0.35s ease, transform 0.2s var(--spring-snappy);
+            transition: background 0.25s ease, transform 0.16s var(--spring-snappy),
+                        box-shadow 0.16s ease;
         }
-        #dock-container .app-icon-wrapper:active { transform: scale(0.93); }
+        #dock-container .app-icon-wrapper:active {
+            transform: scale(0.94);
+            background: color-mix(in srgb, var(--pal-2) 26%, rgba(255,255,255,0.13));
+            box-shadow: inset 0 2px 5px rgba(0,0,0,0.22);
+        }
+        /* The glyph does not get its own press. See (1) above. */
+        #dock-container .app-icon:active,
+        #dock-container .jiggle-target:active { transform: none; }
         /* Out of the way AND out of the flow.
            Translating alone left the dock's 130px box sitting in the bottom stack while the
            dock itself was painted off-screen, so the page controls were pushed up over the
@@ -3759,10 +3812,14 @@
                     itemData = Object.assign({}, itemData, { badge: saved > 0 ? String(saved) : null });
                 }
 
+                // The badge is set as text, and it is a COUNT, not a headline.
+                //
+                // It was a 20px red disc hung outside the icon's box at -6px,-6px, which on a
+                // dock key put it half over the glyph and half over the pill's edge — the
+                // loudest thing in the bar, for the least important information in it. Tucked
+                // inside the key now, and small.
                 let notifBadge = itemData.badge ? `
-                    <div class="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-bold min-w-[20px] h-5 px-1 flex items-center justify-center rounded-full border-2 border-transparent shadow-md z-10 jiggle-target pointer-events-none transition-opacity" style="box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
-                        ${itemData.badge}
-                    </div>
+                    <div class="os-badge jiggle-target pointer-events-none"></div>
                 ` : '';
 
                 const iconHtml = `
@@ -3784,6 +3841,18 @@
                 // Verified: the script executed, it was not merely markup appearing.
                 // HARD RULE 9 — untrusted input reaches the DOM as text or not at all.
                 wrapper.innerHTML = iconHtml;
+                const badgeEl = wrapper.querySelector('.os-badge');
+                if (badgeEl) {
+                    // Reparented to the wrapper. It is authored inside the jiggle group so it
+                    // shakes with the icon in edit mode, but absolute positioning resolves
+                    // against the nearest positioned ancestor — which is the inset glyph, not
+                    // the key — so "top right" landed on top of the glyph instead of in the
+                    // key's corner. The wrapper is the key.
+                    wrapper.appendChild(badgeEl);
+                    // 99+ rather than a disc that grows until it swallows the key.
+                    const n = parseInt(itemData.badge, 10);
+                    badgeEl.textContent = (!isNaN(n) && n > 99) ? '99+' : String(itemData.badge);
+                }
                 // Set as text, never interpolated into the markup above. A monogram comes from
                 // the title, and a title is whatever a scanned payload contained. HARD RULE 9.
                 const mono = wrapper.querySelector('.tile-mono');

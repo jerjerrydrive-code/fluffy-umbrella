@@ -3401,7 +3401,10 @@ test.describe('No dead ends in the dock', () => {
         await boot(page);
         const badges = () => page.evaluate(() =>
             [...document.querySelectorAll('#main-dock .app-icon-wrapper')].map(el => {
-                const b = el.querySelector('[class*="bg-red"]');
+                // .os-badge, not [class*="bg-red"]. The badge's colour lives in a stylesheet
+                // rule now rather than a utility class, because it also needs a ring in the
+                // key's own fill so it reads as attached to that button.
+                const b = el.querySelector('.os-badge');
                 return { id: el.dataset.id, badge: b ? b.textContent.trim() : null };
             }));
 
@@ -6965,7 +6968,15 @@ test.describe('The dock glyph grows with the dock', () => {
                 const r = await page.evaluate((skin) => {
                     document.body.dataset.skin = skin;
                     const row = document.getElementById('dock-container');
-                    const tile = row.querySelector('.app-icon').getBoundingClientRect();
+                    // The KEY, not the glyph plate inside it.
+                    //
+                    // This used to measure against .app-icon, which was the full width of the
+                    // key. The glyph is inset to 74% of the key now — the padding that stops a
+                    // dock key reading as top-heavy has to come out of the glyph, because the
+                    // key's width is what dockSizeFor computed for the bar to fit. Measuring
+                    // the glyph against the shrunken plate reported 80% for what is still 56%
+                    // of the button you actually press.
+                    const tile = row.querySelector('.app-icon-wrapper').getBoundingClientRect();
                     const g = row.querySelector('.nav-glyph');
                     return {
                         tile: tile.width,
@@ -8388,5 +8399,113 @@ test.describe('The palette moves, and the grid arrives once', () => {
                 .some(el => getComputedStyle(el).animationName !== 'none');
         });
         expect(animating, 'a re-render replayed the arrival animation').toBe(false);
+    });
+});
+
+// ============================================================================================
+//  A dock key is one button
+//
+//  "even when i push the buttons its show the top half of the button so we see you merged two
+//   buttons for each and its just not cutting it for quality ... the whole program looks
+//   childish"
+//
+//  Three faults, and together they are exactly that: a key that looks like two shapes stuck
+//  together, with wobbly corners.
+// ============================================================================================
+test.describe('A dock key is one button', () => {
+    const boot = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+    };
+
+    test('pressing a key animates the key, not the glyph inside it', async ({ page }) => {
+        // The well scaled to 0.93 and the .app-icon inside it scaled to 0.92 at the same time,
+        // so pushing a key visibly separated the glyph from its label — two buttons moving
+        // where there is one button.
+        //
+        // :active is forced through CDP rather than simulated with a touch, because a
+        // synthetic touch does not put a real element into :active, and the whole question is
+        // what the CASCADE resolves to. A rule that merely matches is not a bug; a rule that
+        // wins is.
+        await boot(page);
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send('DOM.enable');
+        await cdp.send('CSS.enable');
+        const { root } = await cdp.send('DOM.getDocument');
+        const forceActive = async (selector) => {
+            const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector });
+            if (nodeId) await cdp.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: ['active'] });
+        };
+        await forceActive('#dock-container .app-icon-wrapper');
+        await forceActive('#dock-container .app-icon-wrapper .app-icon');
+        await forceActive('#dock-container .app-icon-wrapper .jiggle-target');
+        await page.waitForTimeout(300);
+
+        const t = await page.evaluate(() => {
+            const key = document.querySelector('#dock-container .app-icon-wrapper');
+            return {
+                key: getComputedStyle(key).transform,
+                glyph: getComputedStyle(key.querySelector('.app-icon')).transform,
+                jiggle: getComputedStyle(key.querySelector('.jiggle-target')).transform,
+            };
+        });
+        // "none" and the identity matrix are the same thing to the eye. An element whose rule
+        // sets `transform: none` while a transition is declared on it computes to
+        // matrix(1,0,0,1,0,0) rather than the keyword, so the check is for identity.
+        const still = v => v === 'none' || v === 'matrix(1, 0, 0, 1, 0, 0)';
+        expect(still(t.key), 'the key itself does not respond to a press at all').toBe(false);
+        expect(still(t.glyph), `the glyph moves too (${t.glyph}) — that is the second button`).toBe(true);
+        expect(still(t.jiggle), `the jiggle group moves too (${t.jiggle})`).toBe(true);
+    });
+
+    test('a key has real corners, not elliptical ones', async ({ page }) => {
+        // border-radius was a PERCENTAGE on a non-square box: 20.25% of a 65x84 key is 13px
+        // across and 17px down, so every corner was an ellipse and every key subtly lopsided.
+        // That is most of what "hand drawn" was pointing at.
+        await boot(page);
+        const r = await page.evaluate(() => {
+            const cs = getComputedStyle(document.querySelector('#dock-container .app-icon-wrapper'));
+            return ['borderTopLeftRadius', 'borderTopRightRadius',
+                    'borderBottomLeftRadius', 'borderBottomRightRadius'].map(k => cs[k]);
+        });
+        for (const v of r) {
+            expect(v, `a corner is "${v}" — a percentage radius on a non-square box is an ellipse`)
+                .not.toContain('%');
+            // An elliptical corner serialises as two values, "13px 17px".
+            expect(v.trim().split(/\s+/).length, `a corner is elliptical: "${v}"`).toBe(1);
+        }
+        expect(new Set(r).size, `the four corners differ: ${r.join(', ')}`).toBe(1);
+    });
+
+    test('the badge sits inside the key it belongs to', async ({ page }) => {
+        // It was a 20px disc hung at -6px,-6px off the ICON's box — which, once the glyph was
+        // inset inside the key, put it half over the glyph and half over the bar. Loudest
+        // element in the dock, least important information in it.
+        await boot(page);
+        const r = await page.evaluate(() => {
+            const key = document.querySelector('#dock-container .app-icon-wrapper .os-badge');
+            if (!key) return null;
+            const b = key.getBoundingClientRect();
+            const k = key.closest('.app-icon-wrapper').getBoundingClientRect();
+            const glyph = key.closest('.app-icon-wrapper').querySelector('.app-icon').getBoundingClientRect();
+            return {
+                inside: b.top >= k.top - 1 && b.right <= k.right + 1,
+                width: b.width,
+                // A badge clipping the glyph's rounded CORNER is how every phone draws this;
+                // covering the middle of the glyph is not. The bar is the centre, not any
+                // overlap at all.
+                overGlyphCentre: b.left < glyph.left + glyph.width * 0.7
+                              && b.right > glyph.left + glyph.width * 0.3
+                              && b.top < glyph.top + glyph.height * 0.7
+                              && b.bottom > glyph.top + glyph.height * 0.3,
+            };
+        });
+        expect(r, 'no badge is being rendered on the Library key').not.toBeNull();
+        expect(r.inside, 'the badge hangs outside its key').toBe(true);
+        // A disc, not a lozenge: it is a .jiggle-target too, and once reparented onto the key
+        // it started matching the rule that sizes a key's glyph to 74% of the key.
+        expect(r.width, `the badge is ${Math.round(r.width)}px wide — that is a lozenge, not a badge`)
+            .toBeLessThan(34);
+        expect(r.overGlyphCentre, 'the badge is painted across the middle of the glyph').toBe(false);
     });
 });
