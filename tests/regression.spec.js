@@ -7297,3 +7297,88 @@ test.describe('A code reads as an app icon', () => {
         expect(spread, `the hash only ever produces ${spread.join(',')}`).toEqual([0, 1, 2, 3, 4, 5]);
     });
 });
+
+// ============================================================================================
+//  Library is a screen, not a scrim
+//
+//  It used to be `bg-black/50` over a blur, so the home screen's own greeting read straight
+//  through the word "Library" — two screens legible at once, which is one too many. And the
+//  same code was drawn on a plain white chip here while the home screen gave it a coloured
+//  tile, so the thing you were looking for did not look like the thing you tapped.
+// ============================================================================================
+test.describe('Library is a screen, not a scrim', () => {
+    const open = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        await page.evaluate(async () => {
+            for (let i = 0; i < 6; i++) {
+                const c = { id: 'lib' + i, title: 'Lib ' + i, type: 'grid',
+                            bcid: 'qrcode', data: 'lib-payload-' + i };
+                window.OS_STATE.apps.push(c);
+                window.placeOnGrid(c, 0);
+            }
+            window.Renderer.render();
+            window.LibraryManager.open();
+            await new Promise(r => setTimeout(r, 700));
+        });
+    };
+
+    test('the home screen does not read through it', async ({ page }) => {
+        await open(page);
+        const opaque = await page.evaluate(() => {
+            const el = document.getElementById('library-overlay');
+            const cs = getComputedStyle(el);
+            const m = cs.backgroundColor.match(/[\d.]+/g) || [];
+            // rgb() with no alpha channel is opaque; rgba() must carry alpha 1.
+            return m.length < 4 || parseFloat(m[3]) >= 0.98;
+        });
+        expect(opaque, 'the library ground is see-through, so two screens are legible at once')
+            .toBe(true);
+    });
+
+    test('a code looks the same here as it does on the home screen', async ({ page }) => {
+        await open(page);
+        const same = await page.evaluate(() => {
+            const home = document.querySelector('#workspace-pager [data-id="lib3"] .code-tile');
+            const row = document.querySelector('#library-list .lib-thumb');
+            if (!home || !row) return { ok: false, why: 'no tile in one of the two places' };
+            const cls = e => [...e.classList].find(c => c.startsWith('tile-'));
+            return { ok: true, homeVariant: cls(home), rowIsTile: row.classList.contains('code-tile') };
+        });
+        expect(same.ok, same.why).toBe(true);
+        expect(same.rowIsTile, 'the library row does not use the code tile at all').toBe(true);
+        expect(same.homeVariant, 'the home tile lost its variant class').toBeTruthy();
+    });
+
+    test('the thumbnail actually has the code in it', async ({ page }) => {
+        // A percentage padding resolves against the containing block's WIDTH, so the plate's
+        // 100% height had nothing definite to resolve against and collapsed to zero. The row
+        // still looked plausible — a coloured chip — with no code in it at all, which is worse
+        // than the plain white one it replaced.
+        await open(page);
+        const box = await page.evaluate(() => {
+            const plate = document.querySelector('#library-list .lib-thumb > .code-plate');
+            const canvas = plate && plate.querySelector('canvas');
+            const r = e => e.getBoundingClientRect();
+            return plate && canvas
+                ? { pw: r(plate).width, ph: r(plate).height, cw: r(canvas).width }
+                : null;
+        });
+        expect(box, 'there is no plate inside the library thumbnail').not.toBeNull();
+        expect(box.pw, `the plate collapsed to ${box.pw}px wide`).toBeGreaterThan(20);
+        expect(box.ph, `the plate collapsed to ${box.ph}px tall`).toBeGreaterThan(20);
+        expect(box.cw, 'the canvas inside the plate has no width').toBeGreaterThan(20);
+    });
+
+    test('every dock icon says what it is', async ({ page }) => {
+        // Five identical line glyphs in a row is a guessing game. Reported as the dock icons
+        // "not firing" more than once, when the real complaint was not knowing which was which.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        const labels = await page.evaluate(() =>
+            [...document.querySelectorAll('#dock-container .dock-label')].map(e => e.textContent.trim()));
+        expect(labels.length, 'the dock has no labels').toBeGreaterThanOrEqual(4);
+        expect(labels.every(t => t.length > 0), `a dock label is blank: ${JSON.stringify(labels)}`)
+            .toBe(true);
+    });
+});

@@ -272,18 +272,24 @@
         }
 
         /* Library source + sort pills. Active state is accent-driven per HARD RULE 7. */
+        /* Selected is a solid slab of the accent, not a 16% wash of it. The wash was the
+           same weight as the unselected pills next to it, so the row read as four equal
+           chips and you had to look for the state rather than see it. Every reference
+           screen does this the same way: one filled pill, the rest quiet. */
         .library-sort-btn, .library-src-btn {
             position: relative;
-            padding: 0.4rem 0.9rem; border-radius: 999px; font-size: 12.5px; font-weight: 700;
-            letter-spacing: 0.01em; color: rgba(255,255,255,0.55);
-            background: rgba(255,255,255,0.08); border: 1px solid transparent;
-            transition: transform 0.2s var(--spring-snappy), background-color 0.2s ease, color 0.2s ease;
+            padding: 0.5rem 0.95rem; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+            letter-spacing: 0.01em; color: var(--ink-soft);
+            background: color-mix(in srgb, var(--pal-1) 14%, rgba(255,255,255,0.07));
+            border: 0.5px solid transparent;
+            transition: transform 0.2s var(--spring-snappy), background-color 0.25s ease, color 0.25s ease;
         }
         .library-sort-btn:active, .library-src-btn:active { transform: scale(0.94); }
         .library-sort-btn.active, .library-src-btn.active {
-            color: var(--accent);
-            background-color: color-mix(in srgb, var(--accent) 16%, transparent);
-            border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+            color: var(--accent-text);
+            background-color: var(--accent);
+            border-color: color-mix(in srgb, var(--accent) 65%, #ffffff);
+            box-shadow: 0 6px 16px -8px var(--accent);
         }
 
         html, body {
@@ -397,6 +403,7 @@
            scans at the counter and one that does not. The colour is a frame, never a
            background. */
         .code-tile {
+            box-sizing: border-box;
             background: linear-gradient(150deg,
                         var(--tile-a, var(--pal-1)) 0%,
                         var(--tile-b, var(--pal-3)) 100%);
@@ -523,6 +530,46 @@
            first code is added. */
         .os-eyebrow:empty { opacity: 0; }
 
+        /* ---- Library, in the same language as the home screen ---------------------- */
+        /* An opaque ground, built from the palette. Library used to be a 50% black scrim
+           over a blur: the home screen's own greeting read straight through the word
+           "Library", and two screens were legible at once, which is one too many. */
+        .lib-ground {
+            /* colour first, images over it. A `background:` shorthand carrying only gradients
+               resets background-color to transparent, which left the screen looking painted
+               while reporting no background at all — and a gradient that fails to parse on
+               some engine then has nothing underneath it. */
+            background-color: color-mix(in srgb, var(--pal-1) 26%, var(--wall-tint-base));
+            background-image:
+                radial-gradient(120% 60% at 50% 0%,
+                    color-mix(in srgb, var(--pal-2) 26%, transparent) 0%, transparent 70%),
+                linear-gradient(178deg,
+                    color-mix(in srgb, var(--pal-1) 30%, var(--wall-tint-base)) 0%,
+                    color-mix(in srgb, var(--pal-3) 24%, var(--wall-tint-base)) 100%);
+        }
+        .lib-row {
+            border-radius: 1.4rem;
+            background: color-mix(in srgb, var(--pal-1) 16%, rgba(255,255,255,0.08));
+            border: 0.5px solid color-mix(in srgb, var(--pal-2) 30%, rgba(255,255,255,0.14));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.12),
+                        0 8px 20px -12px rgba(0,0,0,0.55);
+            transition: transform 0.18s var(--spring-snappy), background 0.3s ease;
+        }
+        .lib-thumb {
+            box-sizing: border-box;
+            width: 62px; height: 62px;
+            border-radius: calc(var(--squircle-radius) * 0.82);
+            padding: 6px;
+        }
+        /* Sized here rather than with w-full/h-full utilities. A percentage padding on the
+           tile resolves against the containing block's WIDTH, so the plate's 100% height had
+           nothing definite to resolve against and collapsed to zero — a coloured chip with no
+           code in it, which is worse than the plain white one it replaced. */
+        .lib-thumb > .code-plate { width: 100%; height: 100%; }
+        /* The big one. 26px was a heading; 34px is a title, and the difference is what makes
+           a screen feel authored rather than assembled. */
+        .lib-title { font-size: 34px; font-weight: 700; letter-spacing: -0.025em; line-height: 1; }
+
         .os-grid {
             --row-min: calc(var(--app-size) + 24px);
             display: grid;
@@ -569,6 +616,20 @@
                         max-width 0.45s var(--spring-smooth);
         }
         #dock-container { gap: var(--dock-gap); }
+
+        /* Small, quiet, and never the reason a dock icon shrinks: the label is laid out
+           inside the well under the glyph, and the well's height comes from --dock-size, so
+           adding text here does not take size away from the thing you tap. */
+        .dock-label {
+            display: block;
+            font-size: 9.5px; font-weight: 600; letter-spacing: 0.02em;
+            color: var(--ink-soft);
+            text-align: center; width: 100%;
+            margin-top: 1px; padding-bottom: 2px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            pointer-events: none;
+        }
+        #dock-container .app-icon-wrapper { flex-direction: column; padding-bottom: 2px; }
 
         /* The dock, given the same treatment as the tiles.
            
@@ -1619,10 +1680,10 @@
         </div>
         <p class="text-white/45 text-[11px] font-medium mt-5">Tap outside to close</p>
     </div>
-    <div id="library-overlay" class="modal-spring fixed inset-0 z-[130] bg-black/50 backdrop-blur-3xl opacity-0 pointer-events-none flex flex-col">
+    <div id="library-overlay" class="lib-ground modal-spring fixed inset-0 z-[130] backdrop-blur-3xl opacity-0 pointer-events-none flex flex-col">
         <div class="flex items-center gap-3 px-5 pt-[calc(env(safe-area-inset-top,0px)+1.5rem)] pb-3 shrink-0">
             <div class="flex-1 min-w-0">
-                <h2 class="text-white text-[26px] font-bold tracking-tight leading-none">Library</h2>
+                <h2 class="lib-title text-[color:var(--ink-strong)]">Library</h2>
                 <p id="library-count" class="text-white/50 text-[12px] font-medium mt-1.5"></p>
             </div>
             <button id="btn-library-select" class="tap44 flex items-center justify-center px-3.5 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all shrink-0 text-white text-[13px] font-bold">Select</button>
@@ -3113,9 +3174,12 @@
                 // Verified: the script executed, it was not merely markup appearing.
                 // HARD RULE 9 — untrusted input reaches the DOM as text or not at all.
                 wrapper.innerHTML = iconHtml;
-                if (!isDock) {
+                {
+                    // The dock gets labels too. Five identical line glyphs in a row is a
+                    // guessing game — the reference dock this is modelled on names every one
+                    // of its four, and naming them costs eleven pixels.
                     const label = document.createElement('span');
-                    label.className = 'app-label jiggle-target';
+                    label.className = isDock ? 'dock-label' : 'app-label jiggle-target';
                     label.textContent = itemData.title || '';
                     wrapper.appendChild(label);
                 }
@@ -7622,10 +7686,16 @@
 
                 items.forEach(app => {
                     const row = document.createElement('div');
-                    row.className = 'flex items-center gap-3.5 bg-white/10 border border-white/10 p-3 rounded-[1.25rem] active:scale-[0.98] transition-transform cursor-pointer shadow-lg shrink-0';
+                    // The row wears the same tile the home screen does. Library used to draw a
+                    // code on a plain white chip while the home screen gave the same code a
+                    // coloured frame, so the two screens looked like two different apps — the
+                    // thing you were looking for did not even look like the thing you tapped.
+                    row.className = 'lib-row flex items-center gap-3.5 p-3 active:scale-[0.98] transition-transform cursor-pointer shrink-0';
                     row.innerHTML = `
-                        <div class="w-14 h-14 bg-white rounded-[0.9rem] p-1.5 flex items-center justify-center shrink-0 shadow-sm">
-                            <canvas id="lib-can-${app.id}" class="max-w-full max-h-full pixelated"></canvas>
+                        <div class="lib-thumb code-tile tile-${window.tileVariant(app.id)} shrink-0 flex items-center justify-center">
+                            <div class="code-plate w-full h-full flex items-center justify-center p-[9%]">
+                                <canvas id="lib-can-${app.id}" class="max-w-full max-h-full pixelated"></canvas>
+                            </div>
                         </div>
                         <div class="flex-1 min-w-0">
                             <h4 class="text-white font-bold text-[15px] truncate tracking-wide"></h4>
