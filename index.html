@@ -85,6 +85,26 @@
                not happen; it could, because it only covered half of the wallpaper. */
             --wall-tint-base: #05070f;
 
+            /* Ink. There was no such token: everything on the wallpaper was hardcoded
+               `text-white` with a drop shadow, and the two light skins each had to undo that
+               with their own override list. One pair of tokens instead, so a new piece of
+               chrome is readable on every skin the moment it is written. */
+            --ink-strong: #ffffff;
+            --ink-soft: rgba(255,255,255,0.72);
+            --ink-dim: rgba(255,255,255,0.56);
+
+            /* Sheets — Create, Rename, the scanner's result tray. These were literal white:
+               bg-white, bg-gray-100, text-gray-900. On the Dark and Scan Card skins that is a
+               sheet of printer paper thrown over a themed app, and it is the single loudest
+               thing in the walkthrough recording. Tokenised so a sheet follows the skin it is
+               opening over, the way every other surface already does. */
+            --sheet-bg: color-mix(in srgb, var(--pal-1) 20%, #16171c);
+            --sheet-ink: #ffffff;
+            --sheet-sub: rgba(255,255,255,0.66);
+            --sheet-fill: color-mix(in srgb, var(--pal-1) 24%, rgba(255,255,255,0.08));
+            --sheet-line: color-mix(in srgb, var(--pal-2) 30%, rgba(255,255,255,0.13));
+            --sheet-raised: color-mix(in srgb, var(--pal-2) 34%, #ffffff);
+
             /* ---- Structural skin tokens -------------------------------------------------
                A skin used to be a colour scheme and nothing else. Every one of the six drew the
                same 22.5% squircle, the same 380px dock pill and the same 11.5px label, so
@@ -164,7 +184,11 @@
             --surface-raised:  color-mix(in srgb, var(--accent) 40%, rgba(255, 255, 255, 0.10));
             --surface-raised-2:color-mix(in srgb, var(--pal-2, var(--accent)) 46%, rgba(255, 255, 255, 0.20));
             --surface-line:    color-mix(in srgb, var(--accent) 58%, rgba(255, 255, 255, 0.11));
-            --surface-sunken:  color-mix(in srgb, var(--pal-3, var(--accent)) 28%, rgba(0, 0, 0, 0.35));
+            /* A well, not a colour field. At 28% of --pal-3 a mint palette painted the Screen
+               Grid track olive-green — a saturated slab sitting in the middle of an otherwise
+               neutral panel, reading as a bug rather than as a theme. A recess is defined by
+               being DARKER than what surrounds it; the tint only has to be enough to belong. */
+            --surface-sunken:  color-mix(in srgb, var(--pal-3, var(--accent)) 10%, rgba(0, 0, 0, 0.42));
             --surface-glass:   color-mix(in srgb, var(--accent) 32%, rgba(18, 18, 20, 0.62));
             --veil:            color-mix(in srgb, var(--pal-1, var(--accent)) 32%, rgba(0, 0, 0, 0.55));
             --surface-light:   color-mix(in srgb, var(--accent) 13%, #ffffff);
@@ -208,7 +232,11 @@
 
         /* Light sheets: the code editor, the rename prompt, the fullscreen viewer.
            Targeted by id so the white plates NESTED inside them are left alone. */
-        #create-panel, #rename-panel { background-color: var(--surface-light); }
+        /* --sheet-bg, not --surface-light.
+           --surface-light is a near-white tint and this rule is id-specificity, so it beat the
+           .ui-sheet class and kept the Create and Rename sheets white on the dark skins however
+           the tokens were set. The sheet tokens already know which way each skin goes. */
+        #create-panel, #rename-panel { background-color: var(--sheet-bg); }
         #item-fullscreen-layer       { background-color: var(--veil-light); }
         #create-panel .bg-gray-100,
         #rename-panel .bg-gray-100,
@@ -265,18 +293,24 @@
         }
 
         /* Library source + sort pills. Active state is accent-driven per HARD RULE 7. */
+        /* Selected is a solid slab of the accent, not a 16% wash of it. The wash was the
+           same weight as the unselected pills next to it, so the row read as four equal
+           chips and you had to look for the state rather than see it. Every reference
+           screen does this the same way: one filled pill, the rest quiet. */
         .library-sort-btn, .library-src-btn {
             position: relative;
-            padding: 0.4rem 0.9rem; border-radius: 999px; font-size: 12.5px; font-weight: 700;
-            letter-spacing: 0.01em; color: rgba(255,255,255,0.55);
-            background: rgba(255,255,255,0.08); border: 1px solid transparent;
-            transition: transform 0.2s var(--spring-snappy), background-color 0.2s ease, color 0.2s ease;
+            padding: 0.5rem 0.95rem; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+            letter-spacing: 0.01em; color: var(--ink-soft);
+            background: color-mix(in srgb, var(--pal-1) 14%, rgba(255,255,255,0.07));
+            border: 0.5px solid transparent;
+            transition: transform 0.2s var(--spring-snappy), background-color 0.25s ease, color 0.25s ease;
         }
         .library-sort-btn:active, .library-src-btn:active { transform: scale(0.94); }
         .library-sort-btn.active, .library-src-btn.active {
-            color: var(--accent);
-            background-color: color-mix(in srgb, var(--accent) 16%, transparent);
-            border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+            color: var(--accent-text);
+            background-color: var(--accent);
+            border-color: color-mix(in srgb, var(--accent) 65%, #ffffff);
+            box-shadow: 0 6px 16px -8px var(--accent);
         }
 
         html, body {
@@ -369,10 +403,138 @@
             width: var(--app-size); height: var(--app-size);
             border-radius: var(--squircle-radius);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-            transition: transform 0.2s var(--spring-snappy), width 0.3s ease, height 0.3s ease,
+            /* width/height are layout properties and --app-size only changes on a viewport
+               change or a grid-density change, both of which are already a reflow — animating
+               them just spreads that reflow over 300ms of every frame. Radius is paint-only
+               and is the shape change you actually see between skins, so it keeps its curve. */
+            transition: transform 0.2s var(--spring-snappy),
                         border-radius 0.45s var(--spring-smooth);
-            will-change: transform, width, height;
+            will-change: transform;
         }
+
+        /* ============================ THE CODE TILE ============================
+           A home screen full of codes used to be a home screen full of identical white
+           squares — twenty photocopies in a grid, with nothing to tell one from another
+           except the label underneath. Every launcher this app is measured against solves
+           the same problem the same way: the TILE carries the identity and the content sits
+           on a plate inside it.
+
+           So the tile is coloured, and its colour comes from the palette. Six variants,
+           chosen by a hash of the code's id, so the grid has rhythm without being random —
+           the same code is the same colour every time you open the app, on every device.
+
+           The code itself never touches the colour. It stays pure black on pure white on an
+           inset plate, because a barcode's contrast is the difference between a code that
+           scans at the counter and one that does not. The colour is a frame, never a
+           background. */
+        .code-tile {
+            box-sizing: border-box;
+            background: linear-gradient(150deg,
+                        var(--tile-a, var(--pal-1)) 0%,
+                        var(--tile-b, var(--pal-3)) 100%);
+            padding: 13%;
+            position: relative;
+            isolation: isolate;
+        }
+        /* The plate. Pure white, never mixed with the palette — see above. */
+        /* The monogram. Sized off the tile rather than in px so it is the same weight on a
+           360 and on a 430, and set in the tile's own colour lightened — white at full
+           strength reads as a sticker, white at 88% with a shadow under it reads as printed
+           into the surface. */
+        .tile-mono {
+            position: relative; z-index: 5;
+            font-size: calc(var(--app-size) * 0.40);
+            font-weight: 700; letter-spacing: -0.03em;
+            line-height: 1;
+            color: rgba(255,255,255,0.94);
+            text-shadow: 0 1px 1px rgba(0,0,0,0.22), 0 2px 10px rgba(0,0,0,0.16);
+            user-select: none;
+            /* Optical centring: caps sit high in the em box, so mathematical centring leaves
+               them looking a pixel or two north of centre. */
+            transform: translateY(0.02em);
+        }
+        /* Two letters need to be narrower than one, or "KK" overruns a tile that "K" sits
+           comfortably inside. */
+        .tile-mono[data-len="2"] { font-size: calc(var(--app-size) * 0.30); letter-spacing: -0.04em; }
+
+        /* The monogram at list size. Sized off the thumb, not off --app-size, because a row
+           chip does not grow when the home screen's icons do. */
+        .lib-thumb .tile-mono  { font-size: 23px; }
+        .lib-thumb .tile-mono[data-len="2"] { font-size: 18px; }
+        .search-thumb {
+            box-sizing: border-box;
+            width: 48px; height: 48px;
+            border-radius: calc(var(--squircle-radius) * 0.8);
+            padding: 5px;
+        }
+        .search-thumb .tile-mono  { font-size: 18px; }
+        .search-thumb .tile-mono[data-len="2"] { font-size: 14px; }
+
+        .folder-cell {
+            position: relative; z-index: 5;
+            border-radius: calc(var(--squircle-radius) * 0.5);
+            background: rgba(255,255,255,0.20);
+            display: flex; align-items: center; justify-content: center;
+            font-size: calc(var(--app-size) * 0.16);
+            font-weight: 700; color: rgba(255,255,255,0.95);
+            overflow: hidden;
+        }
+        .folder-cell-empty { background: rgba(255,255,255,0.10); }
+
+        /* z-5 puts the plate above the tile's gloss and rim. A specular sweep across a
+           barcode is a contrast reduction, and contrast is the difference between a code
+           that scans at the counter and one that does not — so the sheen stops at the
+           plate's edge, exactly as it does on a real icon with a card inside it. */
+        .code-plate {
+            /* Set here, not with a z-[5] utility: the vendored Tailwind build only contains
+               the arbitrary values that were used when it was generated, so a new one
+               silently produces no rule at all. The test caught this as a gloss painting
+               over the barcode. */
+            position: relative;
+            z-index: 5;
+            background: #ffffff;
+            border-radius: calc(var(--squircle-radius) * 0.66);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.18), 0 6px 14px -6px rgba(0,0,0,0.35);
+        }
+        /* A single specular sweep across the top third. This is the whole difference between
+           a flat coloured rectangle and something that reads as a physical object, and it is
+           one gradient — no blur, no extra layer, nothing that costs a frame on a phone. */
+        .code-tile::after {
+            content: ''; position: absolute; inset: 0; z-index: 2;
+            border-radius: inherit; pointer-events: none;
+            background: linear-gradient(160deg,
+                        rgba(255,255,255,0.38) 0%,
+                        rgba(255,255,255,0.10) 34%,
+                        rgba(255,255,255,0) 55%);
+        }
+        /* Hairline rim. Light along the top edge, dark along the bottom — the same trick a
+           physical key cap uses, and the reason the tile sits ON the wallpaper rather than
+           being a hole cut in it. */
+        .code-tile::before {
+            content: ''; position: absolute; inset: 0; z-index: 3;
+            border-radius: inherit; pointer-events: none;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.45),
+                        inset 0 -1px 0 rgba(0,0,0,0.18),
+                        inset 0 0 0 1px rgba(255,255,255,0.10);
+        }
+        /* Six palette pairings. Every one of them is built from --pal-*, so a palette change
+           repaints the entire grid — "those pallettes were made with my heart and soul they
+           need to bleed on our canvas". No literal colour appears in this block. */
+        .tile-0 { --tile-a: var(--pal-1); --tile-b: var(--pal-3); }
+        .tile-1 { --tile-a: var(--pal-2); --tile-b: var(--pal-1); }
+        .tile-2 { --tile-a: var(--pal-4); --tile-b: var(--pal-2); }
+        .tile-3 { --tile-a: var(--pal-3); --tile-b: var(--pal-4); }
+        .tile-4 { --tile-a: var(--pal-1); --tile-b: var(--pal-2); }
+        .tile-5 { --tile-a: var(--pal-4); --tile-b: var(--pal-1); }
+
+        /* Two shadows, not one. The tight one anchors the tile to the surface, the wide soft
+           one is the ambient occlusion that makes a grid of them read as objects on a plane
+           instead of stickers. */
+        .app-icon-wrapper .app-icon {
+            box-shadow: 0 1px 2px rgba(0,0,0,0.16),
+                        0 10px 24px -10px rgba(0,0,0,0.45);
+        }
+        #dock-container .app-icon { box-shadow: none; }
         
         body:not(.edit-mode) .app-icon:active { transform: scale(0.92); }
 
@@ -382,12 +544,28 @@
             font-weight: var(--label-weight); font-size: var(--label-size);
             letter-spacing: var(--label-track); text-transform: var(--label-case);
             margin-top: var(--label-gap);
-            text-align: center; width: calc(var(--app-size) + 16px);
+            /* The CELL's width, not the icon's plus a guess.
+               
+               calc(--app-size + 16px) was 99px against a 94.8px cell at 412px wide, so every
+               label box hung 2px into each neighbour — and with a long name the ellipsis runs
+               to the very edge of that box, which is why "Jabreel Washi…" and "Brandi Moore"
+               read as touching. An overlap detector run over every screen found fourteen of
+               them on the home screen alone.
+               
+               100% is the cell, because the wrapper is the grid item. The padding keeps the
+               text off the join even when two long names sit side by side. */
+            text-align: center; width: 100%; padding: 0 4px; box-sizing: border-box;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-            transition: width 0.3s ease, opacity 0.3s ease,
-                        font-size 0.45s var(--spring-smooth),
-                        letter-spacing 0.45s var(--spring-smooth),
-                        margin-top 0.45s var(--spring-smooth);
+            /* Deliberately NOT transitioning font-size, letter-spacing or margin-top.
+               
+               Animating text metrics relayouts every label on every frame of the morph, and
+               there are twenty of them: measured at 4x CPU throttle, the skin swap spent
+               200-220ms per task in style and layout, and the grid ran at half frame rate for
+               the whole half second. The morph already happens behind a cover, so the labels
+               arriving at their new size in one step is not something you can see — and the
+               animation was costing the thing you CAN see, which is everything else moving
+               smoothly. Width and opacity stay: neither reflows the grid. */
+            transition: width 0.3s ease, opacity 0.3s ease;
         }
 
         /* Rows are TRACKS, and the tracks fill the page.
@@ -406,6 +584,288 @@
            
            --row-min is the floor: an icon plus its label. A track can grow past it, never
            under it, so a short screen overflows visibly instead of silently overlapping. */
+        /* The greeting. One line, two weights — the reference designs all do this and it is
+           what makes a screen read as designed rather than assembled. Sized in vw with a
+           clamp so it is the same proportion of the screen on a 360 as on a 430, which a
+           fixed px size is not. */
+        .os-hello {
+            font-size: clamp(26px, 8.2vw, 36px);
+            letter-spacing: -0.02em;
+            display: flex; align-items: baseline; gap: 0.28em;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.28), 0 2px 12px rgba(0,0,0,0.18);
+        }
+        body[data-skin="glass"] .os-hello,
+        body[data-skin="soft"] .os-hello { text-shadow: 0 1px 1px rgba(255,255,255,0.5); }
+        .os-hello-soft { font-weight: 300; color: var(--ink-soft); }
+        .os-hello-name { font-weight: 700; color: var(--ink-strong); }
+
+        /* The count. Small, palette-tinted, and it disappears when it would read "0 codes" —
+           an empty home screen does not need a label telling it so. */
+        .os-eyebrow {
+            font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ink-soft);
+            height: 15px; line-height: 15px;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+            transition: opacity 0.35s ease;
+        }
+        body[data-skin="glass"] .os-eyebrow,
+        body[data-skin="soft"] .os-eyebrow { text-shadow: none; }
+        /* Empty, not hidden: the line keeps its height so the headline does not jump when the
+           first code is added. */
+        .os-eyebrow:empty { opacity: 0; }
+
+        /* A scrolling panel has to look like one.
+           Settings runs past 88vh on every phone, and it ended mid-row with a hard edge —
+           "Vibration" sliced in half by the panel's own border, which reads as a rendering
+           fault rather than as more content. A mask fades the last 28px out instead, and it
+           lifts once you reach the end so the final row is not permanently ghosted. */
+        #settings-panel, #account-panel {
+            -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+            transition: -webkit-mask-image 0.25s ease, mask-image 0.25s ease;
+        }
+        #settings-panel.at-end, #account-panel.at-end {
+            -webkit-mask-image: linear-gradient(to bottom, #000 100%, #000 100%);
+            mask-image: linear-gradient(to bottom, #000 100%, #000 100%);
+        }
+
+        /* ---- Sheets follow the skin --------------------------------------------------
+           Scoped to the sheet panels, so nothing else that legitimately wants white loses it
+           — the code plate under a barcode above all, which is exempt everywhere. */
+        .ui-sheet { background: var(--sheet-bg); color: var(--sheet-ink); }
+        .ui-sheet :is(.bg-white, .bg-gray-50, .bg-gray-100) { background-color: var(--sheet-fill); }
+        .ui-sheet :is(.text-gray-900, .text-gray-800) { color: var(--sheet-ink); }
+        .ui-sheet :is(.text-gray-700, .text-gray-600, .text-gray-500, .text-gray-400) { color: var(--sheet-sub); }
+        .ui-sheet :is(.border-gray-100, .border-gray-200, .border-gray-300) { border-color: var(--sheet-line); }
+        /* The drag grabber, and any input the sheet holds. */
+        .ui-sheet .bg-gray-300 { background-color: var(--sheet-line); }
+        .ui-sheet :is(input, textarea, select) { color: var(--sheet-ink); caret-color: var(--accent); }
+        .ui-sheet ::placeholder { color: var(--sheet-sub); }
+
+        /* The segmented tabs were hardcoded #6b7280 on #ffffff — invisible on a dark sheet. */
+        .create-tab-btn { color: var(--sheet-sub); }
+        /* Filled with the accent, not with --sheet-raised.
+           --accent-text is the ink that reads ON the accent, and pairing it with a near-white
+           raised surface put white type on a pale mint pill — legible in the token names,
+           invisible on the screen. One filled pill and one quiet one, the same rule the
+           Library and category chips follow. */
+        .create-tab-btn.active {
+            background: var(--accent);
+            color: var(--accent-text);
+            box-shadow: 0 4px 12px -4px var(--accent);
+        }
+
+        /* Ink is a property of the SURFACE, not of the skin.
+
+           These were first written onto body[data-skin="glass"] and body[data-skin="soft"]
+           as a pair of "this skin is light" overrides. Glass is not a light skin: its
+           wallpaper, header and Library are light, and its Settings panel is still the dark
+           #2c2c2e one. So dark ink meant for a light surface landed on a dark panel, and the
+           skin picker's own description measured 1.01:1 against the card behind it —
+           invisible, and caught by the contrast test rather than by eye.
+
+           Listed per surface instead. Adding a light surface means adding it here, which is
+           the point: the failure above is what happens when the two drift apart. */
+        body[data-skin="soft"] :is(#os-header, #main-dock, #library-overlay, #settings-panel,
+                                   #account-panel, #folder-overlay),
+        body[data-skin="glass"] :is(#os-header, #main-dock, #library-overlay) {
+            --ink-strong: color-mix(in srgb, var(--pal-1) 22%, #16181f);
+            --ink-soft: color-mix(in srgb, var(--pal-1) 26%, rgba(28,31,40,0.80));
+            --ink-dim: color-mix(in srgb, var(--pal-1) 30%, rgba(30,33,42,0.64));
+        }
+
+        /* ---- Chrome text reads from the ink tokens, not from Tailwind's greys ----------
+
+           Every panel in the app labelled its sections with text-gray-400 (#9ca3af) and its
+           helper copy with text-gray-500 (#6b7280). Those are mid-greys chosen for white
+           backgrounds; on a palette-tinted dark panel they measure about 2.6:1 against the
+           surface behind them, under half of what body text needs. In the walkthrough
+           recording "SCREEN GRID", "ACCENT COLOR" and the whole Restoring explainer are
+           visible as shapes and not readable as words.
+
+           Remapped rather than rewritten in sixty places, and scoped to the palette-tinted
+           chrome so the white sheets — which legitimately want dark greys on white — are
+           untouched. The tokens already know what each skin's ground is, so this comes out
+           right on Soft and Glass too, where the ground is light and the ink inverts. */
+        /* One class, not a list of seven ids.
+           A `:is(#a,#b,...) :is(.x,.y)` descendant selector has to be evaluated against every
+           element in the document, and changing data-skin invalidates the whole tree — which
+           made the skin morph 300ms of style recalculation on a mid-range phone. `.ui-chrome`
+           is stamped on the panels once, at startup. */
+        .ui-chrome :is(.text-gray-300, .text-gray-400) { color: var(--ink-soft); }
+        .ui-chrome :is(.text-gray-500, .text-gray-600) { color: var(--ink-dim); }
+        /* Section labels earn more presence than a remap alone gives them: they are the only
+           signposts in a long scrolling panel. */
+        :is(#settings-panel, #account-panel) .text-xs.font-bold.uppercase {
+            color: var(--ink-strong);
+            opacity: 0.88;
+            letter-spacing: 0.11em;
+            font-size: 11px;
+        }
+
+        /* ================== THE VIEWER ==================
+           The one screen you look at every time you use the app, and it was a white square on
+           a white veil with three grey circles under it. Every design this is measured against
+           makes its detail view the hero — the record, the album art, the big title — and ours
+           was the flattest screen in the product.
+
+           Built from the palette like everything else, so the code you open is unmistakably
+           part of the theme you chose, and still pure white where the code actually sits. */
+        #item-fullscreen-layer {
+            background-color: color-mix(in srgb, var(--pal-1) 30%, var(--wall-tint-base));
+            background-image:
+                radial-gradient(90% 55% at 50% 12%,
+                    color-mix(in srgb, var(--pal-2) 52%, transparent) 0%, transparent 68%),
+                radial-gradient(80% 50% at 15% 88%,
+                    color-mix(in srgb, var(--pal-3) 46%, transparent) 0%, transparent 66%),
+                radial-gradient(70% 45% at 88% 78%,
+                    color-mix(in srgb, var(--pal-4) 40%, transparent) 0%, transparent 62%);
+        }
+        body[data-skin="glass"] #item-fullscreen-layer,
+        body[data-skin="soft"] #item-fullscreen-layer {
+            background-color: color-mix(in srgb, var(--pal-1) 16%, #ffffff);
+        }
+
+        /* Viewer ink follows the viewer's own ground, not the app's.
+           The layer used to be bg-white/85 and everything on it was text-gray-500/900. Giving
+           it a palette gradient made it dark on the dark skins, and the title, the payload and
+           the three action labels went with it — dark ink on a dark field, which is how the
+           first cut of this screen shipped-looking-fixed and was not. Same lesson as the
+           chrome ink: the token belongs to the surface. */
+        #item-fullscreen-layer {
+            --viewer-ink: #ffffff;
+            --viewer-ink-soft: rgba(255,255,255,0.74);
+            --viewer-ink-dim: rgba(255,255,255,0.56);
+            --viewer-chip: rgba(255,255,255,0.14);
+        }
+        body[data-skin="glass"] #item-fullscreen-layer,
+        body[data-skin="soft"] #item-fullscreen-layer {
+            --viewer-ink: color-mix(in srgb, var(--pal-1) 26%, #12141a);
+            --viewer-ink-soft: color-mix(in srgb, var(--pal-1) 30%, rgba(20,22,28,0.72));
+            --viewer-ink-dim: color-mix(in srgb, var(--pal-1) 32%, rgba(20,22,28,0.58));
+            --viewer-chip: rgba(16,18,24,0.06);
+        }
+        /* Everything on the layer reads from those three, including the utility classes the
+           markup still carries. */
+        #item-fullscreen-layer :is(.text-gray-900, .text-gray-800) { color: var(--viewer-ink); }
+        #item-fullscreen-layer :is(.text-gray-700, .text-gray-600, .text-gray-500) { color: var(--viewer-ink-soft); }
+        #item-fullscreen-layer #close-item-btn { background-color: var(--viewer-chip); }
+        #item-fullscreen-layer #close-item-btn i { color: var(--viewer-ink); }
+
+        .viewer-eyebrow {
+            font-size: 11px; font-weight: 700; letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--viewer-ink-dim);
+        }
+
+        /* A deck, not a picture. Two cards behind the plate, each smaller and lower, which is
+           what tells the eye the code is an object sitting on top of something. */
+        .viewer-stage { position: relative; }
+        .viewer-shelf {
+            position: absolute; left: 0; right: 0; top: 0;
+            aspect-ratio: 1 / 1;
+            border-radius: 2.5rem;
+            background: color-mix(in srgb, var(--pal-2) 30%, #ffffff);
+            box-shadow: 0 12px 30px -18px rgba(0,0,0,0.5);
+        }
+        .viewer-shelf-1 { transform: scale(0.94) translateY(14px); opacity: 0.55; }
+        .viewer-shelf-2 { transform: scale(0.88) translateY(28px); opacity: 0.30; }
+
+        /* The plate itself: pure white, never tinted — a barcode's contrast is what makes it
+           scan. The elevation is all shadow, and it is three layers deep because one shadow
+           is a rectangle with a blur and three is an object in a room. */
+        #item-fullscreen-layer .fullscreen-canvas-panel {
+            position: relative; z-index: 2;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.10),
+                        0 12px 24px -12px rgba(0,0,0,0.35),
+                        0 40px 70px -30px color-mix(in srgb, var(--pal-1) 70%, rgba(0,0,0,0.55));
+        }
+
+        /* Spacing written here, not with Tailwind margin utilities.
+           
+           The action row carried `mt-9` and the tag row `mt-6`. The vendored Tailwind build
+           only contains the classes that were in use when it was generated, and .mt-9 and
+           .gap-7 are not among them — so both resolved to nothing and the "+ Tag" pill sat
+           flush against the action plates, touching them at exactly 0px. Same failure mode as
+           the z-[5] that once put a gloss over a barcode: a utility that does not exist is
+           silent, and silence looks like a design decision.
+           
+           These four rules own the viewer's vertical rhythm and cannot be purged away. */
+        #fullscreen-tags { margin-top: 22px; }
+        #fullscreen-tags:empty { margin-top: 0; }
+        .fullscreen-actions { margin-top: 34px; gap: 26px; }
+
+        .viewer-title {
+            margin-top: 30px;
+            font-size: clamp(24px, 7vw, 32px);
+            font-weight: 700; letter-spacing: -0.025em; line-height: 1.1;
+            text-align: center;
+            color: var(--viewer-ink);
+            max-width: 100%;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+
+        /* Round plates, palette-filled, with the label under them — the same shape language as
+           the dock wells, so the two screens read as one app. Was bg-gray-100 circles. */
+        .viewer-action-plate {
+            width: 58px; height: 58px; border-radius: 999px;
+            background: linear-gradient(150deg,
+                        color-mix(in srgb, var(--pal-2) 60%, #ffffff) 0%,
+                        color-mix(in srgb, var(--pal-1) 34%, #ffffff) 100%);
+            color: color-mix(in srgb, var(--pal-1) 62%, #101218);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.65),
+                        0 8px 18px -10px color-mix(in srgb, var(--pal-1) 70%, rgba(0,0,0,0.5));
+            transition: transform 0.2s var(--spring-snappy), box-shadow 0.2s ease;
+        }
+        .viewer-action:active .viewer-action-plate {
+            box-shadow: inset 0 2px 5px color-mix(in srgb, var(--pal-1) 40%, rgba(0,0,0,0.25));
+        }
+        .viewer-action-label {
+            font-size: 10.5px; font-weight: 800; letter-spacing: 0.1em;
+            color: var(--viewer-ink-soft);
+        }
+
+        /* ---- Library, in the same language as the home screen ---------------------- */
+        /* An opaque ground, built from the palette. Library used to be a 50% black scrim
+           over a blur: the home screen's own greeting read straight through the word
+           "Library", and two screens were legible at once, which is one too many. */
+        .lib-ground {
+            /* colour first, images over it. A `background:` shorthand carrying only gradients
+               resets background-color to transparent, which left the screen looking painted
+               while reporting no background at all — and a gradient that fails to parse on
+               some engine then has nothing underneath it. */
+            background-color: color-mix(in srgb, var(--pal-1) 26%, var(--wall-tint-base));
+            background-image:
+                radial-gradient(120% 60% at 50% 0%,
+                    color-mix(in srgb, var(--pal-2) 26%, transparent) 0%, transparent 70%),
+                linear-gradient(178deg,
+                    color-mix(in srgb, var(--pal-1) 30%, var(--wall-tint-base)) 0%,
+                    color-mix(in srgb, var(--pal-3) 24%, var(--wall-tint-base)) 100%);
+        }
+        .lib-row {
+            border-radius: 1.4rem;
+            background: color-mix(in srgb, var(--pal-1) 16%, rgba(255,255,255,0.08));
+            border: 0.5px solid color-mix(in srgb, var(--pal-2) 30%, rgba(255,255,255,0.14));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.12),
+                        0 8px 20px -12px rgba(0,0,0,0.55);
+            transition: transform 0.18s var(--spring-snappy), background 0.3s ease;
+        }
+        .lib-thumb {
+            box-sizing: border-box;
+            width: 62px; height: 62px;
+            border-radius: calc(var(--squircle-radius) * 0.82);
+            padding: 6px;
+        }
+        /* Sized here rather than with w-full/h-full utilities. A percentage padding on the
+           tile resolves against the containing block's WIDTH, so the plate's 100% height had
+           nothing definite to resolve against and collapsed to zero — a coloured chip with no
+           code in it, which is worse than the plain white one it replaced. */
+        .lib-thumb > .code-plate { width: 100%; height: 100%; }
+        /* The big one. 26px was a heading; 34px is a title, and the difference is what makes
+           a screen feel authored rather than assembled. */
+        .lib-title { font-size: 34px; font-weight: 700; letter-spacing: -0.025em; line-height: 1; }
+
         .os-grid {
             --row-min: calc(var(--app-size) + 24px);
             display: grid;
@@ -452,7 +912,69 @@
                         max-width 0.45s var(--spring-smooth);
         }
         #dock-container { gap: var(--dock-gap); }
-        body.edit-mode #main-dock { transform: translateY(150%); opacity: 0; pointer-events: none; }
+
+        /* Small, quiet, and never the reason a dock icon shrinks: the label is laid out
+           inside the well under the glyph, and the well's height comes from --dock-size, so
+           adding text here does not take size away from the thing you tap. */
+        .dock-label {
+            display: block;
+            font-size: 9.5px; font-weight: 600; letter-spacing: 0.02em;
+            color: var(--ink-soft);
+            text-align: center; width: 100%;
+            margin-top: 1px; padding-bottom: 2px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            pointer-events: none;
+        }
+        #dock-container .app-icon-wrapper { flex-direction: column; padding-bottom: 2px; }
+
+        /* The dock, given the same treatment as the tiles.
+           
+           It was a flat slab with a hairline border — correct, and completely inert. Three
+           layers make it an object: a rim that is light on top and dark underneath, a
+           specular sweep across the upper third, and a wide ambient shadow that lifts it off
+           the wallpaper. Each dock tile then gets its own recessed well, so the icons read as
+           set INTO the bar rather than printed on it. */
+        #main-dock {
+            position: relative;
+            isolation: isolate;
+            box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset,
+                        0 -1px 0 rgba(0,0,0,0.20) inset,
+                        0 18px 44px -14px rgba(0,0,0,0.55),
+                        0 4px 12px -6px rgba(0,0,0,0.35);
+        }
+        #main-dock::before {
+            content: ''; position: absolute; inset: 0; z-index: 0;
+            border-radius: inherit; pointer-events: none;
+            background: linear-gradient(170deg,
+                        rgba(255,255,255,0.16) 0%,
+                        rgba(255,255,255,0.04) 38%,
+                        rgba(255,255,255,0) 62%);
+        }
+        #dock-container { position: relative; z-index: 1; }
+        /* The well. color-mix against the palette rather than a flat black so a light skin
+           gets a light recess instead of a smudge. */
+        #dock-container .app-icon-wrapper {
+            border-radius: calc(var(--squircle-radius) * 0.9);
+            background: color-mix(in srgb, var(--pal-1) 14%, rgba(255,255,255,0.07));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.16),
+                        inset 0 -1px 0 rgba(0,0,0,0.14);
+            transition: background 0.35s ease, transform 0.2s var(--spring-snappy);
+        }
+        #dock-container .app-icon-wrapper:active { transform: scale(0.93); }
+        /* Out of the way AND out of the flow.
+           Translating alone left the dock's 130px box sitting in the bottom stack while the
+           dock itself was painted off-screen, so the page controls were pushed up over the
+           last row of codes and the grid reserved space for something invisible. Absolute
+           positioning keeps the slide-out animation and gives the space back: the stack
+           collapses to just the controls, and the ResizeObserver on it re-runs the layout. */
+        /* No `position: relative` on #bottom-stack: it is already `absolute` from the markup,
+           which makes it a containing block already, and an id rule saying `relative` beats
+           the utility class — it put the stack back in normal flow and took 138px away from
+           the pager, which cost the grid a whole row on every screen. */
+        body.edit-mode #main-dock {
+            position: absolute; left: 0; right: 0; bottom: 0;
+            transform: translateY(150%); opacity: 0; pointer-events: none;
+        }
         
         .custom-drag-ghost { opacity: 0 !important; }
         .empty-slot { width: 100%; height: var(--app-size); border-radius: var(--squircle-radius); opacity: 0; pointer-events: none; transition: all 0.2s; }
@@ -550,23 +1072,38 @@
         .apple-toggle-knob { transition: transform 0.4s var(--spring-snappy), background-color 0.3s ease, width 0.2s ease; }
         input:active + .apple-toggle-bg .apple-toggle-knob { width: 26px; }
 
-        .grid-select-btn { transition: all 0.2s ease; }
+        .grid-select-btn { transition: all 0.2s ease; color: var(--ink-soft); }
         .grid-select-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
 
+        /* Category chips. The inactive state was #6b7280 on #f3f4f6 — two literals that only
+           work on paper, so on a themed sheet the UNSELECTED chips were bright white slabs and
+           the selected one was a faint tint: the state read backwards. Same pattern as the
+           Library pills now — one filled, the rest quiet. */
         .tpl-cat-btn {
-            position: relative; flex: none; padding: 0.4rem 0.85rem; border-radius: 999px;
+            position: relative; flex: none; padding: 0.45rem 0.9rem; border-radius: 999px;
             font-size: 12px; font-weight: 700; letter-spacing: 0.01em;
-            color: #6b7280; background: #f3f4f6; border: 1px solid transparent;
-            transition: transform 0.2s var(--spring-snappy), background-color 0.2s ease, color 0.2s ease;
+            color: var(--sheet-sub); background: var(--sheet-fill);
+            border: 0.5px solid transparent;
+            transition: transform 0.2s var(--spring-snappy), background-color 0.25s ease, color 0.25s ease;
         }
         .tpl-cat-btn:active { transform: scale(0.94); }
         .tpl-cat-btn.active {
-            color: var(--accent);
-            background-color: color-mix(in srgb, var(--accent) 14%, transparent);
-            border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+            color: var(--accent-text);
+            background-color: var(--accent);
+            border-color: color-mix(in srgb, var(--accent) 65%, #ffffff);
+            box-shadow: 0 6px 16px -8px var(--accent);
         }
-        .create-tab-btn { color: #6b7280; }
-        .create-tab-btn.active { background: #ffffff; color: #111827; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
+
+        /* The template glyph plate. Was a pure black circle — fine on paper, a hole punched in
+           a dark sheet. Palette-tinted, with the accent's own readable ink on it. */
+        .tpl-glyph {
+            background: linear-gradient(150deg,
+                        color-mix(in srgb, var(--accent) 88%, #ffffff) 0%,
+                        var(--accent) 100%);
+            color: var(--accent-text);
+            box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset,
+                        0 6px 14px -8px var(--accent);
+        }
 
         .template-btn { transition: transform 0.15s var(--spring-snappy), box-shadow 0.15s ease; }
         .template-btn:active { transform: scale(0.93); }
@@ -657,12 +1194,24 @@
            could tint, which reads as glare rather than as a light interface. Mixed with the
            palette it becomes a tinted daylight instead of a blank one. */
         body[data-skin="glass"] {
+            --sheet-bg: color-mix(in srgb, var(--pal-1) 10%, #ffffff);
+            --sheet-ink: color-mix(in srgb, var(--pal-1) 24%, #14161c);
+            --sheet-sub: color-mix(in srgb, var(--pal-1) 28%, rgba(24,27,34,0.72));
+            --sheet-fill: color-mix(in srgb, var(--pal-1) 14%, rgba(16,18,24,0.06));
+            --sheet-line: color-mix(in srgb, var(--pal-2) 26%, rgba(16,18,24,0.10));
+            --sheet-raised: #ffffff;
             --wall-ink-a: color-mix(in srgb, var(--pal-1) 52%, #ffffff);
             --wall-ink-b: color-mix(in srgb, var(--pal-3) 56%, #f4f6fd);
             --wall-bloom: 84%;
             --wall-tint-base: #ffffff;      /* light skins tint towards light, symmetrically */
         }
         body[data-skin="soft"] {
+            --sheet-bg: color-mix(in srgb, var(--pal-1) 10%, #ffffff);
+            --sheet-ink: color-mix(in srgb, var(--pal-1) 24%, #14161c);
+            --sheet-sub: color-mix(in srgb, var(--pal-1) 28%, rgba(24,27,34,0.72));
+            --sheet-fill: color-mix(in srgb, var(--pal-1) 14%, rgba(16,18,24,0.06));
+            --sheet-line: color-mix(in srgb, var(--pal-2) 26%, rgba(16,18,24,0.10));
+            --sheet-raised: #ffffff;
             --wall-ink-a: color-mix(in srgb, var(--pal-1) 32%, #f7f9fd);
             --wall-ink-b: color-mix(in srgb, var(--pal-3) 38%, #eef2f8);
             --wall-bloom: 62%;
@@ -1361,8 +1910,13 @@
 
     <div id="workspace-container" class="w-full h-full flex flex-col relative z-10">
         
-        <header id="os-header" class="w-full h-12 flex justify-between items-center px-6 z-40 shrink-0 pt-2 pointer-events-none">
-            <div id="os-clock" class="text-white font-bold text-[15px] tracking-wide drop-shadow-md w-14">
+        <!-- The header used to be a clock and two grey circles, and it was the clearest tell
+             that this was a prototype rather than a product: every launcher and every app it
+             is measured against opens with a line of type big enough to own the screen. The
+             greeting is that line. It is also the only place the app ever says your name. -->
+        <header id="os-header" class="w-full flex flex-col px-6 z-40 shrink-0 pt-2 pb-1 pointer-events-none">
+          <div class="w-full h-10 flex justify-between items-center">
+            <div id="os-clock" class="text-[color:var(--ink-strong)] font-bold text-[15px] tracking-wide drop-shadow-md w-14">
                 --:--
             </div>
             
@@ -1379,6 +1933,20 @@
                      there did nothing at all. Reported as "I cant get out of edit mode". -->
                 <button id="btn-done-editing" class="hidden tap44 items-center justify-center px-4 rounded-full bg-white text-black text-[14px] font-bold shadow-lg active:scale-95 transition-transform">Done</button>
             </div>
+          </div>
+          <!-- Two weights on one line, the way the reference designs do it: the greeting
+               recedes and the name carries. Set as textContent from JS — a display name can
+               come from a Google account, which is not this app's string to trust. -->
+          <div id="os-greeting" class="w-full flex flex-col mt-1.5 pointer-events-none">
+            <!-- Eyebrow above headline, which is how every one of the reference screens is
+                 built: a small quiet line establishing what you are looking at, then one big
+                 line that owns the width. Right-hand chips were tried first and collided with
+                 the action buttons directly above them. -->
+            <span id="os-count-chip" class="os-eyebrow"></span>
+            <h1 class="os-hello leading-[1.05] truncate">
+                <span class="os-hello-soft">Hey,</span><span class="os-hello-name" id="os-hello-name">there</span>
+            </h1>
+          </div>
         </header>
 
         <main class="flex-1 w-full relative overflow-hidden flex flex-col -mt-2">
@@ -1444,10 +2012,10 @@
         </div>
         <p class="text-white/45 text-[11px] font-medium mt-5">Tap outside to close</p>
     </div>
-    <div id="library-overlay" class="modal-spring fixed inset-0 z-[130] bg-black/50 backdrop-blur-3xl opacity-0 pointer-events-none flex flex-col">
+    <div id="library-overlay" class="lib-ground modal-spring fixed inset-0 z-[130] backdrop-blur-3xl opacity-0 pointer-events-none flex flex-col">
         <div class="flex items-center gap-3 px-5 pt-[calc(env(safe-area-inset-top,0px)+1.5rem)] pb-3 shrink-0">
             <div class="flex-1 min-w-0">
-                <h2 class="text-white text-[26px] font-bold tracking-tight leading-none">Library</h2>
+                <h2 class="lib-title text-[color:var(--ink-strong)]">Library</h2>
                 <p id="library-count" class="text-white/50 text-[12px] font-medium mt-1.5"></p>
             </div>
             <button id="btn-library-select" class="tap44 flex items-center justify-center px-3.5 bg-white/10 rounded-full hover:bg-white/20 active:scale-90 transition-all shrink-0 text-white text-[13px] font-bold">Select</button>
@@ -1605,33 +2173,42 @@
     </div>
 
     <div id="item-fullscreen-layer" class="modal-spring fixed inset-0 z-[100] flex flex-col bg-white/85 backdrop-blur-3xl transform origin-center opacity-0 pointer-events-none rounded-[3rem] scale-[0.97]">
-        <div class="flex items-center justify-between p-6 pt-12 md:pt-16">
+        <!-- The header is a back control and an eyebrow. The NAME belongs under the code,
+             at size, the way every reference screen puts the track title under the art. -->
+        <div class="flex items-center justify-between px-6 pt-12 pb-2 md:pt-16">
             <button id="close-item-btn" class="p-3 bg-black/5 rounded-full hover:bg-black/10 active:scale-90 transition-all duration-300">
                 <i data-lucide="chevron-down" class="text-gray-900 w-6 h-6"></i>
             </button>
-            <h2 id="fullscreen-item-title" class="font-bold text-xl text-gray-900 tracking-tight transition-all duration-300">Title</h2>
+            <span class="viewer-eyebrow">Your code</span>
             <div class="w-12"></div>
         </div>
         <div class="flex-1 flex flex-col items-center justify-center p-8 pb-32 w-full max-w-lg mx-auto">
-            <div class="fullscreen-canvas-panel bg-white p-6 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.12)] w-full aspect-square flex items-center justify-center relative group transition-all duration-500 hover:scale-[1.02] hover:shadow-[0_30px_60px_rgba(0,0,0,0.15)]">
-                <canvas id="fullscreen-canvas" class="max-w-full max-h-full pixelated transition-transform duration-300"></canvas>
+            <!-- The stage. Two stacked cards behind the plate, offset and scaled down, so the
+                 code reads as the top of a deck rather than a picture pasted on a wall. -->
+            <div class="viewer-stage w-full">
+                <div class="viewer-shelf viewer-shelf-2"></div>
+                <div class="viewer-shelf viewer-shelf-1"></div>
+                <div class="fullscreen-canvas-panel bg-white p-6 rounded-[2.5rem] w-full aspect-square flex items-center justify-center relative group transition-all duration-500">
+                    <canvas id="fullscreen-canvas" class="max-w-full max-h-full pixelated transition-transform duration-300"></canvas>
+                </div>
             </div>
+            <h2 id="fullscreen-item-title" class="viewer-title">Title</h2>
             <div id="fullscreen-badge" class="fullscreen-badge"></div>
-            <p id="fullscreen-item-data" class="mt-8 text-gray-500 font-mono text-sm text-center break-all w-full transition-opacity duration-300"></p>
-            <div id="fullscreen-tags" class="flex flex-wrap items-center justify-center gap-2 mt-6 w-full max-w-sm"></div>
+            <p id="fullscreen-item-data" class="mt-3 text-gray-500 font-mono text-[12.5px] text-center break-all w-full max-w-xs transition-opacity duration-300"></p>
+            <div id="fullscreen-tags" class="flex flex-wrap items-center justify-center gap-2 w-full max-w-sm"></div>
             <div id="fullscreen-stats" class="fullscreen-stats"></div>
-            <div class="fullscreen-actions flex gap-8 mt-12">
-                <button id="btn-action-copy" class="flex flex-col items-center gap-2 text-gray-600 hover:text-black hover:-translate-y-1 active:scale-90 transition-all duration-300">
-                    <div class="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center shadow-sm"><i data-lucide="copy" class="w-6 h-6"></i></div>
-                    <span class="text-[11px] font-bold tracking-wide">COPY</span>
+            <div class="fullscreen-actions flex">
+                <button id="btn-action-copy" class="viewer-action flex flex-col items-center gap-2 active:scale-90 transition-all duration-300">
+                    <div class="viewer-action-plate flex items-center justify-center"><i data-lucide="copy" class="w-6 h-6"></i></div>
+                    <span class="viewer-action-label">COPY</span>
                 </button>
-                <button id="btn-action-save" class="flex flex-col items-center gap-2 text-gray-600 hover:text-black hover:-translate-y-1 active:scale-90 transition-all duration-300">
-                    <div class="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center shadow-sm"><i data-lucide="download" class="w-6 h-6"></i></div>
-                    <span class="text-[11px] font-bold tracking-wide">SAVE</span>
+                <button id="btn-action-save" class="viewer-action flex flex-col items-center gap-2 active:scale-90 transition-all duration-300">
+                    <div class="viewer-action-plate flex items-center justify-center"><i data-lucide="download" class="w-6 h-6"></i></div>
+                    <span class="viewer-action-label">SAVE</span>
                 </button>
-                <button id="btn-action-rename" class="flex flex-col items-center gap-2 text-gray-600 hover:text-black hover:-translate-y-1 active:scale-90 transition-all duration-300">
-                    <div class="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center shadow-sm"><i data-lucide="edit-2" class="w-6 h-6"></i></div>
-                    <span class="text-[11px] font-bold tracking-wide">RENAME</span>
+                <button id="btn-action-rename" class="viewer-action flex flex-col items-center gap-2 active:scale-90 transition-all duration-300">
+                    <div class="viewer-action-plate flex items-center justify-center"><i data-lucide="edit-2" class="w-6 h-6"></i></div>
+                    <span class="viewer-action-label">RENAME</span>
                 </button>
             </div>
         </div>
@@ -2202,6 +2779,152 @@
 
         const freshDefaultState = () => JSON.parse(JSON.stringify(DEFAULT_STATE));
 
+        // Stamp the chrome and sheet panels once, at startup.
+        //
+        // These used to be addressed by long :is(#a,#b,...) id lists in the stylesheet, which
+        // the engine has to evaluate against the whole document — and flipping data-skin
+        // invalidates the whole document. Measured at 300ms of style recalculation per skin
+        // change on a mid-range phone. A class on seven elements costs nothing to match.
+        document.addEventListener('DOMContentLoaded', () => {
+            const chrome = ['settings-panel', 'account-panel', 'library-overlay',
+                            'search-overlay', 'os-header', 'main-dock', 'folder-overlay'];
+            const sheets = ['create-panel', 'rename-panel', 'scanner-result-sheet',
+                            'scanner-batch-tray'];
+            chrome.forEach(id => document.getElementById(id)?.classList.add('ui-chrome'));
+            sheets.forEach(id => document.getElementById(id)?.classList.add('ui-sheet'));
+        });
+
+
+        // Which of the six palette pairings a tile wears.
+        //
+        // Hashed from the id, not from the position, not from a counter, and never stored.
+        // Position would mean a code changed colour when you rearranged the grid; a counter
+        // would mean it changed when you deleted the one above it; storing it would mean two
+        // devices disagreed until they synced. The id is the only thing about a code that is
+        // both stable and unique, so the colour follows the code and nothing else.
+        //
+        // FNV-1a, 32-bit. Any spreading hash would do — this one is four lines and has no
+        // clustering on the short, similar strings ids actually are.
+        // What a code shows on the home screen.
+        //
+        // It used to show the code itself: an Aztec matrix, shrunk to 83px, twenty of them in
+        // a grid. Nobody has ever scanned a barcode off a home screen at that size — the
+        // viewer exists for that, full-bleed, which is where the code is actually used. All
+        // the grid got out of it was noise, and it was reported exactly that way: "its
+        // visually disgusting to see the barcodes like that".
+        //
+        // So the tile shows a monogram, the way a contact avatar or an album tile does. One
+        // or two letters lifted from the title, on the palette gradient the tile already had.
+        window.tileMonogram = function(title) {
+            const t = String(title || '').trim();
+            if (!t) return '?';
+            // Two initials when the name is two words ("Kris Kringle" -> KK), one otherwise.
+            // Not three: at tile size a third letter costs more legibility than it adds
+            // meaning, and every extra glyph shrinks the other two.
+            const words = t.split(/\s+/).filter(w => /[\p{L}\p{N}]/u.test(w));
+            if (words.length >= 2) {
+                return (first(words[0]) + first(words[1])).toUpperCase();
+            }
+            return first(t).toUpperCase() || '?';
+
+            function first(w) {
+                const m = String(w).match(/[\p{L}\p{N}]/u);
+                return m ? m[0] : '';
+            }
+        };
+
+        // What a dock button does.
+        //
+        // This was an if/else chain on exact ids, and anything it did not recognise fell
+        // through to "coming soon" — a button that looks live, taps like a button, and does
+        // nothing. That is not hypothetical: a dock item can arrive from a cloud document
+        // written by an older build, from a restored backup, or from a hand-edited export, and
+        // ids drift. Every one of those produced a dead dock.
+        //
+        // A table, plus aliases for the names the same five buttons have gone by, plus a last
+        // resort that reads the ICON — because whatever an item is called, a dock entry drawn
+        // as a scan-line is the scanner.
+        const DOCK_ACTIONS = {
+            nav_home:  () => window.LauncherInput.goTo(0),
+            nav_gen:   () => window.CodeGenerator && window.CodeGenerator.open(),
+            nav_lib:   () => window.LibraryManager && window.LibraryManager.open(),
+            nav_scan:  () => window.ScannerEngine && window.ScannerEngine.start(),
+            // Sharing a network is the single most common reason to make a QR code, which is
+            // why it earns a dock slot; it opens the WiFi form directly rather than the picker.
+            nav_wifi:  () => {
+                if (!window.CodeGenerator) return;
+                window.CodeGenerator.open();
+                window.CodeGenerator.openTemplateForm('wifi');
+            },
+            // Calls the manager, NOT btn-open-settings.click().
+            //
+            // A dock action implemented as a synthesised click cannot work, by construction:
+            // LauncherInput swallows the next click at the document's capture phase after
+            // every tap, to stop the browser's own synthesised click firing the same button
+            // twice. The swallower cannot tell that click from this one, so Settings opened
+            // from the dock was eaten a frame after it was dispatched — the button looked
+            // completely dead, and every debug path that called the action directly worked
+            // fine, which is what made it look like the action was broken rather than the
+            // route to it.
+            nav_settings: () => window.SettingsManager && window.SettingsManager.open(),
+        };
+        const DOCK_ALIASES = {
+            nav_add: 'nav_gen', nav_create: 'nav_gen', nav_new: 'nav_gen',
+            nav_library: 'nav_lib', nav_codes: 'nav_lib', nav_list: 'nav_lib',
+            nav_scanner: 'nav_scan', nav_camera: 'nav_scan',
+            nav_grid: 'nav_home', nav_pages: 'nav_home',
+            nav_prefs: 'nav_settings', nav_config: 'nav_settings',
+        };
+        const DOCK_BY_ICON = {
+            grid: 'nav_home', 'layout-grid': 'nav_home',
+            plus: 'nav_gen', 'plus-circle': 'nav_gen', 'plus-square': 'nav_gen',
+            library: 'nav_lib', 'layout-list': 'nav_lib', list: 'nav_lib',
+            'scan-line': 'nav_scan', scan: 'nav_scan', 'qr-code': 'nav_scan', camera: 'nav_scan',
+            wifi: 'nav_wifi',
+            settings: 'nav_settings', 'settings-2': 'nav_settings', cog: 'nav_settings',
+        };
+        window.dockAction = function(item) {
+            if (!item) return null;
+            const id = item.id;
+            const key = DOCK_ACTIONS[id] ? id
+                      : DOCK_ALIASES[id] ? DOCK_ALIASES[id]
+                      : DOCK_BY_ICON[item.icon];
+            return key ? DOCK_ACTIONS[key] : null;
+        };
+
+        // Tap-outside-to-close, minus the case where the tap that OPENED the layer is the one
+        // arriving.
+        //
+        // Opening Settings from the dock did nothing at all: the dock's activate ran
+        // btn-open-settings.click(), the panel opened, and then the browser's synthesized
+        // click from that same touch landed on the freshly uncovered backdrop and closed it
+        // again, one frame later and invisibly. Every layer with a backdrop had the same hole;
+        // Settings was just the one reachable from a dock button.
+        //
+        // Stamped rather than debounced by a constant: what has to be ignored is "the gesture
+        // that opened this", not "the next N milliseconds of the user's life". 250ms is longer
+        // than a click follows its own touchend by, and far shorter than anyone reaches back
+        // to dismiss something they just opened.
+        window.markLayerOpened = function(el) { if (el) el.__openedAt = performance.now(); };
+        window.backdropDismiss = function(modal, close) {
+            modal.addEventListener('click', (e) => {
+                if (e.target !== modal) return;
+                if (performance.now() - (modal.__openedAt || 0) < 250) return;
+                close();
+            });
+        };
+
+        window.tileVariant = function(id) {
+            let h = 0x811c9dc5;
+            const str = String(id || '');
+            for (let i = 0; i < str.length; i++) {
+                h ^= str.charCodeAt(i);
+                h = Math.imul(h, 0x01000193) >>> 0;
+            }
+            return h % 6;
+        };
+
+
         // Close every gap and resolve every collision, in place.
         //
         // One function because state arrives by THREE routes — local storage, a backup file,
@@ -2212,16 +2935,28 @@
             const st = window.OS_STATE;
             const per = Math.max(1, (st.gridCols || 4) * (st.gridRows || 6));
             const grid = st.apps.filter(a => (a.type === 'grid' && !a.folderId) || a.type === 'folder');
-            const pages = new Map();
-            grid.forEach(a => {
-                const p = Math.max(0, a.page || 0);
-                if (!pages.has(p)) pages.set(p, []);
-                pages.get(p).push(a);
-            });
-            pages.forEach((items, p) => {
-                items.sort((x, y) => (x.order || 0) - (y.order || 0))
-                     .forEach((a, i) => { a.page = p; a.order = i % per; });
-            });
+
+            // One ordered sequence, then dealt back out page by page.
+            //
+            // This used to normalise each page independently with `order = i % per`, and the
+            // modulo was a silent collision: a page holding more codes than it has squares
+            // wrapped the extras back onto orders 0, 1, 2 — on top of the codes already there.
+            // Only one of each pair was ever drawn.
+            //
+            // It took a shorter page to expose it. The header grew by a row of type, the grid
+            // lost a row, and pages that used to hold 24 now hold 20 — so a merge from the
+            // cloud that had been fitting exactly began overflowing, and the test that checks
+            // every code gets its own slot caught two sharing one. The bug was always there;
+            // it just needed a page small enough to overflow.
+            //
+            // Dealing the whole sequence out means an overflow spills onto the NEXT page,
+            // which is what "forced auto-arrange to the next open spot" has to mean when the
+            // next open spot is not on this page.
+            grid.sort((x, y) => (x.page || 0) - (y.page || 0) || (x.order || 0) - (y.order || 0))
+                .forEach((a, i) => {
+                    a.page = Math.floor(i / per);
+                    a.order = i % per;
+                });
         };
 
         try {
@@ -2473,9 +3208,39 @@
             return iconSvg(name, `w-4 h-4 ${colorClass}`);
         }
 
+        // Draw only the icons that are not drawn yet.
+        //
+        // lucide.createIcons() with no argument walks the WHOLE document looking for
+        // [data-lucide] and replaces each one with an SVG. That is 12-22ms per call on a
+        // mid-range phone, and it is called after every render — including the renders where
+        // keyed reconciliation reused every node and their SVGs were already sitting there.
+        //
+        // A node that has already been converted no longer carries the attribute, so querying
+        // for what remains is exactly the set that needs work: usually zero. The full sweep
+        // stays as the fallback, because lucide's `nodes` option is version-dependent and a
+        // silent no-op would mean invisible icons.
         function safeCreateIcons() {
-            try { if (typeof lucide !== 'undefined') lucide.createIcons(); }
-            catch (e) { XanLogger.error("Icon render skipped", e); }
+            try {
+                if (typeof lucide === 'undefined') return;
+                // :not(svg) matters. This build of lucide leaves data-lucide ON the <svg> it
+                // creates, so a bare [data-lucide] query matches every icon that has ALREADY
+                // been drawn — 49 of them at rest. The "pending" set was therefore never empty,
+                // the early return never fired, and the probe below concluded the library
+                // ignores `nodes`. Net effect: two full document sweeps per render instead of
+                // the zero this function exists to achieve.
+                const pending = document.querySelectorAll(':not(svg)[data-lucide]');
+                if (!pending.length) return;
+                // Whether this build honours `nodes` is a property of the vendored library, so
+                // it is worth exactly one probe. Without the cache the fallback ran on every
+                // single render and the sweep happened twice instead of once.
+                if (safeCreateIcons.nodesOk === false) { lucide.createIcons(); return; }
+                lucide.createIcons({ nodes: pending });
+                if (safeCreateIcons.nodesOk === undefined) {
+                    safeCreateIcons.nodesOk =
+                        document.querySelectorAll('[data-lucide]').length < pending.length;
+                    if (!safeCreateIcons.nodesOk) lucide.createIcons();
+                }
+            } catch (e) { XanLogger.error("Icon render skipped", e); }
         }
 
         function getItemCreatedLabel(item) {
@@ -2508,6 +3273,39 @@
                 this.clockEl.innerText = `${h}:${m}`;
             }
         }
+
+        // The greeting and the count.
+        //
+        // Both are set as textContent, never interpolated. The name can come from a Google
+        // account, and a display name is not this app's string to trust — same rule as a
+        // scanned payload. HARD RULE 9.
+        window.HomeHeader = {
+            greetingFor(hour) {
+                if (hour < 5)  return 'Still up,';
+                if (hour < 12) return 'Morning,';
+                if (hour < 18) return 'Hey,';
+                return 'Evening,';
+            },
+            render(name) {
+                const soft = document.querySelector('.os-hello-soft');
+                const nameEl = document.getElementById('os-hello-name');
+                const chip = document.getElementById('os-count-chip');
+                if (soft) soft.textContent = this.greetingFor(new Date().getHours());
+                if (nameEl) {
+                    const n = name !== undefined ? name : this.lastName;
+                    this.lastName = n;
+                    // First name only. "Catherine Elizabeth Thompson-Hughes" is not a headline,
+                    // and the reference this is modelled on greets you by one word.
+                    nameEl.textContent = (n && String(n).trim().split(/\s+/)[0]) || 'there';
+                }
+                if (chip) {
+                    const n = (window.OS_STATE.apps || []).filter(a => a.type === 'grid').length;
+                    // Empty string, not "0 codes": .os-chip:empty fades the pill out entirely,
+                    // so a clean slate is not labelled as one.
+                    chip.textContent = n ? `${n} ${n === 1 ? 'code' : 'codes'}` : '';
+                }
+            }
+        };
 
         class OSSearchEngine {
             constructor() {
@@ -2545,7 +3343,7 @@
                     
                     let iconHtml = '';
                     if (app.type === 'grid' && app.bcid) {
-                        iconHtml = `<div class="w-12 h-12 bg-white rounded-[0.85rem] p-1.5 flex flex-shrink-0 items-center justify-center shadow-sm"><canvas id="search-can-${app.id}" class="max-w-full max-h-full pixelated"></canvas></div>`;
+                        iconHtml = `<div class="search-thumb code-tile tile-${window.tileVariant(app.id)} flex flex-shrink-0 items-center justify-center"><span class="tile-mono search-mono"></span></div>`;
                     } else {
                         iconHtml = `<div class="w-12 h-12 accent-bg-soft accent-border-soft border rounded-[0.85rem] flex items-center justify-center flex-shrink-0 shadow-sm"><i data-lucide="${app.icon}" class="w-6 h-6 accent-text"></i></div>`;
                     }
@@ -2583,10 +3381,11 @@
 
                     this.resultsContainer.appendChild(el);
 
-                    if (app.type === 'grid' && app.bcid) {
-                        setTimeout(() => {
-                            window.renderCode(`search-can-${app.id}`, app, { scale: 2 });
-                        }, 10);
+                    const smono = el.querySelector('.search-mono');
+                    if (smono) {
+                        const g = window.tileMonogram(app.title);
+                        smono.textContent = g;
+                        smono.dataset.len = String(g.length);
                     }
                 });
                 safeCreateIcons();
@@ -2603,6 +3402,42 @@
                     clearTimeout(timeout);
                     timeout = setTimeout(() => this.calculateGrid(), 100);
                 });
+                this.watchBottomStack();
+            }
+
+            // Re-run the layout whenever the bottom stack changes height.
+            //
+            // The stack is not a fixed thing: edit mode swaps the dock for page arrows, a page
+            // name chip and the dots; a skin changes the pill's padding and radius; the dock
+            // icon size follows the grid. Every one of those moves the ceiling the rows must
+            // fit under, and every one used to need its own call site — so the paths nobody
+            // thought of silently drew the bottom row of codes underneath the controls.
+            // Measured at 412x915 in edit mode: the last row ran 639-757 with the page controls
+            // sitting at 661-749, straight through it. Reported as "have you not noticed the
+            // overlapping elements".
+            //
+            // One observer instead of N hooks, so the paths written later are covered too. The
+            // 6px threshold is what stops it oscillating: a re-layout changes the dock's own
+            // size a little, which would otherwise resize the stack and call this again.
+            watchBottomStack() {
+                const stack = document.getElementById('bottom-stack');
+                if (!stack || typeof ResizeObserver === 'undefined') return;
+                let last = stack.getBoundingClientRect().height;
+                let queued = false;
+                new ResizeObserver(() => {
+                    // Coalesced to one call per frame. A dock sliding out of edit mode fires
+                    // this on every frame of the transition, and each one used to be a full
+                    // layout pass.
+                    if (queued) return;
+                    queued = true;
+                    requestAnimationFrame(() => {
+                        queued = false;
+                        const now = stack.getBoundingClientRect().height;
+                        if (Math.abs(now - last) < 6) return;
+                        last = now;
+                        this.calculateGrid();
+                    });
+                }).observe(stack);
             }
 
             // How wide one column actually is, and how big an icon should be to fill it.
@@ -2663,12 +3498,15 @@
             // padding; the row inside it adds px-1 and gap-1 between items. Measured off those
             // rather than assumed, and never larger than a grid icon — a dock icon bigger than
             // the codes above it would look wrong even where it fits.
-            dockSizeFor(width, gridSize) {
-                // Read the pill's ACTUAL padding rather than assuming it. Padding is a
-                // per-skin token now, and a hardcoded guess here is what made the tiles shrink
-                // whenever the bar was given more padding, cancelling the change out.
-                const nav = document.getElementById('main-dock');
-                const pad = nav ? parseFloat(getComputedStyle(nav).paddingLeft) || 12 : 12;
+            dockSizeFor(width, gridSize, navPad) {
+                // The pill's ACTUAL padding, not an assumption: padding is a per-skin token,
+                // and a hardcoded guess here is what made the tiles shrink whenever the bar was
+                // given more padding, cancelling the change out. Passed in rather than read
+                // here, because by the time this runs the pass has already written CSS
+                // variables and any read would force a fresh layout to answer it.
+                const pad = navPad !== undefined ? navPad
+                    : (() => { const n = document.getElementById('main-dock');
+                               return n ? parseFloat(getComputedStyle(n).paddingLeft) || 12 : 12; })();
                 const bar = Math.min(440, width - 8);
                 const items = (window.OS_STATE.apps || []).filter(a => a.type === 'dock').length || 5;
                 const inner = bar - pad * 2 - 8 - Math.max(0, items - 1) * 3;
@@ -2685,16 +3523,50 @@
             dockReserve() {
                 const stack = document.getElementById('bottom-stack');
                 const h = stack ? stack.getBoundingClientRect().height : 0;
-                if (h > 40) return Math.round(h + 20);
+                if (h > 40) {
+                    const measured = Math.round(h + 20);
+                    // In edit mode the dock leaves the flow so the page controls can have the
+                    // space, which makes the stack SHORTER — and a shorter reserve fits an
+                    // extra row, so the grid gained a row the moment you long-pressed. A jump
+                    // is a jump in either direction.
+                    //
+                    // The resting reserve is remembered and used as a floor while editing, so
+                    // the rows never move; the measurement still wins when the controls are
+                    // TALLER than the dock, which is the overlap this function exists to stop.
+                    if (!document.body.classList.contains('edit-mode')) {
+                        this._restReserve = measured;
+                        return measured;
+                    }
+                    return Math.max(measured, this._restReserve || measured);
+                }
                 const size = parseFloat(getComputedStyle(document.documentElement)
                     .getPropertyValue('--dock-size')) || 64;
                 return Math.round(size + 72);
             }
 
+            // Read every measurement the pass needs, in one go, before anything is written.
+            //
+            // This used to be interleaved: measure the stack, write --dock-reserve, read the
+            // dock's computed padding, write --app-size, read main's box, write more. Every
+            // read after a write forces the browser to lay the page out again to answer it,
+            // and there were four of them. Measured at 4x CPU throttle: 187-288ms per call
+            // with only 28ms of that inside render(). The rest was thrash.
+            measure() {
+                const nav = document.getElementById('main-dock');
+                const main = document.querySelector('main');
+                return {
+                    reserve: this.dockReserve(),
+                    navPad: nav ? parseFloat(getComputedStyle(nav).paddingLeft) || 12 : 12,
+                    mainH: main ? main.getBoundingClientRect().height : window.innerHeight - 60,
+                };
+            }
+
             calculateGrid() {
                 const width = window.innerWidth; const height = window.innerHeight;
                 const isLandscape = width > height;
-                const reserve = this.dockReserve();
+                const m = this.measure();
+                const reserve = m.reserve;
+                // Every write from here down. Nothing reads geometry again this pass.
                 document.documentElement.style.setProperty('--dock-reserve', reserve + 'px');
                 
                 if (window.OS_STATE.gridSize !== 'auto') {
@@ -2717,7 +3589,7 @@
                     document.documentElement.style.setProperty('--grid-gap-y', gap + 'px');
                     document.documentElement.style.setProperty('--grid-rows', rows);
                     document.documentElement.style.setProperty('--dock-size',
-                        this.dockSizeFor(width, size) + 'px');
+                        this.dockSizeFor(width, size, m.navPad) + 'px');
                 } else {
                     if (width >= 1024) window.OS_STATE.gridCols = 6; 
                     else if (width >= 768) window.OS_STATE.gridCols = isLandscape ? 6 : 5; 
@@ -2730,8 +3602,7 @@
                     // be `height - 180` — a single number standing in for a header, a dock and
                     // two paddings at once, which is why rows-per-page never matched what the
                     // page could really show.
-                    const main = document.querySelector('main');
-                    const mainH = main ? main.getBoundingClientRect().height : height - 60;
+                    const mainH = m.mainH;
                     const padTop = Math.max(height * 0.02, 20);
                     const availableHeight = Math.max(120, mainH - padTop - reserve);
 
@@ -2745,13 +3616,31 @@
                     document.documentElement.style.setProperty('--app-size', size + 'px');
                     document.documentElement.style.setProperty('--grid-gap-y', gap + 'px');
                     document.documentElement.style.setProperty('--dock-size',
-                        this.dockSizeFor(width, size) + 'px');
+                        this.dockSizeFor(width, size, m.navPad) + 'px');
 
                     const rowHeight = this.rowHeightFor(size, gap);
                     window.OS_STATE.gridRows = Math.max(2, Math.min(7, Math.floor(availableHeight / rowHeight)));
                     document.documentElement.style.setProperty('--grid-rows', window.OS_STATE.gridRows);
                 }
-                this.renderer.render();
+                // Re-render only when the SHAPE of the grid changed.
+                //
+                // calculateGrid used to end in an unconditional render(), and render() rebuilds
+                // every page, re-runs the icon sweep and re-seats the drag engine: 26-33ms a
+                // call on a mid-range phone, and it is called on every resize, every skin
+                // change and every time the bottom stack moves. Under a drag that turned into
+                // 187-288ms stalls — measured at 4x CPU throttle, which is roughly a mid-range
+                // Android.
+                //
+                // Almost none of those calls need a render. Icon size, gap and reserve are CSS
+                // custom properties: publishing them IS the layout change, and the browser
+                // reflows without our help. Only a change in how many squares a page has
+                // requires rebuilding the pages, because that is what decides which code lands
+                // on which page.
+                const shape = window.OS_STATE.gridCols + 'x' + window.OS_STATE.gridRows;
+                if (shape !== this._lastShape) {
+                    this._lastShape = shape;
+                    this.renderer.render();
+                }
 
                 // The dock's height depends on the icon size this pass just chose, and the row
                 // tracks depend on the dock's height — so the first pass on a cold load reserves
@@ -2811,16 +3700,18 @@
                     // A 2x2 peek at what is inside, the way a folder is legible at a glance.
                     const kids = window.folderChildren(itemData.id).slice(0, 4);
                     const cells = Array.from({ length: 4 }, (_, i) => kids[i]
-                        ? `<div class="bg-white rounded-[3px] overflow-hidden flex items-center justify-center"><canvas id="fdr-${itemData.id}-${i}" class="w-full h-full object-contain pixelated"></canvas></div>`
-                        : '<div class="bg-white/25 rounded-[3px]"></div>').join('');
+                        ? `<div class="folder-cell" data-mono="${i}"></div>`
+                        : '<div class="folder-cell folder-cell-empty"></div>').join('');
                     iconInnerHtml = `
-                        <div class="w-full h-full grid grid-cols-2 grid-rows-2 gap-[3px] p-[5px] bg-white/25 backdrop-blur-xl pointer-events-none">
+                        <div class="code-tile tile-${window.tileVariant(itemData.id)} w-full h-full grid grid-cols-2 grid-rows-2 gap-[4px] pointer-events-none">
                             ${cells}
                         </div>`;
                 } else if (itemData.type === 'grid' && itemData.bcid) {
+                    // Coloured tile, white plate, black code. See .code-tile in the stylesheet
+                    // for why the colour stops at the plate's edge.
                     iconInnerHtml = `
-                        <div class="w-full h-full bg-white flex items-center justify-center p-2.5 shadow-[0_2px_10px_rgba(0,0,0,0.15)] pointer-events-none">
-                            <canvas id="can-${itemData.id}" class="w-full h-full object-contain pixelated"></canvas>
+                        <div class="code-tile tile-${window.tileVariant(itemData.id)} w-full h-full flex items-center justify-center pointer-events-none">
+                            <span class="tile-mono"></span>
                         </div>`;
                 } else {
                     iconInnerHtml = `
@@ -2868,9 +3759,20 @@
                 // Verified: the script executed, it was not merely markup appearing.
                 // HARD RULE 9 — untrusted input reaches the DOM as text or not at all.
                 wrapper.innerHTML = iconHtml;
-                if (!isDock) {
+                // Set as text, never interpolated into the markup above. A monogram comes from
+                // the title, and a title is whatever a scanned payload contained. HARD RULE 9.
+                const mono = wrapper.querySelector('.tile-mono');
+                if (mono) {
+                    const glyphs = window.tileMonogram(itemData.title);
+                    mono.textContent = glyphs;
+                    mono.dataset.len = String(glyphs.length);
+                }
+                {
+                    // The dock gets labels too. Five identical line glyphs in a row is a
+                    // guessing game — the reference dock this is modelled on names every one
+                    // of its four, and naming them costs eleven pixels.
                     const label = document.createElement('span');
-                    label.className = 'app-label jiggle-target';
+                    label.className = isDock ? 'dock-label' : 'app-label jiggle-target';
                     label.textContent = itemData.title || '';
                     wrapper.appendChild(label);
                 }
@@ -2895,25 +3797,10 @@
                         if (window.FolderManager) window.FolderManager.open(itemData.id);
                     } else if (itemData.type === 'grid') {
                         if (window.InteractionManager) window.InteractionManager.openEnlarge(live());
-                    } else if (itemData.id === 'nav_gen') {
-                        if (window.CodeGenerator) window.CodeGenerator.open();
-                    } else if (itemData.id === 'nav_home') {
-                        window.LauncherInput.goTo(0);
-                    } else if (itemData.id === 'nav_scan') {
-                        if (window.ScannerEngine) window.ScannerEngine.start();
-                    } else if (itemData.id === 'nav_lib') {
-                        if (window.LibraryManager) window.LibraryManager.open();
-                    } else if (itemData.id === 'nav_wifi') {
-                        // Was falling through to "WiFi coming soon" — a dead button sitting in
-                        // the dock, exactly like the Library one before it. Sharing a network is
-                        // the single most common reason to make a QR code, which is why it earns
-                        // a dock slot; it opens the WiFi form directly rather than the picker.
-                        if (window.CodeGenerator) {
-                            window.CodeGenerator.open();
-                            window.CodeGenerator.openTemplateForm('wifi');
-                        }
                     } else {
-                        window.showToast(`${itemData.title} coming soon.`);
+                        const run = window.dockAction(itemData);
+                        if (run) run();
+                        else window.showToast(`${itemData.title} coming soon.`);
                     }
                 };
                 wrapper.__activate = activate;
@@ -2929,15 +3816,12 @@
                 if (itemData.type === 'folder') {
                     setTimeout(() => {
                         window.folderChildren(itemData.id).slice(0, 4).forEach((kid, i) => {
-                            window.renderCode(`fdr-${itemData.id}-${i}`, kid, { scale: 1 });
+                            const cell = wrapper.querySelector(`.folder-cell[data-mono="${i}"]`);
+                            if (cell) cell.textContent = window.tileMonogram(kid.title);
                         });
                     }, 10);
                 }
-                if (itemData.type === 'grid' && itemData.bcid) {
-                    setTimeout(() => {
-                        window.renderCode(`can-${itemData.id}`, itemData, { scale: 3 });
-                    }, 10);
-                }
+
                 
                 const removeBtn = wrapper.querySelector('.edit-only');
                 if (removeBtn) {
@@ -3095,15 +3979,30 @@
                 // One page needs no dots. A single dot is not navigation, it is decoration
                 // that looks like navigation.
                 this.pagination.innerHTML = '';
-                this.pagination.classList.toggle('opacity-0', totalPages < 2);
+                // Faded AND unhittable. Fading alone left the dots catching taps in a strip
+                // across the middle of the screen — invisible, still hit-testable, and each
+                // one wired to jump to a page. The dots are `pointer-events-auto` for the
+                // case where there ARE several pages, which is what made the invisible ones
+                // clickable too.
+                const oneScreen = totalPages < 2;
+                this.pagination.classList.toggle('opacity-0', oneScreen);
+                this.pagination.classList.toggle('pointer-events-none', oneScreen);
                 for (let i = 0; i < totalPages; i++) {
                     const dot = document.createElement('div');
-                    dot.className = `pagination-dot pointer-events-auto ${i === state.currentPage ? 'active' : ''}`;
+                    // pointer-events-auto only when there is somewhere to go. A child set to
+                    // `auto` re-enables hit-testing regardless of a parent set to `none`, so
+                    // fading the container was never going to be enough on its own — the dots
+                    // stayed tappable through it.
+                    dot.className = `pagination-dot ${oneScreen ? '' : 'pointer-events-auto'} ${i === state.currentPage ? 'active' : ''}`;
                     dot.onclick = () => window.LauncherInput.goTo(i);
                     this.pagination.appendChild(dot);
                 }
                 
                 this.updatePageChip(state.currentPage || 0);
+                // The count in the header is derived at render for the same reason the Library
+                // badge is: a number kept in state goes stale the moment the thing it counts
+                // changes, and then it disagrees with what is on the screen.
+                if (window.HomeHeader) window.HomeHeader.render();
                 safeCreateIcons();
                 if (window.DragEngine) window.DragEngine.init(document.querySelectorAll('.sortable-page'));
             }
@@ -5046,7 +5945,7 @@
 
                 document.getElementById('btn-close-create').addEventListener('click', () => this.close());
                 document.getElementById('btn-save-create').addEventListener('click', () => this.saveFromCustomForm());
-                this.modal.addEventListener('click', (e) => { if(e.target === this.modal) this.close(); });
+                window.backdropDismiss(this.modal, () => this.close());
 
                 this.tabButtons.forEach(btn => btn.addEventListener('click', () => this.setMode(btn.dataset.mode)));
 
@@ -5084,9 +5983,9 @@
                 this.templateGrid.innerHTML = '';
                 QUICK_TEMPLATES.filter(t => t.cat === this.activeCategory).forEach(t => {
                     const btn = document.createElement('button');
-                    btn.className = 'template-btn flex flex-col items-center gap-2 p-3 rounded-2xl bg-gray-50 border border-gray-100 hover:bg-gray-100';
+                    btn.className = 'template-btn flex flex-col items-center gap-2 p-3 rounded-2xl bg-gray-50 border border-gray-100';
                     btn.innerHTML = `
-                        <div class="w-11 h-11 rounded-2xl bg-black text-white flex items-center justify-center">
+                        <div class="tpl-glyph w-11 h-11 rounded-2xl flex items-center justify-center">
                             <i data-lucide="${t.icon}" class="w-5 h-5"></i>
                         </div>
                         <span class="text-[11px] font-bold text-gray-700 text-center leading-tight">${t.label}</span>
@@ -5417,6 +6316,7 @@
                 this.closeTemplateForm();
                 this.setMode(prefillData ? 'custom' : 'templates');
 
+                window.markLayerOpened(this.modal);
                 this.modal.classList.remove('opacity-0', 'pointer-events-none');
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
 
@@ -5614,6 +6514,7 @@
             }
 
             async start() {
+                window.markLayerOpened(this.modal);
                 this.modal.classList.remove('opacity-0', 'pointer-events-none');
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
                 this.resetScanUI();
@@ -6007,7 +6908,7 @@
 
                 document.getElementById('btn-open-settings').addEventListener('click', () => this.open());
                 document.getElementById('btn-close-settings').addEventListener('click', () => this.close());
-                this.modal.addEventListener('click', (e) => { if (e.target === this.modal) this.close(); });
+                window.backdropDismiss(this.modal, () => this.close());
 
                 this.gridButtons.forEach(btn => {
                     btn.addEventListener('click', () => this.setGridSize(btn.dataset.grid));
@@ -6050,12 +6951,27 @@
                 this.syncGridButtonsUI();
             }
 
+            // The fade at the foot of the panel is only honest while there IS more below it,
+            // so it lifts at the end rather than permanently ghosting the last row.
+            syncScrollEnd() {
+                const el = this.panel;
+                el.classList.toggle('at-end',
+                    el.scrollTop + el.clientHeight >= el.scrollHeight - 4);
+            }
+
             open() {
                 this.syncGridButtonsUI();
+                window.markLayerOpened(this.modal);
                 this.modal.classList.remove('opacity-0', 'pointer-events-none');
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
                 this.panel.classList.remove('scale-90');
                 this.panel.classList.add('scale-100');
+                if (!this._scrollWatched) {
+                    this._scrollWatched = true;
+                    this.panel.addEventListener('scroll', () => this.syncScrollEnd(), { passive: true });
+                }
+                // After the panel has been laid out at its open size, not before it.
+                requestAnimationFrame(() => this.syncScrollEnd());
             }
 
             close() {
@@ -6661,7 +7577,7 @@
 
                 document.getElementById('btn-open-account').addEventListener('click', () => this.open());
                 document.getElementById('btn-close-account').addEventListener('click', () => this.close());
-                this.modal.addEventListener('click', (e) => { if (e.target === this.modal) this.close(); });
+                window.backdropDismiss(this.modal, () => this.close());
                 document.getElementById('btn-google-signin').addEventListener('click', () => this.signInGoogle());
                 document.getElementById('btn-sign-out').addEventListener('click', () => this.signOutAndReset());
 
@@ -6908,7 +7824,11 @@
                     this.syncedView.classList.toggle('hidden', !signedIn);
                     this.syncedView.classList.toggle('flex', signedIn);
                 }
-                if (!signedIn) return;
+                if (!signedIn) {
+                    // Signing out has to take the name off the home screen with it.
+                    if (window.HomeHeader) window.HomeHeader.render('');
+                    return;
+                }
 
                 const nameEl = document.getElementById('account-name');
                 const emailEl = document.getElementById('account-email');
@@ -6917,6 +7837,7 @@
                 const iconFallback = document.getElementById('account-icon-fallback');
 
                 if (nameEl) nameEl.textContent = user.displayName || 'XanCode User';
+                if (window.HomeHeader) window.HomeHeader.render(user.displayName || '');
                 if (emailEl) emailEl.textContent = user.email || '';
 
                 if (user.photoURL && avatarImg) {
@@ -6939,6 +7860,7 @@
             open() {
                 if (this.guestError) this.guestError.classList.add('hidden');
                 if (!this.ready) this.showGuestError("Cloud sync isn't available right now (offline or blocked) — your codes are still safe on this device.");
+                window.markLayerOpened(this.modal);
                 this.modal.classList.remove('opacity-0', 'pointer-events-none');
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
                 this.panel.classList.remove('scale-90');
@@ -7357,16 +8279,20 @@
 
                 items.forEach(app => {
                     const row = document.createElement('div');
-                    row.className = 'flex items-center gap-3.5 bg-white/10 border border-white/10 p-3 rounded-[1.25rem] active:scale-[0.98] transition-transform cursor-pointer shadow-lg shrink-0';
+                    // The row wears the same tile the home screen does. Library used to draw a
+                    // code on a plain white chip while the home screen gave the same code a
+                    // coloured frame, so the two screens looked like two different apps — the
+                    // thing you were looking for did not even look like the thing you tapped.
+                    row.className = 'lib-row flex items-center gap-3.5 p-3 active:scale-[0.98] transition-transform cursor-pointer shrink-0';
                     row.innerHTML = `
-                        <div class="w-14 h-14 bg-white rounded-[0.9rem] p-1.5 flex items-center justify-center shrink-0 shadow-sm">
-                            <canvas id="lib-can-${app.id}" class="max-w-full max-h-full pixelated"></canvas>
+                        <div class="lib-thumb code-tile tile-${window.tileVariant(app.id)} shrink-0 flex items-center justify-center">
+                            <span class="tile-mono lib-mono"></span>
                         </div>
                         <div class="flex-1 min-w-0">
                             <h4 class="text-white font-bold text-[15px] truncate tracking-wide"></h4>
                             <p class="text-white/45 text-[11px] font-mono truncate mt-0.5"></p>
                             <div class="flex gap-2 mt-1.5 items-center">
-                                <span class="accent-text accent-bg-soft text-[9.5px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded"></span>
+                                <span class="lib-format accent-text accent-bg-soft text-[9.5px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded"></span>
                                 <span class="lib-meta text-white/35 text-[10px] font-semibold">${this.rowMeta(app)}</span>
                             </div>
                         </div>
@@ -7379,7 +8305,12 @@
                     // payload is arbitrary attacker-controlled text and must never be parsed as markup.
                     row.querySelector('h4').textContent = app.title || 'Untitled';
                     row.querySelector('p').textContent = app.data || '';
-                    row.querySelector('span').textContent = FORMAT_NAMES[app.bcid] || app.bcid || 'code';
+                    // .lib-format, not 'span'. The row's first span used to be the format
+                    // badge; the monogram chip now comes before it in the markup, so a bare
+                    // querySelector('span') wrote the format into the monogram and the badge
+                    // stayed empty — a blank 12px pill sitting in every row.
+                    row.querySelector('.lib-format').textContent =
+                        FORMAT_NAMES[app.bcid] || app.bcid || 'code';
 
                     const star = row.querySelector('.lib-star');
                     if (star) {
@@ -7407,9 +8338,14 @@
 
                     this.list.appendChild(row);
 
-                    // Queued, not drawn. See watchThumbs().
-                    const canvas = row.querySelector(`#lib-can-${app.id}`);
-                    if (canvas) { this.pendingThumbs.set(canvas, app); this.thumbObserver.observe(canvas); }
+                    // No canvas to queue any more — the row shows a monogram, so there is
+                    // nothing to rasterise and the whole lazy-thumbnail path stays idle here.
+                    const lmono = row.querySelector('.lib-mono');
+                    if (lmono) {
+                        const g = window.tileMonogram(app.title);
+                        lmono.textContent = g;
+                        lmono.dataset.len = String(g.length);
+                    }
                 });
 
                 safeCreateIcons();
@@ -7885,6 +8821,19 @@
                         if (!g || g.mode !== 'undecided') return;
                         g.pressed = true;
                         window.OS_STATE.isEditMode = true;
+                        // Edit mode swaps the dock for a taller stack — page arrows, a page
+                        // name chip, the dots — and the grid has to be told, or it keeps the
+                        // row spacing it computed for the dock alone. Measured at 412x915:
+                        // the last row ran 639-757 while the page controls sat at 661-749,
+                        // drawn straight through the bottom row of codes. Reported long ago
+                        // as "have you not noticed the overlapping elements".
+                        //
+                        // Deferred a frame so the controls are in the DOM and laid out before
+                        // the stack is measured; measuring them while still hidden is what
+                        // would make this look fixed and not be.
+                        requestAnimationFrame(() => {
+                            if (window.Layout) window.Layout.calculateGrid();
+                        });
                         document.body.classList.add('edit-mode');
                         const done = document.getElementById('btn-done-editing');
                         if (done) { done.classList.remove('hidden'); done.classList.add('flex'); }
@@ -8201,7 +9150,15 @@
             document.querySelectorAll('.jiggle-target').forEach(j => j.style.animation = 'none');
 
             window.DragEngine.destroy();
-            setTimeout(() => { window.Renderer.render(); }, 400);
+            setTimeout(() => {
+                window.Renderer.render();
+                // The bottom stack shrinks back when the page controls go away, so the rows
+                // get their space back — including any pass the drag itself postponed.
+                if (window.Layout) {
+                    window.Layout._deferred = false;
+                    window.Layout.calculateGrid();
+                }
+            }, 400);
         };
 
         // Leaving edit mode by tapping the background is LauncherInput.tap()'s job now. It

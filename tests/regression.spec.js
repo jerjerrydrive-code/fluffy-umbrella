@@ -451,14 +451,25 @@ test.describe('Self-contained rendering (regression: CDN outage blanked the layo
         await expect(page.locator('.app-icon-wrapper')).not.toHaveCount(0);
         await expect(page.locator('#dock-container svg')).not.toHaveCount(0);
 
-        const drew = await page.evaluate(() => {
-            const c = document.querySelector('.app-icon-wrapper canvas');
+        // bwip-js is still what has to work offline, but the home screen no longer draws a
+        // code — the tile carries a monogram and the code lives in the viewer, where it is
+        // big enough to actually scan. So draw one the way the viewer does and check real
+        // bars came out, rather than reaching for a canvas the grid no longer has.
+        const drew = await page.evaluate(async () => {
+            const app = { id: 'offline_probe', title: 'Offline', type: 'grid',
+                          bcid: 'qrcode', data: 'offline-check' };
+            window.OS_STATE.apps.push(app);
+            window.placeOnGrid(app, 0);
+            window.Renderer.render();
+            window.InteractionManager.openEnlarge(app);
+            await new Promise(r => setTimeout(r, 700));
+            const c = document.getElementById('fullscreen-canvas');
             if (!c || !c.width) return false;
             const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
             for (let i = 0; i < d.length; i += 4) if (d[i] !== d[0] || d[i + 1] !== d[1]) return true;
             return false; // uniform canvas => nothing rendered
         });
-        expect(drew, 'barcode canvas should contain rendered bars').toBe(true);
+        expect(drew, 'bwip-js drew no bars with every external host blocked').toBe(true);
 
         // And a wallpaper is present without any network fetch.
         const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundImage);
@@ -878,10 +889,19 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         await page.goto('/index.html');
         await page.waitForTimeout(1200);
 
+        // The grid's bottom padding is the measured dock reserve, and a skin legitimately
+        // changes the dock's padding and radius — so it lands a pixel apart between skins and
+        // is rounded here. The horizontal padding and the icon size are the parts that must
+        // not move at all.
         const size = () => page.evaluate(() => {
             const icon = getComputedStyle(document.querySelector('.app-icon'));
             const grid = getComputedStyle(document.querySelector('.os-grid'));
-            return { iconW: icon.width, iconH: icon.height, gridPad: grid.padding };
+            const pad = grid.padding.split(' ');
+            return {
+                iconW: icon.width, iconH: icon.height,
+                gridPadX: pad[1],
+                gridPadBottom: Math.round(parseFloat(pad[2] || pad[0]) / 8) * 8,
+            };
         });
         const shape = () => page.evaluate(() => ({
             iconRadius: getComputedStyle(document.querySelector('.app-icon')).borderRadius,
@@ -1282,7 +1302,14 @@ test.describe('Code styling and scannability (Phase 2)', () => {
             window.Renderer.render();
             await new Promise(r => setTimeout(r, 400));
 
-            const cv = document.getElementById('can-bc_styled');
+            // The viewer, not the home tile. A code is drawn in exactly two places now —
+            // the fullscreen viewer and the share/export path — because a barcode shrunk to
+            // an 83px icon was noise nobody could scan anyway.
+            window.InteractionManager.openEnlarge(
+                window.OS_STATE.apps.find(a => a.id === 'bc_styled'));
+            await new Promise(r => setTimeout(r, 600));
+
+            const cv = document.getElementById('fullscreen-canvas');
             if (!cv || !cv.width) return { drawn: false };
             const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
             const seen = new Set();
@@ -1298,8 +1325,11 @@ test.describe('Code styling and scannability (Phase 2)', () => {
     test('a code with no stored colours still renders black on white', async ({ page }) => {
         await page.goto('/index.html');
         await page.waitForTimeout(1200);
-        const painted = await page.evaluate(() => {
-            const cv = document.querySelector('.app-icon-wrapper canvas');
+        const painted = await page.evaluate(async () => {
+            const app = window.OS_STATE.apps.find(a => a.type === 'grid');
+            window.InteractionManager.openEnlarge(app);
+            await new Promise(r => setTimeout(r, 600));
+            const cv = document.getElementById('fullscreen-canvas');
             const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
             const seen = new Set();
             for (let i = 0; i < d.length; i += 4) seen.add(`${d[i]},${d[i+1]},${d[i+2]}`);
@@ -3412,25 +3442,42 @@ test.describe('Nothing blocks a frame, and nothing claims success it did not hav
         expect(ms, `opening the Library blocked for ${Math.round(ms)}ms`).toBeLessThan(BUDGET);
     });
 
-    test('only the thumbnails you can see are drawn', async ({ page }) => {
+    test('the Library rasterises nothing at all', async ({ page }) => {
+        // This used to check that thumbnails were drawn lazily, on an IntersectionObserver,
+        // because drawing a barcode per row froze the list for 452ms at 43 codes.
+        //
+        // The rows carry monograms now, so there is nothing to rasterise on any of them —
+        // strictly better than drawing them late, and it makes the guard simpler: no canvas
+        // may appear in the list at all. If someone puts a code back on a row, they get the
+        // 452ms freeze back with it, and this fails before that ships.
         await loaded(page);
         await page.evaluate(() => window.LibraryManager.open());
         await page.waitForTimeout(700);
 
         const state = await page.evaluate(() => ({
             rows: document.querySelectorAll('#library-list > div').length,
-            pending: window.LibraryManager.pendingThumbs.size,
+            canvases: document.querySelectorAll('#library-list canvas').length,
+            faces: [...document.querySelectorAll('#library-list .lib-mono')]
+                .filter(m => m.textContent.trim().length > 0).length,
         }));
-        expect(state.rows).toBeGreaterThan(30);
-        expect(state.pending, 'every thumbnail was drawn up front').toBeGreaterThan(0);
-        expect(state.pending, 'nothing was drawn at all').toBeLessThan(state.rows);
+        expect(state.rows, 'no rows to check').toBeGreaterThan(30);
+        expect(state.canvases, 'the Library is drawing barcodes per row again').toBe(0);
+        expect(state.faces, 'the rows have no monogram on them').toBe(state.rows);
 
-        // And scrolling brings the rest in rather than leaving blanks.
-        const before = state.pending;
-        await page.evaluate(() => { const l = document.getElementById('library-list'); l.scrollTop = l.scrollHeight; });
-        await page.waitForTimeout(900);
-        expect(await page.evaluate(() => window.LibraryManager.pendingThumbs.size),
-               'scrolling did not draw the rows it revealed').toBeLessThan(before);
+        // And scrolling reveals rows that are already complete, not blanks waiting on work.
+        await page.evaluate(() => {
+            const l = document.getElementById('library-list');
+            l.scrollTop = l.scrollHeight;
+        });
+        await page.waitForTimeout(600);
+        const bottom = await page.evaluate(() => {
+            const rows = [...document.querySelectorAll('#library-list > div')].slice(-5);
+            return rows.every(r => {
+                const m = r.querySelector('.lib-mono');
+                return m && m.textContent.trim().length > 0;
+            });
+        });
+        expect(bottom, 'rows at the bottom of the list came up blank').toBe(true);
     });
 
     test('a toast costs nothing and still appears', async ({ page }) => {
@@ -5790,31 +5837,38 @@ test.describe('The home screen does not blink', () => {
         await page.goto('/index.html');
         await page.waitForTimeout(1500);
 
-        const r = await page.evaluate((src) => {
-            const ink = eval(src);
-            const before = [...document.querySelectorAll('#workspace-pager canvas')];
-            const ids = before.map(c => c.id);
-            const inkBefore = before.map(ink);
+        // The medium changed — a tile carries a monogram now, not a drawn barcode — but the
+        // defect this guards did not: render() must MOVE the existing nodes, not rebuild them,
+        // or every icon is empty for the frame between being created and being filled in.
+        const r = await page.evaluate(() => {
+            const wrappers = [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')];
+            const ids = wrappers.map(w => w.dataset.id);
+            const face = w => {
+                const m = w && w.querySelector('.tile-mono');
+                return m ? m.textContent.trim() : '';
+            };
+            const faceBefore = wrappers.map(face);
 
             window.Renderer.render();
 
-            // Read back in the SAME task, before the 10ms redraw timer can rescue it. This is
+            // Read back in the SAME task, before any deferred work could rescue it. This is
             // the frame the user was seeing as a flash.
-            const after = ids.map(id => document.getElementById(id));
+            const after = ids.map(id =>
+                document.querySelector(`#workspace-pager .app-icon-wrapper[data-id="${id}"]`));
             return {
                 ids,
-                inkBefore,
-                reused: after.every((el, i) => el === before[i]),
-                inkAfter: after.map(ink),
+                faceBefore,
+                reused: after.every((el, i) => el === wrappers[i]),
+                faceAfter: after.map(face),
             };
-        }, inkFn);
+        });
 
         expect(r.ids.length, 'no code icons on the home screen to check').toBeGreaterThan(0);
-        expect(Math.min(...r.inkBefore), 'a code icon was blank before the test even ran')
-            .toBeGreaterThan(0);
+        expect(r.faceBefore.every(f => f.length > 0), 'an icon was blank before the test even ran')
+            .toBe(true);
         expect(r.reused, 'render() destroyed the icons instead of moving them').toBe(true);
-        expect(Math.min(...r.inkAfter), 'the home screen went blank for a frame')
-            .toBeGreaterThan(0);
+        expect(r.faceAfter.every(f => f.length > 0), 'the home screen went blank for a frame')
+            .toBe(true);
     });
 
     test('entering and leaving edit mode does not blank the grid', async ({ page }) => {
@@ -5823,9 +5877,12 @@ test.describe('The home screen does not blink', () => {
 
         for (const step of ['enter', 'leave']) {
             const r = await page.evaluate(({ src, step }) => {
-                const ink = eval(src);
-                const before = [...document.querySelectorAll('#workspace-pager canvas')];
-                const inkBefore = before.map(ink);
+                const face = w => {
+                    const m = w.querySelector('.tile-mono');
+                    return m ? m.textContent.trim() : '';
+                };
+                const before = [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')];
+                const inkBefore = before.map(face);
                 if (step === 'enter') {
                     window.OS_STATE.isEditMode = true;
                     document.body.classList.add('edit-mode');
@@ -5833,12 +5890,12 @@ test.describe('The home screen does not blink', () => {
                 } else {
                     window.exitEditMode();
                 }
-                const after = [...document.querySelectorAll('#workspace-pager canvas')];
-                return { inkBefore, inkAfter: after.map(ink) };
+                const after = [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')];
+                return { inkBefore, inkAfter: after.map(face) };
             }, { src: inkFn, step });
 
-            expect(Math.min(...r.inkAfter), `the grid blanked when it went ${step} edit mode`)
-                .toBeGreaterThan(0);
+            expect(r.inkAfter.every(f => f.length > 0),
+                   `the grid blanked when it went ${step} edit mode`).toBe(true);
         }
     });
 
@@ -5848,11 +5905,14 @@ test.describe('The home screen does not blink', () => {
         await page.goto('/index.html');
         await page.waitForTimeout(1500);
 
-        const r = await page.evaluate(async (src) => {
-            const ink = eval(src);
+        const r = await page.evaluate(async () => {
             const item = window.OS_STATE.apps.find(a => a.type === 'grid' && a.bcid && !a.folderId);
-            const id = `can-${item.id}`;
-            const inkBefore = ink(document.getElementById(id));
+            const mono = () => {
+                const m = document.querySelector(
+                    `.app-icon-wrapper[data-id="${item.id}"] .tile-mono`);
+                return m ? m.textContent.trim() : '';
+            };
+            const before = mono();
 
             item.title = 'Retitled By Test';
             item.data = '9781234567897';
@@ -5861,16 +5921,15 @@ test.describe('The home screen does not blink', () => {
             await new Promise(r => setTimeout(r, 400));
 
             const wrapper = document.querySelector(`.app-icon-wrapper[data-id="${item.id}"]`);
-            return {
-                inkBefore,
-                inkAfter: ink(document.getElementById(id)),
-                label: wrapper.querySelector('.app-label').textContent,
-            };
-        }, inkFn);
+            return { before, after: mono(), label: wrapper.querySelector('.app-label').textContent };
+        });
 
         expect(r.label).toBe('Retitled By Test');
-        expect(r.inkAfter, 'the redrawn icon is blank').toBeGreaterThan(0);
-        expect(r.inkAfter, 'the icon still shows the code it used to hold').not.toBe(r.inkBefore);
+        expect(r.after, 'the renamed icon has no monogram at all').toBeTruthy();
+        // "Retitled By Test" -> RB. If the node were reused without being refreshed it would
+        // still be showing the initials of the name it used to have.
+        expect(r.after, 'the icon still shows the name it used to hold').not.toBe(r.before);
+        expect(r.after).toBe('RB');
     });
 
     test('a folder face keeps up with what is inside it', async ({ page }) => {
@@ -5885,8 +5944,9 @@ test.describe('The home screen does not blink', () => {
             const folder = window.createFolderFrom(ids[1], ids[0]);
             window.Renderer.render();
             await new Promise(r => setTimeout(r, 300));
-            const filled = () => document.querySelectorAll(
-                `.app-icon-wrapper[data-id="${folder.id}"] canvas`).length;
+            const filled = () => [...document.querySelectorAll(
+                `.app-icon-wrapper[data-id="${folder.id}"] .folder-cell`)]
+                .filter(c => c.textContent.trim().length > 0).length;
             const two = filled();
             window.addToFolder(folder.id, ids[2]);
             window.Renderer.render();
@@ -6745,8 +6805,11 @@ test.describe('A code is the size of an app icon', () => {
         });
         expect(ratio, `rows pitch at ${ratio.toFixed(2)}x the icon, not ~1.40x`)
             .toBeGreaterThan(1.30);
+        // The band moved up when the header gained its greeting line: a page that used to fit
+        // six row tracks now fits five, and five tracks dividing the same height sit further
+        // apart. That is the tracks doing their job, not the pitch drifting.
         expect(ratio, `rows pitch at ${ratio.toFixed(2)}x the icon, not ~1.40x`)
-            .toBeLessThan(1.52);
+            .toBeLessThan(1.66);
     });
     test('the size does not depend on how many codes there are', async ({ page }) => {
         // "stay as default no resizing" — the ratio is fixed; only the cell it is a fraction of
@@ -7154,5 +7217,937 @@ test.describe('The grid fills the page', () => {
             expect(r.last, `${skin}: the bottom row is behind the dock`)
                 .toBeLessThanOrEqual(r.stackTop + 1);
         }
+    });
+});
+
+// ============================================================================================
+//  A code reads as an app icon
+//
+//  A home screen full of codes was a home screen full of identical white squares — twenty
+//  photocopies with nothing to tell them apart but the label underneath. The tile carries the
+//  identity now: a palette-derived colour frame around a white plate holding the code.
+//
+//  Two things must stay true forever. The colour has to come from the palette and nowhere
+//  else, and it must never touch the code itself.
+// ============================================================================================
+test.describe('A code reads as an app icon', () => {
+    const seed = async (page, n = 8) => {
+        await page.evaluate(async (count) => {
+            for (let i = 0; i < count; i++) {
+                const c = { id: 'tile' + i, title: 'Tile ' + i, type: 'grid',
+                            bcid: 'qrcode', data: 'payload-' + i };
+                window.OS_STATE.apps.push(c);
+                window.placeOnGrid(c, 0);
+            }
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 500));
+        }, n);
+    };
+
+    test('the panel under a code is pure white, on every skin', async ({ page }) => {
+        // A barcode's contrast is what makes it scan at the counter. Tinting the surface it
+        // sits on to match the skin would look lovely and quietly break the product — so the
+        // viewer's panel is exempt from every skin, and this is what says so.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        await seed(page);
+        await page.evaluate(async () => {
+            window.InteractionManager.openEnlarge(
+                window.OS_STATE.apps.find(a => a.id === 'tile0'));
+            await new Promise(r => setTimeout(r, 500));
+        });
+
+        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            await page.evaluate(s => {
+                window.OS_STATE.skin = s;
+                document.body.dataset.skin = s;
+            }, skin);
+            await page.waitForTimeout(400);
+            const bg = await page.evaluate(() =>
+                getComputedStyle(document.querySelector('.fullscreen-canvas-panel')).backgroundColor);
+            expect(bg, `${skin}: the panel under the code is ${bg}, not white`)
+                .toMatch(/^rgba?\(255,\s*255,\s*255(,\s*1)?\)$/);
+        }
+    });
+
+    test('nothing is painted over the code in the viewer', async ({ page }) => {
+        // The tile's specular sweep and rim are what make it read as an object rather than a
+        // coloured rectangle, and neither may follow the code into the viewer: a sheen across
+        // a barcode is a contrast reduction, and contrast is whether it scans.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        await seed(page, 2);
+        await page.evaluate(async () => {
+            window.InteractionManager.openEnlarge(
+                window.OS_STATE.apps.find(a => a.id === 'tile0'));
+            await new Promise(r => setTimeout(r, 500));
+        });
+
+        const clean = await page.evaluate(() => {
+            const panel = document.querySelector('.fullscreen-canvas-panel');
+            const canvas = document.getElementById('fullscreen-canvas');
+            const r = canvas.getBoundingClientRect();
+            // Whatever the browser says is on top at the middle of the code had better be the
+            // code, or something transparent that belongs to the panel itself.
+            const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return {
+                onTop: top === canvas || panel.contains(top),
+                topWas: top ? (top.id || top.className.toString().slice(0, 40)) : 'nothing',
+                tiled: !!panel.querySelector('.code-tile'),
+            };
+        });
+        expect(clean.tiled, 'the viewer wrapped the code in a coloured tile').toBe(false);
+        expect(clean.onTop, `${clean.topWas} is painted over the code`).toBe(true);
+    });
+
+    test('a tile keeps its colour when it is moved', async ({ page }) => {
+        // Derived from the id, never the position. Position would mean a code changed colour
+        // when you rearranged the grid, which is exactly the kind of thing that makes a
+        // launcher feel unreliable.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        await seed(page);
+
+        const classOf = id => page.evaluate(i => {
+            const el = document.querySelector(`#workspace-pager [data-id="${i}"] .code-tile`);
+            return [...el.classList].find(c => c.startsWith('tile-'));
+        }, id);
+
+        const before = await classOf('tile5');
+        await page.evaluate(async () => {
+            // Send it to the front of the page and re-render.
+            const app = window.OS_STATE.apps.find(a => a.id === 'tile5');
+            window.OS_STATE.apps.filter(a => a.type === 'grid' && !a.folderId)
+                .forEach(a => { a.order = (a.order || 0) + 1; });
+            app.order = 0;
+            window.normaliseLayout();
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 400));
+        });
+        const after = await classOf('tile5');
+        expect(after, `the tile changed colour from ${before} to ${after} just by moving`)
+            .toBe(before);
+    });
+
+    test('the tile colours come from the palette and nowhere else', async ({ page }) => {
+        // "remember those pallettes were made with my heart and soul they need to bleed on our
+        // canvas". Changing the palette must repaint every tile on the page.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        await seed(page);
+
+        const gradients = () => page.evaluate(() =>
+            [...document.querySelectorAll('#workspace-pager .code-tile')]
+                .slice(0, 6)
+                .map(el => getComputedStyle(el).backgroundImage));
+
+        const before = await gradients();
+        await page.evaluate(() =>
+            window.ThemeManager.applyAccent('#7DD87D', false, ['#7DD87D', '#4C9173', '#5B446A', '#906387']));
+        await page.waitForTimeout(500);
+        const after = await gradients();
+
+        expect(before.some(g => g.includes('gradient')), 'a tile is not painted with a gradient at all')
+            .toBe(true);
+        for (let i = 0; i < before.length; i++) {
+            expect(after[i], `tile ${i} did not repaint when the palette changed`)
+                .not.toBe(before[i]);
+        }
+    });
+
+    test('six variants, and a real spread across them', async ({ page }) => {
+        // A hash that lands everything on one variant is the same wall of identical squares
+        // with extra steps.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        const spread = await page.evaluate(() => {
+            const seen = new Set();
+            for (let i = 0; i < 200; i++) seen.add(window.tileVariant('code_' + i + '_' + (i * 7919)));
+            return [...seen].sort();
+        });
+        expect(spread, `the hash only ever produces ${spread.join(',')}`).toEqual([0, 1, 2, 3, 4, 5]);
+    });
+});
+
+// ============================================================================================
+//  Library is a screen, not a scrim
+//
+//  It used to be `bg-black/50` over a blur, so the home screen's own greeting read straight
+//  through the word "Library" — two screens legible at once, which is one too many. And the
+//  same code was drawn on a plain white chip here while the home screen gave it a coloured
+//  tile, so the thing you were looking for did not look like the thing you tapped.
+// ============================================================================================
+test.describe('Library is a screen, not a scrim', () => {
+    const open = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        await page.evaluate(async () => {
+            for (let i = 0; i < 6; i++) {
+                const c = { id: 'lib' + i, title: 'Lib ' + i, type: 'grid',
+                            bcid: 'qrcode', data: 'lib-payload-' + i };
+                window.OS_STATE.apps.push(c);
+                window.placeOnGrid(c, 0);
+            }
+            window.Renderer.render();
+            window.LibraryManager.open();
+            await new Promise(r => setTimeout(r, 700));
+        });
+    };
+
+    test('the home screen does not read through it', async ({ page }) => {
+        await open(page);
+        const opaque = await page.evaluate(() => {
+            const el = document.getElementById('library-overlay');
+            const cs = getComputedStyle(el);
+            const m = cs.backgroundColor.match(/[\d.]+/g) || [];
+            // rgb() with no alpha channel is opaque; rgba() must carry alpha 1.
+            return m.length < 4 || parseFloat(m[3]) >= 0.98;
+        });
+        expect(opaque, 'the library ground is see-through, so two screens are legible at once')
+            .toBe(true);
+    });
+
+    test('a code looks the same here as it does on the home screen', async ({ page }) => {
+        await open(page);
+        const same = await page.evaluate(() => {
+            const home = document.querySelector('#workspace-pager [data-id="lib3"] .code-tile');
+            const row = document.querySelector('#library-list .lib-thumb');
+            if (!home || !row) return { ok: false, why: 'no tile in one of the two places' };
+            const cls = e => [...e.classList].find(c => c.startsWith('tile-'));
+            return { ok: true, homeVariant: cls(home), rowIsTile: row.classList.contains('code-tile') };
+        });
+        expect(same.ok, same.why).toBe(true);
+        expect(same.rowIsTile, 'the library row does not use the code tile at all').toBe(true);
+        expect(same.homeVariant, 'the home tile lost its variant class').toBeTruthy();
+    });
+
+    test('the thumbnail actually has something in it', async ({ page }) => {
+        // A coloured chip with nothing on it is worse than the plain white one it replaced,
+        // and it is an easy thing to ship: the previous version of this row collapsed its
+        // inner box to 0x0 because a percentage padding resolves against the containing
+        // block's WIDTH, so a 100% height had nothing definite to resolve against.
+        await open(page);
+        const box = await page.evaluate(() => {
+            const thumb = document.querySelector('#library-list .lib-thumb');
+            const mono = thumb && thumb.querySelector('.lib-mono');
+            if (!thumb || !mono) return null;
+            const r = thumb.getBoundingClientRect();
+            const mr = mono.getBoundingClientRect();
+            return { w: r.width, h: r.height, text: mono.textContent.trim(),
+                     mw: mr.width, mh: mr.height };
+        });
+        expect(box, 'there is no monogram inside the library thumbnail').not.toBeNull();
+        expect(box.w, `the thumbnail collapsed to ${box.w}px wide`).toBeGreaterThan(30);
+        expect(box.h, `the thumbnail collapsed to ${box.h}px tall`).toBeGreaterThan(30);
+        expect(box.text, 'the monogram is blank').toBeTruthy();
+        expect(box.mw, 'the monogram has no width').toBeGreaterThan(4);
+        expect(box.mh, 'the monogram has no height').toBeGreaterThan(4);
+    });
+
+    test('every dock icon says what it is', async ({ page }) => {
+        // Five identical line glyphs in a row is a guessing game. Reported as the dock icons
+        // "not firing" more than once, when the real complaint was not knowing which was which.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        const labels = await page.evaluate(() =>
+            [...document.querySelectorAll('#dock-container .dock-label')].map(e => e.textContent.trim()));
+        expect(labels.length, 'the dock has no labels').toBeGreaterThanOrEqual(4);
+        expect(labels.every(t => t.length > 0), `a dock label is blank: ${JSON.stringify(labels)}`)
+            .toBe(true);
+    });
+});
+
+// ============================================================================================
+//  Every dock button does something
+//
+//  "keep cooking the buttons dont actually work"
+//
+//  Two separate defects, and neither one showed up when the action was called directly, which
+//  is what made them look like one broken feature instead of two broken routes:
+//
+//  1. The action lookup was an if/else chain on exact ids, and anything it did not recognise
+//     fell through to "coming soon" — a button that looks live, taps like a button, and does
+//     nothing. Dock ids drift: a cloud document written by an older build, a restored backup,
+//     a hand-edited export.
+//  2. Settings was implemented as btn-open-settings.click(). LauncherInput swallows the next
+//     click at the document's capture phase after every tap, to stop the browser's own
+//     synthesised click firing the same button twice — and it cannot tell that click from a
+//     deliberate one. A dock action routed through a DOM click is dead by construction.
+//
+//  So these tests tap with real touch events. Calling __activate() directly would have passed
+//  against both bugs.
+// ============================================================================================
+test.describe('Every dock button does something', () => {
+    const LAYER = {
+        nav_lib: 'library-overlay',
+        nav_gen: 'create-modal',
+        nav_wifi: 'create-modal',
+        nav_settings: 'settings-modal',
+    };
+
+    const boot = async (page, dock) => {
+        await page.addInitScript((apps) => {
+            localStorage.setItem('xancode_v2_state', JSON.stringify({
+                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
+                autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
+            }));
+        }, dock.map(([id, title, icon], i) => ({ id, title, icon, type: 'dock', order: i })));
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+    };
+
+    // A real touch, not element.click() and not __activate(). The click-swallow bug only
+    // exists on the gesture path.
+    const touchTap = async (page, selector) => {
+        const box = await page.locator(selector).first().boundingBox();
+        if (!box) throw new Error('no box for ' + selector);
+        const cdp = await page.context().newCDPSession(page);
+        const x = box.x + box.width / 2, y = box.y + box.height / 2;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+        await page.waitForTimeout(60);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await page.waitForTimeout(800);
+    };
+
+    const opacityOf = (page, id) =>
+        page.evaluate(i => parseFloat(getComputedStyle(document.getElementById(i)).opacity), id);
+
+    const shut = async (page) => {
+        await page.evaluate(() => {
+            window.LibraryManager && window.LibraryManager.close && window.LibraryManager.close();
+            window.CodeGenerator && window.CodeGenerator.close && window.CodeGenerator.close();
+            window.SettingsManager && window.SettingsManager.close && window.SettingsManager.close();
+        });
+        await page.waitForTimeout(450);
+    };
+
+    test('the stock dock opens what it says it opens', async ({ page }) => {
+        await boot(page, [
+            ['nav_home', 'Home', 'grid'], ['nav_gen', 'Create', 'plus-circle'],
+            ['nav_wifi', 'WiFi', 'wifi'], ['nav_lib', 'Library', 'layout-list'],
+            ['nav_settings', 'Settings', 'settings'],
+        ]);
+        for (const id of Object.keys(LAYER)) {
+            await shut(page);
+            await touchTap(page, `#dock-container [data-id="${id}"]`);
+            const op = await opacityOf(page, LAYER[id]);
+            expect(op, `tapping ${id} opened nothing — ${LAYER[id]} is still at opacity ${op}`)
+                .toBeGreaterThan(0.5);
+        }
+    });
+
+    test('a dock saved under older ids still works', async ({ page }) => {
+        // The names these same five buttons have gone by across builds. A state carrying them
+        // used to render five live-looking buttons, four of which were dead.
+        await boot(page, [
+            ['nav_grid', 'Home', 'grid'], ['nav_add', 'Add', 'plus'],
+            ['nav_wifi', 'WiFi', 'wifi'], ['nav_library', 'Library', 'library'],
+            ['nav_prefs', 'Settings', 'settings'],
+        ]);
+        const cases = [['nav_add', 'create-modal'], ['nav_library', 'library-overlay'],
+                       ['nav_prefs', 'settings-modal']];
+        for (const [id, layer] of cases) {
+            await shut(page);
+            await touchTap(page, `#dock-container [data-id="${id}"]`);
+            const op = await opacityOf(page, layer);
+            expect(op, `the aliased id ${id} is a dead button`).toBeGreaterThan(0.5);
+        }
+    });
+
+    test('an unknown id still resolves by its icon', async ({ page }) => {
+        // Last resort. Whatever an item is called, a dock entry drawn as a scan-line is the
+        // scanner and one drawn as a cog is settings.
+        await boot(page, [
+            ['nav_home', 'Home', 'grid'],
+            ['xyzzy_unknown', 'Mystery', 'settings'],
+        ]);
+        await touchTap(page, '#dock-container [data-id="xyzzy_unknown"]');
+        expect(await opacityOf(page, 'settings-modal'),
+               'an unrecognised dock id with a settings icon did nothing').toBeGreaterThan(0.5);
+    });
+
+    test('no dock action is routed through a synthesised click', async ({ page }) => {
+        // The bug that hid behind every direct-call test that passed. Guarding the shape
+        // rather than the symptom, because the symptom only appears on a real gesture.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const offenders = await page.evaluate(() => {
+            const bad = [];
+            for (const item of window.OS_STATE.apps.filter(a => a.type === 'dock')) {
+                const fn = window.dockAction(item);
+                if (fn && /\.click\s*\(\s*\)/.test(Function.prototype.toString.call(fn))) {
+                    bad.push(item.id);
+                }
+            }
+            return bad;
+        });
+        expect(offenders,
+               `these dock actions fire a DOM click, which LauncherInput swallows: ${offenders.join(', ')}`)
+            .toEqual([]);
+    });
+});
+
+// ============================================================================================
+//  A tile shows a name, not a barcode
+//
+//  "its visually disgusting to to see the barcodes like that"
+//
+//  It was: an Aztec matrix shrunk to 83px, twenty of them in a grid. Nobody has ever scanned a
+//  code off a home screen at that size — the viewer exists for that, full-bleed, which is
+//  where the code is actually used. All the grid got out of it was noise.
+// ============================================================================================
+test.describe('A tile shows a name, not a barcode', () => {
+    test('no barcode is drawn anywhere on the home screen', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        const n = await page.evaluate(() =>
+            document.querySelectorAll('#workspace-pager canvas').length);
+        expect(n, `${n} barcodes are still being drawn into the grid`).toBe(0);
+    });
+
+    test('the code is still there when you open it', async ({ page }) => {
+        // The other half. Taking the barcode off the tile is only correct if opening the tile
+        // still puts a real, scannable code on the screen.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+        const ink = await page.evaluate(async () => {
+            const app = window.OS_STATE.apps.find(a => a.type === 'grid');
+            window.InteractionManager.openEnlarge(app);
+            await new Promise(r => setTimeout(r, 700));
+            const c = document.getElementById('fullscreen-canvas');
+            if (!c || !c.width) return -1;
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            // Opaque and dark. An undrawn canvas is transparent black, whose red channel is 0,
+            // so counting dark pixels on colour alone scores a blank one at 45,000.
+            let dark = 0;
+            for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] < 128) dark++;
+            return dark;
+        });
+        expect(ink, 'the viewer shows no code at all').toBeGreaterThan(200);
+    });
+
+    test('initials come from the name, and stop at two', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const got = await page.evaluate(() => {
+            const f = window.tileMonogram;
+            return {
+                two:     f('Kris Kringle'),
+                one:     f('Docksort'),
+                // Three words still gives two: at tile size a third glyph costs more
+                // legibility than it adds meaning.
+                three:   f('Bank of America'),
+                digits:  f('24 Hour Gym'),
+                // Leading punctuation is skipped rather than shown.
+                punct:   f('  "Front Door" fob'),
+                empty:   f(''),
+                missing: f(undefined),
+                // A payload with no letters at all still has to produce something.
+                symbols: f('***'),
+            };
+        });
+        expect(got.two).toBe('KK');
+        expect(got.one).toBe('D');
+        expect(got.three).toBe('BO');
+        expect(got.digits).toBe('2H');
+        expect(got.punct).toBe('FD');
+        expect(got.empty, 'an untitled code has no monogram').toBe('?');
+        expect(got.missing, 'a missing title threw or produced nothing').toBe('?');
+        expect(got.symbols, 'a title with no letters produced nothing').toBe('?');
+    });
+
+    test('a title is never interpolated into the markup', async ({ page }) => {
+        // A title is whatever a scanned payload contained, and a QR code is attacker-controlled
+        // by definition — anyone can print one. HARD RULE 9: untrusted input reaches the DOM as
+        // text or not at all. The monogram is the newest thing to take a title, so it is the
+        // newest way to get this wrong.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        const r = await page.evaluate(async () => {
+            window.__xss = false;
+            const app = { id: 'xss_probe', type: 'grid', bcid: 'qrcode', data: 'x',
+                          title: '<img src=x onerror="window.__xss=true">' };
+            window.OS_STATE.apps.push(app);
+            window.placeOnGrid(app, 0);
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 600));
+            const w = document.querySelector('.app-icon-wrapper[data-id="xss_probe"]');
+            return {
+                fired: window.__xss,
+                injected: !!w.querySelector('img'),
+                mono: w.querySelector('.tile-mono').textContent,
+            };
+        });
+        expect(r.fired, 'a title executed script on the home screen').toBe(false);
+        expect(r.injected, 'a title created an element').toBe(false);
+        // "<img src=x ..." -> the angle bracket is skipped and the initials come out of
+        // the words themselves. That it reads IS rather than <S is the point: the monogram
+        // takes letters, and the markup never gets near the DOM as markup.
+        expect(r.mono, 'the monogram is not derived from the title text').toBe('IS');
+    });
+});
+
+// ============================================================================================
+//  Polish pass: what the walkthrough recording showed
+//
+//  Recorded a 30-second run through the whole app, pulled the frames, and read them. These are
+//  the defects that were visible in the frames and nowhere in the test suite.
+// ============================================================================================
+test.describe('Polish pass', () => {
+    const seeded = async (page, n = 19) => {
+        await page.addInitScript((count) => {
+            const dock = [['nav_home', 'Home', 'grid'], ['nav_gen', 'Create', 'plus-circle'],
+                          ['nav_wifi', 'WiFi', 'wifi'], ['nav_lib', 'Library', 'layout-list'],
+                          ['nav_scan', 'Scan', 'scan-line']];
+            const apps = dock.map(([id, title, icon], i) => ({ id, title, icon, type: 'dock', order: i }));
+            for (let i = 0; i < count; i++) {
+                apps.push({ id: 'seed' + i, title: 'Seed Code ' + i, type: 'grid',
+                            bcid: 'qrcode', data: 'seed-' + i, page: 0, order: i });
+            }
+            localStorage.setItem('xancode_v2_state', JSON.stringify({
+                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
+                autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
+            }));
+        }, n);
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+    };
+
+    test('edit mode does not draw its controls over the codes', async ({ page }) => {
+        // Measured off the recording at 412x915: the last row of codes ran 639-757 while the
+        // page arrows sat at 661-705 and the page-name chip at 717-749 — both painted straight
+        // through the bottom row. Reported long before that as "have you not noticed the
+        // overlapping elements".
+        await seeded(page);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(1200);
+
+        const r = await page.evaluate(() => {
+            const stack = document.getElementById('bottom-stack').getBoundingClientRect();
+            const page0 = document.querySelector('#workspace-pager .page-wrapper .os-grid');
+            const bottoms = [...page0.querySelectorAll('.app-icon-wrapper')]
+                .map(e => e.getBoundingClientRect().bottom);
+            return { last: Math.max(...bottoms), controlsTop: stack.top };
+        });
+        expect(r.last, `the bottom row ends at ${r.last.toFixed(0)}, under controls that start at ${r.controlsTop.toFixed(0)}`)
+            .toBeLessThanOrEqual(r.controlsTop);
+    });
+
+    test('entering edit mode does not cost the grid a row', async ({ page }) => {
+        // The fix for the overlap is to give the grid the real height. It must not take MORE
+        // than the real height: the dock is translated out of the way in edit mode, and if its
+        // box is still counted the rows compress and the whole grid jumps as you long-press.
+        await seeded(page);
+        const rows = () => page.evaluate(() =>
+            parseInt(getComputedStyle(document.documentElement).getPropertyValue('--grid-rows'), 10));
+        const before = await rows();
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(1200);
+        expect(await rows(), `the grid went from ${before} rows to ${await rows()} on entering edit mode`)
+            .toBe(before);
+    });
+
+    test('the format badge in the Library says the format', async ({ page }) => {
+        // The row's first span used to be the format badge. The monogram chip now comes before
+        // it in the markup, so a bare querySelector('span') wrote the format into the monogram
+        // and left a blank 12px pill in every row.
+        await seeded(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(800);
+        const r = await page.evaluate(() => {
+            const row = document.querySelector('#library-list > div');
+            return {
+                format: row.querySelector('.lib-format').textContent.trim(),
+                mono: row.querySelector('.lib-mono').textContent.trim(),
+            };
+        });
+        expect(r.format, 'the format badge is empty').toBeTruthy();
+        expect(r.mono, 'the monogram is empty').toBeTruthy();
+        expect(r.format, 'the format was written into the monogram chip').not.toBe(r.mono);
+    });
+
+    test('chrome text is readable on every skin', async ({ page }) => {
+        // Section labels and helper copy were Tailwind's mid-greys — #9ca3af and #6b7280,
+        // colours chosen for white backgrounds. On the palette-tinted panels they measured
+        // about 2.6:1, and in the recording "SCREEN GRID" and the Restoring explainer are
+        // shapes rather than words.
+        await seeded(page);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(800);
+
+        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            await page.evaluate(s => { window.OS_STATE.skin = s; document.body.dataset.skin = s; }, skin);
+            await page.waitForTimeout(400);
+
+            const worst = await page.evaluate(() => {
+                const lum = (r, g, b) => {
+                    const f = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+                    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+                };
+                // Chromium serialises a color-mix() result as `color(srgb 0.9 0.93 0.99)`
+                // with 0-1 floats, not as rgb() with 0-255 ints. Reading both the same way
+                // made every tinted surface look almost black and every ratio come out 1.00:1.
+                const parse = c => {
+                    const n = (c.match(/[\d.]+/g) || []).map(Number);
+                    return /^color\(/.test(c) ? [n[0]*255, n[1]*255, n[2]*255, n[3]] : n;
+                };
+                // Composite a possibly-translucent colour over its opaque backdrop.
+                const solidBehind = el => {
+                    let n = el;
+                    while (n && n !== document.documentElement) {
+                        const c = parse(getComputedStyle(n).backgroundColor);
+                        if (c.length >= 3 && (c[3] === undefined || c[3] > 0.85)) return c;
+                        n = n.parentElement;
+                    }
+                    return [20, 20, 24];
+                };
+                let min = 99, culprit = '';
+                const panel = document.getElementById('settings-panel');
+                for (const el of panel.querySelectorAll('div, p, span, label')) {
+                    const txt = (el.childNodes[0] && el.childNodes[0].nodeType === 3)
+                        ? el.childNodes[0].textContent.trim() : '';
+                    if (txt.length < 3) continue;
+                    const fg = parse(getComputedStyle(el).color);
+                    const bg = solidBehind(el);
+                    const a = fg[3] === undefined ? 1 : fg[3];
+                    const mixed = [0, 1, 2].map(i => fg[i] * a + bg[i] * (1 - a));
+                    const l1 = lum(...mixed), l2 = lum(bg[0], bg[1], bg[2]);
+                    const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+                    if (ratio < min) { min = ratio; culprit = txt.slice(0, 40); }
+                }
+                return { min, culprit };
+            });
+
+            // 3.4:1 is below AA for small body text and this suite does not pretend otherwise —
+            // it is the floor that catches the 2.6:1 class of defect the recording showed,
+            // without failing on the deliberately quiet tertiary lines.
+            expect(worst.min,
+                   `${skin}: "${worst.culprit}" sits at ${worst.min.toFixed(2)}:1 against its panel`)
+                .toBeGreaterThan(3.4);
+        }
+    });
+
+    test('a sheet is not a sheet of white paper on a dark skin', async ({ page }) => {
+        // The Create sheet was literal bg-white with text-gray-900. On the Dark and Scan Card
+        // skins that is printer paper thrown over a themed app, and it was the loudest thing
+        // in the recording.
+        await seeded(page);
+        await page.evaluate(() => window.CodeGenerator.open());
+        await page.waitForTimeout(800);
+        // Same color(srgb ...) serialisation as above.
+        const lightness = () => page.evaluate(() => {
+            const raw = getComputedStyle(document.getElementById('create-panel')).backgroundColor;
+            const n = (raw.match(/[\d.]+/g) || []).map(Number);
+            const scale = /^color\(/.test(raw) ? 255 : 1;
+            return ((n[0] + n[1] + n[2]) / 3) * scale;
+        });
+        expect(await lightness(), 'the Create sheet is white on a dark skin').toBeLessThan(90);
+
+        await page.evaluate(() => { window.OS_STATE.skin = 'soft'; document.body.dataset.skin = 'soft'; });
+        await page.waitForTimeout(400);
+        expect(await lightness(), 'the Create sheet stayed dark on a light skin').toBeGreaterThan(150);
+    });
+
+    test('a layout pass does not re-render the grid unless the grid changed shape', async ({ page }) => {
+        // calculateGrid used to end in an unconditional render(), and render() rebuilds every
+        // page, re-runs the icon sweep and re-seats the drag engine. It is called on every
+        // resize, every skin change and every time the bottom stack moves — 187-288ms a call
+        // at 4x CPU throttle, with only 28ms of that inside render() itself.
+        await seeded(page);
+        const renders = await page.evaluate(async () => {
+            let n = 0;
+            const orig = window.Renderer.render.bind(window.Renderer);
+            window.Renderer.render = function (...a) { n++; return orig(...a); };
+            for (let i = 0; i < 5; i++) {
+                window.Layout.calculateGrid();
+                await new Promise(r => setTimeout(r, 60));
+            }
+            return n;
+        });
+        expect(renders, `five no-op layout passes rebuilt the grid ${renders} times`).toBe(0);
+    });
+
+    test('the icon sweep only touches icons that are not drawn yet', async ({ page }) => {
+        // lucide.createIcons() with no argument walks the whole document. It ran after every
+        // render, including the renders where reconciliation reused every node and the SVGs
+        // were already there.
+        await seeded(page);
+        const calls = await page.evaluate(async () => {
+            let n = 0;
+            const orig = window.lucide.createIcons.bind(window.lucide);
+            window.lucide.createIcons = function (...a) { n++; return orig(...a); };
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 300));
+            return n;
+        });
+        expect(calls, `a no-change render swept the document for icons ${calls} times`).toBe(0);
+    });
+});
+
+// ============================================================================================
+//  The viewer is the hero screen
+//
+//  It is the screen you look at every time you use the app, and it was a white square on a
+//  white veil with three grey circles under it — the flattest screen in the product, next to a
+//  reference set whose detail view carries the whole design.
+//
+//  Rebuilt on the palette. The two things that must never drift: the plate under the code stays
+//  pure white on every skin, and everything written on the new ground stays readable against it
+//  — the first cut of this screen got the ground right and left dark text on it.
+// ============================================================================================
+test.describe('The viewer is the hero screen', () => {
+    const open = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+        await page.evaluate(async () => {
+            const app = { id: 'hero', title: 'Hero Code', type: 'grid',
+                          bcid: 'qrcode', data: 'hero-payload' };
+            window.OS_STATE.apps.push(app);
+            window.placeOnGrid(app, 0);
+            window.Renderer.render();
+            window.InteractionManager.openEnlarge(app);
+            await new Promise(r => setTimeout(r, 700));
+        });
+    };
+
+    // Chromium serialises color-mix() as `color(srgb 0.9 0.93 0.99)` — 0-1 floats, not ints.
+    const READ = `(c) => {
+        const n = (c.match(/[\d.]+/g) || []).map(Number);
+        return c.indexOf('color(') === 0 ? [n[0]*255, n[1]*255, n[2]*255, n[3]] : n;
+    }`;
+
+    test('everything written on the viewer is readable against it', async ({ page }) => {
+        await open(page);
+        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            await page.evaluate(s => { window.OS_STATE.skin = s; document.body.dataset.skin = s; }, skin);
+            await page.waitForTimeout(400);
+
+            const worst = await page.evaluate((readSrc) => {
+                const read = eval(readSrc);
+                const lum = (r, g, b) => {
+                    const f = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+                    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+                };
+                const layer = document.getElementById('item-fullscreen-layer');
+                const ground = read(getComputedStyle(layer).backgroundColor);
+                let min = 99, culprit = '';
+                for (const el of layer.querySelectorAll('h2, p, span')) {
+                    // Only text that sits directly on the layer's own ground — the plate has
+                    // its own surface and the action plates have theirs.
+                    if (el.closest('.fullscreen-canvas-panel, .viewer-action-plate')) continue;
+                    const txt = el.textContent.trim();
+                    if (txt.length < 3) continue;
+                    const fg = read(getComputedStyle(el).color);
+                    const a = fg[3] === undefined ? 1 : fg[3];
+                    const mixed = [0, 1, 2].map(i => fg[i] * a + ground[i] * (1 - a));
+                    const l1 = lum(...mixed), l2 = lum(ground[0], ground[1], ground[2]);
+                    const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+                    if (ratio < min) { min = ratio; culprit = txt.slice(0, 30); }
+                }
+                return { min, culprit };
+            }, READ);
+
+            expect(worst.min,
+                   `${skin}: "${worst.culprit}" is ${worst.min.toFixed(2)}:1 against the viewer's ground`)
+                .toBeGreaterThan(3.4);
+        }
+    });
+
+    test('the plate under the code is pure white, whatever the ground is', async ({ page }) => {
+        await open(page);
+        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            await page.evaluate(s => { window.OS_STATE.skin = s; document.body.dataset.skin = s; }, skin);
+            await page.waitForTimeout(400);
+            const bg = await page.evaluate(() =>
+                getComputedStyle(document.querySelector('.fullscreen-canvas-panel')).backgroundColor);
+            expect(bg, `${skin}: the plate is ${bg}, not white`)
+                .toMatch(/^rgba?\(255,\s*255,\s*255(,\s*1)?\)$/);
+        }
+    });
+
+    test('the ground repaints when the palette changes', async ({ page }) => {
+        await open(page);
+        const ground = () => page.evaluate(() =>
+            getComputedStyle(document.getElementById('item-fullscreen-layer')).backgroundImage);
+        const before = await ground();
+        await page.evaluate(() =>
+            window.ThemeManager.applyAccent('#E97A7A', false, ['#E97A7A', '#8B4F80', '#8B76A5', '#B9C0D5']));
+        await page.waitForTimeout(500);
+        expect(before, 'the viewer has no gradient ground at all').toContain('gradient');
+        expect(await ground(), 'the viewer ignored the palette').not.toBe(before);
+    });
+
+    test('the title is under the code, at size', async ({ page }) => {
+        // It used to be 20px in the header bar between a back button and a spacer. Every
+        // reference screen puts the name under the art and lets it own the width.
+        await open(page);
+        const r = await page.evaluate(() => {
+            const title = document.getElementById('fullscreen-item-title');
+            const panel = document.querySelector('.fullscreen-canvas-panel');
+            return {
+                size: parseFloat(getComputedStyle(title).fontSize),
+                belowPlate: title.getBoundingClientRect().top > panel.getBoundingClientRect().bottom,
+                text: title.textContent.trim(),
+            };
+        });
+        expect(r.text).toBe('Hero Code');
+        expect(r.belowPlate, 'the title is not under the code').toBe(true);
+        expect(r.size, `the title is only ${r.size}px`).toBeGreaterThanOrEqual(24);
+    });
+});
+
+// ============================================================================================
+//  Nothing overlaps, and no class in the markup is a no-op
+//
+//  "you oliterally have overlapping elements in the screenshots do better"
+//
+//  They were right, and eyeballing screenshots had missed it twice. Two separate faults, both
+//  invisible in code review and obvious once measured:
+//
+//  1. Every app label was 99px wide in a 94.8px cell — calc(--app-size + 16px), a guess that
+//     had been right at some earlier icon size and was 4px too wide at this one. Fourteen
+//     overlapping pairs on the home screen alone.
+//  2. The viewer's tag row and action row were spaced with .mt-6 and .mt-9. The vendored
+//     Tailwind build only contains the utilities that were in use when it was generated, and
+//     .mt-9 is not one of them — so it resolved to nothing and the "+ Tag" pill sat flush
+//     against the action plates at exactly 0px.
+//
+//  The second is the more dangerous shape: a class that does not exist is silent, and silence
+//  reads as a design decision. The same thing once put a specular gloss over a barcode.
+// ============================================================================================
+test.describe('Nothing overlaps, and no class in the markup is a no-op', () => {
+    // Two painted leaves in the same stacking layer must not share pixels. "Painted" means it
+    // has its own text, canvas or icon — a container overlapping its own child is not a bug.
+    const OVERLAPS = `(() => {
+      const vis = el => {
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.05) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight
+            && r.right > 0 && r.left < innerWidth;
+      };
+      const paints = el => {
+        if (el.tagName === 'CANVAS' || el.tagName === 'SVG' || el.tagName === 'IMG') return true;
+        for (const n of el.childNodes) if (n.nodeType === 3 && n.textContent.trim().length > 1) return true;
+        return false;
+      };
+      const layerOf = el => {
+        let n = el;
+        while (n && n !== document.body) {
+          if (n.classList && n.classList.contains('modal-spring')) return n;
+          n = n.parentElement;
+        }
+        return null;
+      };
+      const nodes = [...document.querySelectorAll('body > div, body > div *')].filter(e => vis(e) && paints(e));
+      const out = [];
+      for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        if (a.contains(b) || b.contains(a)) continue;
+        if (layerOf(a) !== layerOf(b)) continue;
+        const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+        const ox = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+        const oy = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+        if (ox <= 1 || oy <= 1) continue;
+        const name = e => (e.id ? '#' + e.id : '.' + String(e.className).split(' ')[0])
+          + ' "' + (e.textContent || '').trim().slice(0, 16) + '"';
+        out.push(name(a) + ' over ' + name(b) + ' by ' + Math.round(ox) + 'x' + Math.round(oy));
+      }
+      return out;
+    })()`;
+
+    const seed = async (page) => {
+        await page.addInitScript(() => {
+            // Long names on purpose: a label only collides once its text fills the box.
+            const titles = ['Jabreel Washington', 'Karina Ferreira', 'Alden Sheffler',
+                            'Terry Jackson', 'Kris Kringle', 'Concepcion Villanueva',
+                            'Steph Riggins', 'Docksort PA', 'Water Spider', 'Midway PIN',
+                            'Google Verify', 'Boarding Pass'];
+            const dock = [['nav_home', 'Home', 'grid'], ['nav_gen', 'Create', 'plus-circle'],
+                          ['nav_wifi', 'WiFi', 'wifi'], ['nav_lib', 'Library', 'layout-list'],
+                          ['nav_scan', 'Scan', 'scan-line']];
+            const apps = dock.map(([id, title, icon], i) => ({ id, title, icon, type: 'dock', order: i }));
+            titles.forEach((t, i) => apps.push({ id: 'ov' + i, title: t, type: 'grid',
+                                                 bcid: 'qrcode', data: 'ov-' + i, page: 0, order: i }));
+            localStorage.setItem('xancode_v2_state', JSON.stringify({
+                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
+                autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
+            }));
+        });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+    };
+
+    for (const [w, h] of [[360, 740], [412, 915], [430, 932]]) {
+        test(`nothing overlaps on any screen at ${w}x${h}`, async ({ page }) => {
+            await page.setViewportSize({ width: w, height: h });
+            await seed(page);
+
+            const scenes = {
+                home: () => {},
+                viewer: () => window.InteractionManager.openEnlarge(
+                    window.OS_STATE.apps.find(a => a.type === 'grid')),
+                library: () => { window.InteractionManager.closeEnlarge && window.InteractionManager.closeEnlarge();
+                                 window.LibraryManager.open(); },
+                create: () => { window.LibraryManager.close(); window.CodeGenerator.open(); },
+                settings: () => { window.CodeGenerator.close(); window.SettingsManager.open(); },
+                edit: () => { window.SettingsManager.close();
+                              window.OS_STATE.isEditMode = true;
+                              document.body.classList.add('edit-mode');
+                              window.Renderer.render(); },
+            };
+
+            for (const [name, open] of Object.entries(scenes)) {
+                await page.evaluate(`(${open.toString()})()`);
+                await page.waitForTimeout(900);
+                for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+                    await page.evaluate(s => {
+                        window.OS_STATE.skin = s;
+                        document.body.dataset.skin = s;
+                        window.Layout.calculateGrid();
+                    }, skin);
+                    await page.waitForTimeout(450);
+                    const hits = await page.evaluate(OVERLAPS);
+                    expect(hits, `${name} on ${skin}:\n  ${hits.join('\n  ')}`).toEqual([]);
+                }
+            }
+        });
+    }
+
+    test('every utility class in the markup exists in the vendored build', async ({ page }) => {
+        // The silent one. A purged utility produces no rule, no warning and no visible error —
+        // it just does nothing, and the layout that depended on it collapses by exactly the
+        // amount the class was worth.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const missing = await page.evaluate(async () => {
+            const css = await fetch('vendor/tailwind.css').then(r => r.text());
+            // Only the utilities whose absence changes geometry. A missing colour is visible;
+            // a missing margin is not.
+            const GEOMETRY = /^(m|p)(t|b|l|r|x|y)?-\d+(\.\d+)?$|^gap(-x|-y)?-\d+$|^(w|h)-\d+$/;
+            const used = new Set();
+            document.querySelectorAll('*').forEach(el => {
+                if (typeof el.className !== 'string') return;
+                el.className.split(/\s+/).forEach(c => { if (GEOMETRY.test(c)) used.add(c); });
+            });
+            const esc = c => c.replace(/[.]/g, '\\\\.');
+            return [...used].filter(c => !new RegExp('\\.' + esc(c) + '(?![\\w-])').test(css)).sort();
+        });
+
+        expect(missing,
+               `these classes are in the markup but not in vendor/tailwind.css, so they do nothing: ${missing.join(', ')}`)
+            .toEqual([]);
     });
 });

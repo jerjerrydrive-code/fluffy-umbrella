@@ -4,3 +4,5 @@ playwright-report/
 blob-report/
 playwright/.cache/
 motion-audit/
+.capture/
+_*.mjs
