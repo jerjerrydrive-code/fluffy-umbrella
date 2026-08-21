@@ -60,7 +60,7 @@
                All four now reach the wallpaper. The defaults below are that same dusk, so the
                app looks unchanged until a theme is chosen and nothing depends on one being set.
                --wall-ink is the ground the blooms sit on; light skins override it. */
-            --pal-1: #4a4a7d;
+            --pal-1: #4a4a7d;   /* see the @property block below — these animate */
             --pal-2: #c8836f;
             --pal-3: #1f5c6b;
             --pal-4: #222f5e;
@@ -149,6 +149,38 @@
         .accent-bg-soft { background-color: color-mix(in srgb, var(--accent) 16%, transparent) !important; }
         .accent-border-soft { border-color: color-mix(in srgb, var(--accent) 35%, transparent) !important; }
         .accent-bg:active { filter: brightness(0.92); }
+
+        /* ---- The palette animates ------------------------------------------------------
+           
+           A custom property is a string as far as the engine is concerned, so changing --pal-1
+           used to repaint every gradient built from it in one frame: wallpaper, twenty tiles,
+           the dock, the Library ground, the viewer, all snapping at once. Correct, and it read
+           as a glitch rather than a theme change.
+           
+           @property gives them a type. Registered as <color>, they interpolate — so a single
+           assignment in JS cross-fades every surface in the app at once, because every surface
+           is already derived from these four and nothing else. There is no per-element work
+           and no JS animation loop; the four variables carry the whole thing.
+           
+           Unsupported engines ignore the block and get the old instant swap, which is exactly
+           what they have today. */
+        @property --pal-1 { syntax: '<color>'; inherits: true; initial-value: #4a4a7d; }
+        @property --pal-2 { syntax: '<color>'; inherits: true; initial-value: #c8836f; }
+        @property --pal-3 { syntax: '<color>'; inherits: true; initial-value: #1f5c6b; }
+        @property --pal-4 { syntax: '<color>'; inherits: true; initial-value: #222f5e; }
+        @property --accent { syntax: '<color>'; inherits: true; initial-value: #3b82f6; }
+
+        html {
+            transition: --pal-1 0.55s var(--spring-smooth),
+                        --pal-2 0.55s var(--spring-smooth),
+                        --pal-3 0.55s var(--spring-smooth),
+                        --pal-4 0.55s var(--spring-smooth),
+                        --accent 0.45s var(--spring-smooth);
+        }
+        /* Someone who has asked for less motion gets the swap, not the fade. */
+        @media (prefers-reduced-motion: reduce) {
+            html { transition: none; }
+        }
 
         /* ================= SURFACE TINTING =================
            The accent used to reach only things that were already accent-coloured: a handful of
@@ -437,6 +469,29 @@
             transform: translateZ(0);
             backface-visibility: hidden;
             -webkit-backface-visibility: hidden;
+        }
+
+        /* The grid arrives, once.
+           
+           Both phone launchers do this and it is most of why they feel expensive: the icons
+           settle in rather than being there already. The constraints are what keep it from
+           becoming the flicker it would otherwise be — it runs on the FIRST paint of a session
+           and never again, it is an animation rather than a transition so a re-render cannot
+           retrigger it, the whole sequence is 300ms including the longest stagger, and it is
+           off entirely for anyone who has asked for less motion.
+           
+           A row at a time, not an icon at a time: staggering twenty individually reads as a
+           slot machine, staggering five rows reads as a hand of cards being laid down. */
+        @keyframes tile-arrive {
+            from { opacity: 0; transform: translateY(9px) scale(0.94); }
+            to   { opacity: 1; transform: none; }
+        }
+        body.first-paint .app-icon-wrapper {
+            animation: tile-arrive 0.34s var(--spring-smooth) backwards;
+            animation-delay: calc(var(--arrive-row, 0) * 42ms);
+        }
+        @media (prefers-reduced-motion: reduce) {
+            body.first-paint .app-icon-wrapper { animation: none; }
         }
 
         .code-tile {
@@ -3968,6 +4023,14 @@
                     this.pagination.appendChild(dot);
                 }
                 
+                // Row index for the arrival stagger. Written every render because it is free
+                // and because a wrapper can change rows; the animation itself only ever runs
+                // while body.first-paint is set, which is the first paint of the session.
+                const cols = Math.max(1, state.gridCols || 4);
+                document.querySelectorAll('#workspace-pager .app-icon-wrapper').forEach((el, i) => {
+                    el.style.setProperty('--arrive-row', Math.floor((i % itemsPerPage) / cols));
+                });
+
                 this.updatePageChip(state.currentPage || 0);
                 // The count in the header is derived at render for the same reason the Library
                 // badge is: a number kept in state goes stale the moment the thing it counts
@@ -7295,19 +7358,33 @@
                 return Math.min(3, Math.max(0, Math.floor((y / h) * 4)));
             }
 
+            // Aim on the first tap, cycle on the next.
+            //
+            // Band-picking alone was the wrong answer on a phone. A swatch is 44px tall, so a
+            // band is 11px — narrower than the part of a thumb that actually registers — and
+            // the result is that you tap a palette, get a colour you did not aim at, tap again
+            // and get the same one. Reported as the palettes not cycling the way they used to.
+            //
+            // Randomness was the wrong answer too, and this is the third attempt: tapping a
+            // DIFFERENT swatch takes the band you touched, and tapping the SAME swatch again
+            // walks forward through its four colours in order. So a deliberate aim is honoured,
+            // repeated taps are a predictable cycle, and neither depends on hitting an 11px
+            // target.
             selectSwatch(quad, pinnedHex, e) {
                 let hex;
                 if (pinnedHex) {
                     hex = pinnedHex;
+                    this.cycleKey = null;
                 } else {
-                    const band = e && e.currentTarget ? this.bandAt(e.currentTarget, e) : -1;
-                    if (band >= 0) {
-                        hex = quad[band];
+                    const key = quad.join('');
+                    if (this.cycleKey === key) {
+                        this.cycleAt = (this.cycleAt + 1) % quad.length;
                     } else {
-                        const candidates = quad.filter(c => c.toUpperCase() !== this.current);
-                        const pool = candidates.length ? candidates : quad;
-                        hex = pool[Math.floor(Math.random() * pool.length)];
+                        const band = e && e.currentTarget ? this.bandAt(e.currentTarget, e) : -1;
+                        this.cycleAt = band >= 0 ? band : 0;
+                        this.cycleKey = key;
                     }
+                    hex = quad[this.cycleAt];
                 }
                 haptic(10);
                 this.applyAccent(hex, true, quad);
@@ -8583,6 +8660,15 @@
 
         // --- INIT ---
         window.TimeEngine = new OSTimeEngine();
+        // Arm the arrival animation for exactly one paint.
+        //
+        // Set before the first render so the very first batch of icons is animated, and cleared
+        // once the longest stagger has finished. After that the class is gone, so no later
+        // render — a drag, a rename, a page change — can retrigger it. That distinction is the
+        // whole difference between an entrance and a flicker.
+        document.body.classList.add('first-paint');
+        setTimeout(() => document.body.classList.remove('first-paint'), 900);
+
         window.Renderer = new OSRenderer();
         window.DragEngine = new SlotDragEngine();
         window.SlotDragEngine = SlotDragEngine;
