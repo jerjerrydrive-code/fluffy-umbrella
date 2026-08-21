@@ -8005,3 +8005,149 @@ test.describe('The viewer is the hero screen', () => {
         expect(r.size, `the title is only ${r.size}px`).toBeGreaterThanOrEqual(24);
     });
 });
+
+// ============================================================================================
+//  Nothing overlaps, and no class in the markup is a no-op
+//
+//  "you oliterally have overlapping elements in the screenshots do better"
+//
+//  They were right, and eyeballing screenshots had missed it twice. Two separate faults, both
+//  invisible in code review and obvious once measured:
+//
+//  1. Every app label was 99px wide in a 94.8px cell — calc(--app-size + 16px), a guess that
+//     had been right at some earlier icon size and was 4px too wide at this one. Fourteen
+//     overlapping pairs on the home screen alone.
+//  2. The viewer's tag row and action row were spaced with .mt-6 and .mt-9. The vendored
+//     Tailwind build only contains the utilities that were in use when it was generated, and
+//     .mt-9 is not one of them — so it resolved to nothing and the "+ Tag" pill sat flush
+//     against the action plates at exactly 0px.
+//
+//  The second is the more dangerous shape: a class that does not exist is silent, and silence
+//  reads as a design decision. The same thing once put a specular gloss over a barcode.
+// ============================================================================================
+test.describe('Nothing overlaps, and no class in the markup is a no-op', () => {
+    // Two painted leaves in the same stacking layer must not share pixels. "Painted" means it
+    // has its own text, canvas or icon — a container overlapping its own child is not a bug.
+    const OVERLAPS = `(() => {
+      const vis = el => {
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.05) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight
+            && r.right > 0 && r.left < innerWidth;
+      };
+      const paints = el => {
+        if (el.tagName === 'CANVAS' || el.tagName === 'SVG' || el.tagName === 'IMG') return true;
+        for (const n of el.childNodes) if (n.nodeType === 3 && n.textContent.trim().length > 1) return true;
+        return false;
+      };
+      const layerOf = el => {
+        let n = el;
+        while (n && n !== document.body) {
+          if (n.classList && n.classList.contains('modal-spring')) return n;
+          n = n.parentElement;
+        }
+        return null;
+      };
+      const nodes = [...document.querySelectorAll('body > div, body > div *')].filter(e => vis(e) && paints(e));
+      const out = [];
+      for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        if (a.contains(b) || b.contains(a)) continue;
+        if (layerOf(a) !== layerOf(b)) continue;
+        const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+        const ox = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+        const oy = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+        if (ox <= 1 || oy <= 1) continue;
+        const name = e => (e.id ? '#' + e.id : '.' + String(e.className).split(' ')[0])
+          + ' "' + (e.textContent || '').trim().slice(0, 16) + '"';
+        out.push(name(a) + ' over ' + name(b) + ' by ' + Math.round(ox) + 'x' + Math.round(oy));
+      }
+      return out;
+    })()`;
+
+    const seed = async (page) => {
+        await page.addInitScript(() => {
+            // Long names on purpose: a label only collides once its text fills the box.
+            const titles = ['Jabreel Washington', 'Karina Ferreira', 'Alden Sheffler',
+                            'Terry Jackson', 'Kris Kringle', 'Concepcion Villanueva',
+                            'Steph Riggins', 'Docksort PA', 'Water Spider', 'Midway PIN',
+                            'Google Verify', 'Boarding Pass'];
+            const dock = [['nav_home', 'Home', 'grid'], ['nav_gen', 'Create', 'plus-circle'],
+                          ['nav_wifi', 'WiFi', 'wifi'], ['nav_lib', 'Library', 'layout-list'],
+                          ['nav_scan', 'Scan', 'scan-line']];
+            const apps = dock.map(([id, title, icon], i) => ({ id, title, icon, type: 'dock', order: i }));
+            titles.forEach((t, i) => apps.push({ id: 'ov' + i, title: t, type: 'grid',
+                                                 bcid: 'qrcode', data: 'ov-' + i, page: 0, order: i }));
+            localStorage.setItem('xancode_v2_state', JSON.stringify({
+                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
+                autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
+            }));
+        });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+    };
+
+    for (const [w, h] of [[360, 740], [412, 915], [430, 932]]) {
+        test(`nothing overlaps on any screen at ${w}x${h}`, async ({ page }) => {
+            await page.setViewportSize({ width: w, height: h });
+            await seed(page);
+
+            const scenes = {
+                home: () => {},
+                viewer: () => window.InteractionManager.openEnlarge(
+                    window.OS_STATE.apps.find(a => a.type === 'grid')),
+                library: () => { window.InteractionManager.closeEnlarge && window.InteractionManager.closeEnlarge();
+                                 window.LibraryManager.open(); },
+                create: () => { window.LibraryManager.close(); window.CodeGenerator.open(); },
+                settings: () => { window.CodeGenerator.close(); window.SettingsManager.open(); },
+                edit: () => { window.SettingsManager.close();
+                              window.OS_STATE.isEditMode = true;
+                              document.body.classList.add('edit-mode');
+                              window.Renderer.render(); },
+            };
+
+            for (const [name, open] of Object.entries(scenes)) {
+                await page.evaluate(`(${open.toString()})()`);
+                await page.waitForTimeout(900);
+                for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+                    await page.evaluate(s => {
+                        window.OS_STATE.skin = s;
+                        document.body.dataset.skin = s;
+                        window.Layout.calculateGrid();
+                    }, skin);
+                    await page.waitForTimeout(450);
+                    const hits = await page.evaluate(OVERLAPS);
+                    expect(hits, `${name} on ${skin}:\n  ${hits.join('\n  ')}`).toEqual([]);
+                }
+            }
+        });
+    }
+
+    test('every utility class in the markup exists in the vendored build', async ({ page }) => {
+        // The silent one. A purged utility produces no rule, no warning and no visible error —
+        // it just does nothing, and the layout that depended on it collapses by exactly the
+        // amount the class was worth.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+
+        const missing = await page.evaluate(async () => {
+            const css = await fetch('vendor/tailwind.css').then(r => r.text());
+            // Only the utilities whose absence changes geometry. A missing colour is visible;
+            // a missing margin is not.
+            const GEOMETRY = /^(m|p)(t|b|l|r|x|y)?-\d+(\.\d+)?$|^gap(-x|-y)?-\d+$|^(w|h)-\d+$/;
+            const used = new Set();
+            document.querySelectorAll('*').forEach(el => {
+                if (typeof el.className !== 'string') return;
+                el.className.split(/\s+/).forEach(c => { if (GEOMETRY.test(c)) used.add(c); });
+            });
+            const esc = c => c.replace(/[.]/g, '\\\\.');
+            return [...used].filter(c => !new RegExp('\\.' + esc(c) + '(?![\\w-])').test(css)).sort();
+        });
+
+        expect(missing,
+               `these classes are in the markup but not in vendor/tailwind.css, so they do nothing: ${missing.join(', ')}`)
+            .toEqual([]);
+    });
+});
