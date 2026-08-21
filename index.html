@@ -461,11 +461,15 @@
             width: var(--app-size); height: var(--app-size);
             border-radius: var(--squircle-radius);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-            /* width/height are layout properties and --app-size only changes on a viewport
-               change or a grid-density change, both of which are already a reflow — animating
-               them just spreads that reflow over 300ms of every frame. Radius is paint-only
-               and is the shape change you actually see between skins, so it keeps its curve. */
+            /* Size and shape both animate. RESTORED.
+               
+               Cut for the same wrong reason as the label above — "width and height are layout
+               properties" is true and irrelevant, because --app-size only moves on a viewport
+               change or a grid-density change. Those happen once, deliberately, when you pick
+               4x5 or 4x7 in Settings — and watching every icon grow into the new density is
+               the entire feedback for that control. Without it the grid just teleports. */
             transition: transform 0.2s var(--spring-snappy),
+                        width 0.3s var(--spring-smooth), height 0.3s var(--spring-smooth),
                         border-radius 0.45s var(--spring-smooth);
             will-change: transform;
         }
@@ -652,16 +656,22 @@
                text off the join even when two long names sit side by side. */
             text-align: center; width: 100%; padding: 0 4px; box-sizing: border-box;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-            /* Deliberately NOT transitioning font-size, letter-spacing or margin-top.
+            /* The label morphs with the skin. RESTORED.
                
-               Animating text metrics relayouts every label on every frame of the morph, and
-               there are twenty of them: measured at 4x CPU throttle, the skin swap spent
-               200-220ms per task in style and layout, and the grid ran at half frame rate for
-               the whole half second. The morph already happens behind a cover, so the labels
-               arriving at their new size in one step is not something you can see — and the
-               animation was costing the thing you CAN see, which is everything else moving
-               smoothly. Width and opacity stay: neither reflows the grid. */
-            transition: width 0.3s ease, opacity 0.3s ease;
+               I cut font-size, letter-spacing and margin-top from here on the theory that
+               animating text metrics relayouts twenty labels per frame and was what made the
+               skin morph expensive. Then I measured it: with the transitions the morph spent
+               222ms and 199ms in its two long tasks; without them, 234ms and 180ms. Inside the
+               noise. The cost was somewhere else entirely — flipping data-skin invalidates
+               every rule in the stylesheet — and I had removed something that was doing real
+               work for nothing in return.
+               
+               A label growing and re-tracking into its new skin is half of what a skin change
+               IS. Put back. */
+            transition: width 0.3s ease, opacity 0.3s ease,
+                        font-size 0.45s var(--spring-smooth),
+                        letter-spacing 0.45s var(--spring-smooth),
+                        margin-top 0.45s var(--spring-smooth);
         }
 
         /* Rows are TRACKS, and the tracks fill the page.
