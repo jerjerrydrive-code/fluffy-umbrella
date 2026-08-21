@@ -7893,3 +7893,115 @@ test.describe('Polish pass', () => {
         expect(calls, `a no-change render swept the document for icons ${calls} times`).toBe(0);
     });
 });
+
+// ============================================================================================
+//  The viewer is the hero screen
+//
+//  It is the screen you look at every time you use the app, and it was a white square on a
+//  white veil with three grey circles under it — the flattest screen in the product, next to a
+//  reference set whose detail view carries the whole design.
+//
+//  Rebuilt on the palette. The two things that must never drift: the plate under the code stays
+//  pure white on every skin, and everything written on the new ground stays readable against it
+//  — the first cut of this screen got the ground right and left dark text on it.
+// ============================================================================================
+test.describe('The viewer is the hero screen', () => {
+    const open = async (page) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+        await page.evaluate(async () => {
+            const app = { id: 'hero', title: 'Hero Code', type: 'grid',
+                          bcid: 'qrcode', data: 'hero-payload' };
+            window.OS_STATE.apps.push(app);
+            window.placeOnGrid(app, 0);
+            window.Renderer.render();
+            window.InteractionManager.openEnlarge(app);
+            await new Promise(r => setTimeout(r, 700));
+        });
+    };
+
+    // Chromium serialises color-mix() as `color(srgb 0.9 0.93 0.99)` — 0-1 floats, not ints.
+    const READ = `(c) => {
+        const n = (c.match(/[\d.]+/g) || []).map(Number);
+        return c.indexOf('color(') === 0 ? [n[0]*255, n[1]*255, n[2]*255, n[3]] : n;
+    }`;
+
+    test('everything written on the viewer is readable against it', async ({ page }) => {
+        await open(page);
+        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            await page.evaluate(s => { window.OS_STATE.skin = s; document.body.dataset.skin = s; }, skin);
+            await page.waitForTimeout(400);
+
+            const worst = await page.evaluate((readSrc) => {
+                const read = eval(readSrc);
+                const lum = (r, g, b) => {
+                    const f = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+                    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+                };
+                const layer = document.getElementById('item-fullscreen-layer');
+                const ground = read(getComputedStyle(layer).backgroundColor);
+                let min = 99, culprit = '';
+                for (const el of layer.querySelectorAll('h2, p, span')) {
+                    // Only text that sits directly on the layer's own ground — the plate has
+                    // its own surface and the action plates have theirs.
+                    if (el.closest('.fullscreen-canvas-panel, .viewer-action-plate')) continue;
+                    const txt = el.textContent.trim();
+                    if (txt.length < 3) continue;
+                    const fg = read(getComputedStyle(el).color);
+                    const a = fg[3] === undefined ? 1 : fg[3];
+                    const mixed = [0, 1, 2].map(i => fg[i] * a + ground[i] * (1 - a));
+                    const l1 = lum(...mixed), l2 = lum(ground[0], ground[1], ground[2]);
+                    const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+                    if (ratio < min) { min = ratio; culprit = txt.slice(0, 30); }
+                }
+                return { min, culprit };
+            }, READ);
+
+            expect(worst.min,
+                   `${skin}: "${worst.culprit}" is ${worst.min.toFixed(2)}:1 against the viewer's ground`)
+                .toBeGreaterThan(3.4);
+        }
+    });
+
+    test('the plate under the code is pure white, whatever the ground is', async ({ page }) => {
+        await open(page);
+        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            await page.evaluate(s => { window.OS_STATE.skin = s; document.body.dataset.skin = s; }, skin);
+            await page.waitForTimeout(400);
+            const bg = await page.evaluate(() =>
+                getComputedStyle(document.querySelector('.fullscreen-canvas-panel')).backgroundColor);
+            expect(bg, `${skin}: the plate is ${bg}, not white`)
+                .toMatch(/^rgba?\(255,\s*255,\s*255(,\s*1)?\)$/);
+        }
+    });
+
+    test('the ground repaints when the palette changes', async ({ page }) => {
+        await open(page);
+        const ground = () => page.evaluate(() =>
+            getComputedStyle(document.getElementById('item-fullscreen-layer')).backgroundImage);
+        const before = await ground();
+        await page.evaluate(() =>
+            window.ThemeManager.applyAccent('#E97A7A', false, ['#E97A7A', '#8B4F80', '#8B76A5', '#B9C0D5']));
+        await page.waitForTimeout(500);
+        expect(before, 'the viewer has no gradient ground at all').toContain('gradient');
+        expect(await ground(), 'the viewer ignored the palette').not.toBe(before);
+    });
+
+    test('the title is under the code, at size', async ({ page }) => {
+        // It used to be 20px in the header bar between a back button and a spacer. Every
+        // reference screen puts the name under the art and lets it own the width.
+        await open(page);
+        const r = await page.evaluate(() => {
+            const title = document.getElementById('fullscreen-item-title');
+            const panel = document.querySelector('.fullscreen-canvas-panel');
+            return {
+                size: parseFloat(getComputedStyle(title).fontSize),
+                belowPlate: title.getBoundingClientRect().top > panel.getBoundingClientRect().bottom,
+                text: title.textContent.trim(),
+            };
+        });
+        expect(r.text).toBe('Hero Code');
+        expect(r.belowPlate, 'the title is not under the code').toBe(true);
+        expect(r.size, `the title is only ${r.size}px`).toBeGreaterThanOrEqual(24);
+    });
+});
