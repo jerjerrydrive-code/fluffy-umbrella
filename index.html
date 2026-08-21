@@ -588,16 +588,6 @@
            what makes a screen read as designed rather than assembled. Sized in vw with a
            clamp so it is the same proportion of the screen on a 360 as on a 430, which a
            fixed px size is not. */
-        .os-hello {
-            font-size: clamp(26px, 8.2vw, 36px);
-            letter-spacing: -0.02em;
-            display: flex; align-items: baseline; gap: 0.28em;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.28), 0 2px 12px rgba(0,0,0,0.18);
-        }
-        body[data-skin="glass"] .os-hello,
-        body[data-skin="soft"] .os-hello { text-shadow: 0 1px 1px rgba(255,255,255,0.5); }
-        .os-hello-soft { font-weight: 300; color: var(--ink-soft); }
-        .os-hello-name { font-weight: 700; color: var(--ink-strong); }
 
         /* The count. Small, palette-tinted, and it disappears when it would read "0 codes" —
            an empty home screen does not need a label telling it so. */
@@ -1934,18 +1924,15 @@
                 <button id="btn-done-editing" class="hidden tap44 items-center justify-center px-4 rounded-full bg-white text-black text-[14px] font-bold shadow-lg active:scale-95 transition-transform">Done</button>
             </div>
           </div>
-          <!-- Two weights on one line, the way the reference designs do it: the greeting
-               recedes and the name carries. Set as textContent from JS — a display name can
-               come from a Google account, which is not this app's string to trust. -->
-          <div id="os-greeting" class="w-full flex flex-col mt-1.5 pointer-events-none">
-            <!-- Eyebrow above headline, which is how every one of the reference screens is
-                 built: a small quiet line establishing what you are looking at, then one big
-                 line that owns the width. Right-hand chips were tried first and collided with
-                 the action buttons directly above them. -->
+          <!-- No greeting.
+               
+               There was a time-aware one here — "Morning, there", "Evening, Jer" — copied from
+               the reference screens, where a greeting belongs because those apps are places you
+               browse. This one is a launcher: you open it to reach a code, and a line telling
+               you what time of day it is costs 44px of grid on every screen to say nothing you
+               did not already know. The count stays because it is information. -->
+          <div id="os-greeting" class="w-full flex flex-col pointer-events-none">
             <span id="os-count-chip" class="os-eyebrow"></span>
-            <h1 class="os-hello leading-[1.05] truncate">
-                <span class="os-hello-soft">Hey,</span><span class="os-hello-name" id="os-hello-name">there</span>
-            </h1>
           </div>
         </header>
 
@@ -3274,36 +3261,19 @@
             }
         }
 
-        // The greeting and the count.
+        // How many codes you have. That is the whole header now — the time-of-day greeting
+        // that used to sit under it is gone.
         //
-        // Both are set as textContent, never interpolated. The name can come from a Google
-        // account, and a display name is not this app's string to trust — same rule as a
-        // scanned payload. HARD RULE 9.
+        // Set as textContent, never interpolated. HARD RULE 9 applies to anything derived from
+        // state, and it is cheaper to keep the habit than to remember which fields are safe.
         window.HomeHeader = {
-            greetingFor(hour) {
-                if (hour < 5)  return 'Still up,';
-                if (hour < 12) return 'Morning,';
-                if (hour < 18) return 'Hey,';
-                return 'Evening,';
-            },
-            render(name) {
-                const soft = document.querySelector('.os-hello-soft');
-                const nameEl = document.getElementById('os-hello-name');
+            render() {
                 const chip = document.getElementById('os-count-chip');
-                if (soft) soft.textContent = this.greetingFor(new Date().getHours());
-                if (nameEl) {
-                    const n = name !== undefined ? name : this.lastName;
-                    this.lastName = n;
-                    // First name only. "Catherine Elizabeth Thompson-Hughes" is not a headline,
-                    // and the reference this is modelled on greets you by one word.
-                    nameEl.textContent = (n && String(n).trim().split(/\s+/)[0]) || 'there';
-                }
-                if (chip) {
-                    const n = (window.OS_STATE.apps || []).filter(a => a.type === 'grid').length;
-                    // Empty string, not "0 codes": .os-chip:empty fades the pill out entirely,
-                    // so a clean slate is not labelled as one.
-                    chip.textContent = n ? `${n} ${n === 1 ? 'code' : 'codes'}` : '';
-                }
+                if (!chip) return;
+                const n = (window.OS_STATE.apps || []).filter(a => a.type === 'grid').length;
+                // Empty string, not "0 codes": .os-eyebrow:empty fades the line out entirely,
+                // so a clean slate is not labelled as one.
+                chip.textContent = n ? `${n} ${n === 1 ? 'code' : 'codes'}` : '';
             }
         };
 
@@ -7826,7 +7796,7 @@
                 }
                 if (!signedIn) {
                     // Signing out has to take the name off the home screen with it.
-                    if (window.HomeHeader) window.HomeHeader.render('');
+                    if (window.HomeHeader) window.HomeHeader.render();
                     return;
                 }
 
@@ -7837,7 +7807,7 @@
                 const iconFallback = document.getElementById('account-icon-fallback');
 
                 if (nameEl) nameEl.textContent = user.displayName || 'XanCode User';
-                if (window.HomeHeader) window.HomeHeader.render(user.displayName || '');
+                if (window.HomeHeader) window.HomeHeader.render();
                 if (emailEl) emailEl.textContent = user.email || '';
 
                 if (user.photoURL && avatarImg) {
