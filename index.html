@@ -427,14 +427,29 @@
            inset plate, because a barcode's contrast is the difference between a code that
            scans at the counter and one that does not. The colour is a frame, never a
            background. */
+        /* Promote the surfaces that sit over moving content.
+           
+           A blurred bar above a scrolling grid is the classic mobile flicker: the compositor
+           re-rasterises the backdrop when it cannot prove the layer is stable, and the bar
+           blinks. Naming the layer up front — and telling the browser the back face is never
+           shown — keeps it on the GPU instead of being re-decided every frame. */
+        #main-dock, #bottom-stack {
+            transform: translateZ(0);
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+
         .code-tile {
             box-sizing: border-box;
+            /* No `isolation: isolate` here. It was creating a stacking context per tile —
+               twenty of them, each with two gradient pseudo-elements — and the plate, the
+               gloss and the rim already carry explicit z-index, so it bought nothing and gave
+               the compositor twenty more layers to juggle above a blurred dock. */
             background: linear-gradient(150deg,
                         var(--tile-a, var(--pal-1)) 0%,
                         var(--tile-b, var(--pal-3)) 100%);
             padding: 13%;
             position: relative;
-            isolation: isolate;
         }
         /* The plate. Pure white, never mixed with the palette — see above. */
         /* The monogram. Sized off the tile rather than in px so it is the same weight on a
@@ -591,33 +606,24 @@
 
         /* The count. Small, palette-tinted, and it disappears when it would read "0 codes" —
            an empty home screen does not need a label telling it so. */
-        .os-eyebrow {
-            font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: var(--ink-soft);
-            height: 15px; line-height: 15px;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.25);
-            transition: opacity 0.35s ease;
-        }
-        body[data-skin="glass"] .os-eyebrow,
-        body[data-skin="soft"] .os-eyebrow { text-shadow: none; }
-        /* Empty, not hidden: the line keeps its height so the headline does not jump when the
-           first code is added. */
-        .os-eyebrow:empty { opacity: 0; }
-
-        /* A scrolling panel has to look like one.
+                /* A scrolling panel has to look like one.
            Settings runs past 88vh on every phone, and it ended mid-row with a hard edge —
            "Vibration" sliced in half by the panel's own border, which reads as a rendering
            fault rather than as more content. A mask fades the last 28px out instead, and it
            lifts once you reach the end so the final row is not permanently ghosted. */
+        /* The fade at the foot of a scrolling panel, switched rather than animated.
+           
+           Transitioning mask-image means interpolating between two gradients, which repaints
+           the entire panel on every frame of the transition — a 400px-tall blurred surface,
+           twice per scroll-to-end. Toggled instantly instead: the fade appearing or vanishing
+           is not something the eye tracks, and the repaint storm was. */
         #settings-panel, #account-panel {
             -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
             mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
-            transition: -webkit-mask-image 0.25s ease, mask-image 0.25s ease;
         }
         #settings-panel.at-end, #account-panel.at-end {
-            -webkit-mask-image: linear-gradient(to bottom, #000 100%, #000 100%);
-            mask-image: linear-gradient(to bottom, #000 100%, #000 100%);
+            -webkit-mask-image: none;
+            mask-image: none;
         }
 
         /* ---- Sheets follow the skin --------------------------------------------------
@@ -926,7 +932,14 @@
            set INTO the bar rather than printed on it. */
         #main-dock {
             position: relative;
-            isolation: isolate;
+            /* Deliberately NOT isolated.
+               
+               `isolation: isolate` on an element that also carries backdrop-filter changes
+               what the filter is allowed to sample, and browsers resolve that by re-rasterising
+               the backdrop — which is exactly the "flashing" shape of bug: the dock blinks
+               between filtered and unfiltered whenever anything behind it moves. The ::before
+               sheen already sits at z-index 0 under a z-index 1 icon row, so nothing needed
+               isolating. */
             box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset,
                         0 -1px 0 rgba(0,0,0,0.20) inset,
                         0 18px 44px -14px rgba(0,0,0,0.55),
@@ -1924,16 +1937,14 @@
                 <button id="btn-done-editing" class="hidden tap44 items-center justify-center px-4 rounded-full bg-white text-black text-[14px] font-bold shadow-lg active:scale-95 transition-transform">Done</button>
             </div>
           </div>
-          <!-- No greeting.
+          <!-- Nothing here.
                
-               There was a time-aware one here — "Morning, there", "Evening, Jer" — copied from
-               the reference screens, where a greeting belongs because those apps are places you
-               browse. This one is a launcher: you open it to reach a code, and a line telling
-               you what time of day it is costs 44px of grid on every screen to say nothing you
-               did not already know. The count stays because it is information. -->
-          <div id="os-greeting" class="w-full flex flex-col pointer-events-none">
-            <span id="os-count-chip" class="os-eyebrow"></span>
-          </div>
+               This held a time-aware greeting ("Morning, there"), then just a code count after
+               the greeting was cut. Both were copied from reference screens where a header
+               block belongs because those apps are places you browse. This one is a launcher:
+               you open it to reach a code and close it again. The count was the last thing
+               standing and it was still telling you something the grid in front of you already
+               says. The whole block is gone and the rows have the space. -->
         </header>
 
         <main class="flex-1 w-full relative overflow-hidden flex flex-col -mt-2">
@@ -3261,21 +3272,10 @@
             }
         }
 
-        // How many codes you have. That is the whole header now — the time-of-day greeting
-        // that used to sit under it is gone.
-        //
-        // Set as textContent, never interpolated. HARD RULE 9 applies to anything derived from
-        // state, and it is cheaper to keep the habit than to remember which fields are safe.
-        window.HomeHeader = {
-            render() {
-                const chip = document.getElementById('os-count-chip');
-                if (!chip) return;
-                const n = (window.OS_STATE.apps || []).filter(a => a.type === 'grid').length;
-                // Empty string, not "0 codes": .os-eyebrow:empty fades the line out entirely,
-                // so a clean slate is not labelled as one.
-                chip.textContent = n ? `${n} ${n === 1 ? 'code' : 'codes'}` : '';
-            }
-        };
+        // The header block is gone — greeting, then count, both cut. Kept as a no-op so the
+        // three call sites do not have to care, and so bringing something back here is one
+        // function rather than a hunt.
+        window.HomeHeader = { render() {} };
 
         class OSSearchEngine {
             constructor() {

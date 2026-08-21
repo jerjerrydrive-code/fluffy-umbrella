@@ -8151,3 +8151,127 @@ test.describe('Nothing overlaps, and no class in the markup is a no-op', () => {
             .toEqual([]);
     });
 });
+
+// ============================================================================================
+//  The screen holds still
+//
+//  "theres litterally flashing so its not so stable ui anymore"
+//
+//  Two kinds of flashing, and only one of them shows up in a headless browser.
+//
+//  The kind that does: work happening when nothing asked for it — a render, a layout pass, an
+//  icon sweep firing on a timer or an observer that never settles. Measured directly below.
+//
+//  The kind that does not: compositor flicker on a real GPU, where a blurred surface over
+//  moving content gets re-rasterised and blinks. That cannot be reproduced here, so it is
+//  guarded by shape instead — the specific CSS combinations known to cause it are asserted
+//  absent.
+// ============================================================================================
+test.describe('The screen holds still', () => {
+    const seeded = async (page) => {
+        await page.addInitScript(() => {
+            const dock = [['nav_home', 'Home', 'grid'], ['nav_gen', 'Create', 'plus-circle'],
+                          ['nav_wifi', 'WiFi', 'wifi'], ['nav_lib', 'Library', 'layout-list'],
+                          ['nav_scan', 'Scan', 'scan-line']];
+            const apps = dock.map(([id, title, icon], i) => ({ id, title, icon, type: 'dock', order: i }));
+            for (let i = 0; i < 18; i++) {
+                apps.push({ id: 'still' + i, title: 'Still ' + i, type: 'grid',
+                            bcid: 'qrcode', data: 'still-' + i, page: 0, order: i });
+            }
+            localStorage.setItem('xancode_v2_state', JSON.stringify({
+                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
+                autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
+            }));
+        });
+        await page.goto('/index.html');
+        await page.waitForTimeout(2200);
+    };
+
+    test('an idle home screen does no work at all', async ({ page }) => {
+        // A render, a layout pass or an icon sweep with nobody touching the phone is either a
+        // timer nobody meant to leave running or an observer that never settles. Both look
+        // like flashing and both drain the battery in the background.
+        await seeded(page);
+        const churn = await page.evaluate(async () => {
+            const c = { render: 0, grid: 0, icons: 0, mutations: 0 };
+            const wrap = (obj, name, key) => {
+                if (!obj || typeof obj[name] !== 'function') return;
+                const orig = obj[name].bind(obj);
+                obj[name] = function (...a) { c[key]++; return orig(...a); };
+            };
+            wrap(window.Renderer, 'render', 'render');
+            wrap(window.Layout, 'calculateGrid', 'grid');
+            if (window.lucide) wrap(window.lucide, 'createIcons', 'icons');
+            new MutationObserver(m => { c.mutations += m.length; })
+                .observe(document.getElementById('workspace-pager'), {
+                    childList: true, subtree: true, attributes: true });
+            await new Promise(r => setTimeout(r, 3000));
+            return c;
+        });
+        expect(churn, `the home screen kept working while idle: ${JSON.stringify(churn)}`)
+            .toEqual({ render: 0, grid: 0, icons: 0, mutations: 0 });
+    });
+
+    test('an idle home screen paints identical frames', async ({ page }) => {
+        // The churn counters above only see work this app starts. This catches anything else —
+        // a CSS animation left running, a gradient being re-resolved, a transition that never
+        // reaches its end state.
+        await seeded(page);
+        const first = await page.screenshot();
+        let changed = 0;
+        for (let i = 0; i < 6; i++) {
+            await page.waitForTimeout(250);
+            if (!(await page.screenshot()).equals(first)) changed++;
+        }
+        expect(changed, `${changed} of 6 idle frames differed from the first`).toBe(0);
+    });
+
+    test('nothing isolates a surface that also blurs its backdrop', async ({ page }) => {
+        // The compositor hazard. `isolation: isolate` changes what a backdrop-filter is allowed
+        // to sample, and engines resolve that by re-rasterising the backdrop — so the surface
+        // blinks between filtered and unfiltered whenever anything behind it moves. The dock
+        // sits over a scrolling grid, which is the worst possible place for it.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const offenders = await page.evaluate(() =>
+            [...document.querySelectorAll('*')].filter(el => {
+                const cs = getComputedStyle(el);
+                const blur = (cs.backdropFilter || cs.webkitBackdropFilter || 'none');
+                return cs.isolation === 'isolate' && blur !== 'none';
+            }).map(el => el.id || el.className.toString().slice(0, 40)));
+        expect(offenders,
+               `these isolate a stacking context AND blur their backdrop: ${offenders.join(', ')}`)
+            .toEqual([]);
+    });
+
+    test('no mask is animated', async ({ page }) => {
+        // Interpolating between two mask gradients repaints the whole masked element on every
+        // frame. On a 400px blurred panel that is a repaint storm for an effect — a fade
+        // appearing at the foot of a scroll — that nobody watches happen.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const animated = await page.evaluate(() =>
+            [...document.querySelectorAll('*')].filter(el => {
+                const t = getComputedStyle(el).transitionProperty || '';
+                return /mask/i.test(t);
+            }).map(el => el.id || el.className.toString().slice(0, 40)));
+        expect(animated, `these transition a mask: ${animated.join(', ')}`).toEqual([]);
+    });
+
+    test('the header carries nothing but the clock and its two buttons', async ({ page }) => {
+        // "remove that morning there bullshit" — then the count line that replaced it. The
+        // header is chrome, not a place to say things.
+        await seeded(page);
+        const header = await page.evaluate(() => {
+            const h = document.querySelector('header');
+            return {
+                text: h.innerText.replace(/\s+/g, ' ').trim(),
+                height: Math.round(h.getBoundingClientRect().height),
+            };
+        });
+        // Whatever the clock reads, and nothing else.
+        expect(header.text, `the header says "${header.text}"`).toMatch(/^\d{1,2}:\d{2}$/);
+        expect(header.height, `the header is ${header.height}px tall`).toBeLessThan(70);
+    });
+});
