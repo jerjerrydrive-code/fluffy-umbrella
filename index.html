@@ -90,7 +90,20 @@
                with their own override list. One pair of tokens instead, so a new piece of
                chrome is readable on every skin the moment it is written. */
             --ink-strong: #ffffff;
-            --ink-soft: rgba(255,255,255,0.62);
+            --ink-soft: rgba(255,255,255,0.72);
+            --ink-dim: rgba(255,255,255,0.56);
+
+            /* Sheets — Create, Rename, the scanner's result tray. These were literal white:
+               bg-white, bg-gray-100, text-gray-900. On the Dark and Scan Card skins that is a
+               sheet of printer paper thrown over a themed app, and it is the single loudest
+               thing in the walkthrough recording. Tokenised so a sheet follows the skin it is
+               opening over, the way every other surface already does. */
+            --sheet-bg: color-mix(in srgb, var(--pal-1) 20%, #16171c);
+            --sheet-ink: #ffffff;
+            --sheet-sub: rgba(255,255,255,0.66);
+            --sheet-fill: color-mix(in srgb, var(--pal-1) 24%, rgba(255,255,255,0.08));
+            --sheet-line: color-mix(in srgb, var(--pal-2) 30%, rgba(255,255,255,0.13));
+            --sheet-raised: color-mix(in srgb, var(--pal-2) 34%, #ffffff);
 
             /* ---- Structural skin tokens -------------------------------------------------
                A skin used to be a colour scheme and nothing else. Every one of the six drew the
@@ -171,7 +184,11 @@
             --surface-raised:  color-mix(in srgb, var(--accent) 40%, rgba(255, 255, 255, 0.10));
             --surface-raised-2:color-mix(in srgb, var(--pal-2, var(--accent)) 46%, rgba(255, 255, 255, 0.20));
             --surface-line:    color-mix(in srgb, var(--accent) 58%, rgba(255, 255, 255, 0.11));
-            --surface-sunken:  color-mix(in srgb, var(--pal-3, var(--accent)) 28%, rgba(0, 0, 0, 0.35));
+            /* A well, not a colour field. At 28% of --pal-3 a mint palette painted the Screen
+               Grid track olive-green — a saturated slab sitting in the middle of an otherwise
+               neutral panel, reading as a bug rather than as a theme. A recess is defined by
+               being DARKER than what surrounds it; the tint only has to be enough to belong. */
+            --surface-sunken:  color-mix(in srgb, var(--pal-3, var(--accent)) 10%, rgba(0, 0, 0, 0.42));
             --surface-glass:   color-mix(in srgb, var(--accent) 32%, rgba(18, 18, 20, 0.62));
             --veil:            color-mix(in srgb, var(--pal-1, var(--accent)) 32%, rgba(0, 0, 0, 0.55));
             --surface-light:   color-mix(in srgb, var(--accent) 13%, #ffffff);
@@ -215,7 +232,11 @@
 
         /* Light sheets: the code editor, the rename prompt, the fullscreen viewer.
            Targeted by id so the white plates NESTED inside them are left alone. */
-        #create-panel, #rename-panel { background-color: var(--surface-light); }
+        /* --sheet-bg, not --surface-light.
+           --surface-light is a near-white tint and this rule is id-specificity, so it beat the
+           .ui-sheet class and kept the Create and Rename sheets white on the dark skins however
+           the tokens were set. The sheet tokens already know which way each skin goes. */
+        #create-panel, #rename-panel { background-color: var(--sheet-bg); }
         #item-fullscreen-layer       { background-color: var(--veil-light); }
         #create-panel .bg-gray-100,
         #rename-panel .bg-gray-100,
@@ -382,9 +403,13 @@
             width: var(--app-size); height: var(--app-size);
             border-radius: var(--squircle-radius);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-            transition: transform 0.2s var(--spring-snappy), width 0.3s ease, height 0.3s ease,
+            /* width/height are layout properties and --app-size only changes on a viewport
+               change or a grid-density change, both of which are already a reflow — animating
+               them just spreads that reflow over 300ms of every frame. Radius is paint-only
+               and is the shape change you actually see between skins, so it keeps its curve. */
+            transition: transform 0.2s var(--spring-snappy),
                         border-radius 0.45s var(--spring-smooth);
-            will-change: transform, width, height;
+            will-change: transform;
         }
 
         /* ============================ THE CODE TILE ============================
@@ -521,10 +546,16 @@
             margin-top: var(--label-gap);
             text-align: center; width: calc(var(--app-size) + 16px);
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-            transition: width 0.3s ease, opacity 0.3s ease,
-                        font-size 0.45s var(--spring-smooth),
-                        letter-spacing 0.45s var(--spring-smooth),
-                        margin-top 0.45s var(--spring-smooth);
+            /* Deliberately NOT transitioning font-size, letter-spacing or margin-top.
+               
+               Animating text metrics relayouts every label on every frame of the morph, and
+               there are twenty of them: measured at 4x CPU throttle, the skin swap spent
+               200-220ms per task in style and layout, and the grid ran at half frame rate for
+               the whole half second. The morph already happens behind a cover, so the labels
+               arriving at their new size in one step is not something you can see — and the
+               animation was costing the thing you CAN see, which is everything else moving
+               smoothly. Width and opacity stay: neither reflows the grid. */
+            transition: width 0.3s ease, opacity 0.3s ease;
         }
 
         /* Rows are TRACKS, and the tracks fill the page.
@@ -573,6 +604,95 @@
         /* Empty, not hidden: the line keeps its height so the headline does not jump when the
            first code is added. */
         .os-eyebrow:empty { opacity: 0; }
+
+        /* A scrolling panel has to look like one.
+           Settings runs past 88vh on every phone, and it ended mid-row with a hard edge —
+           "Vibration" sliced in half by the panel's own border, which reads as a rendering
+           fault rather than as more content. A mask fades the last 28px out instead, and it
+           lifts once you reach the end so the final row is not permanently ghosted. */
+        #settings-panel, #account-panel {
+            -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+            transition: -webkit-mask-image 0.25s ease, mask-image 0.25s ease;
+        }
+        #settings-panel.at-end, #account-panel.at-end {
+            -webkit-mask-image: linear-gradient(to bottom, #000 100%, #000 100%);
+            mask-image: linear-gradient(to bottom, #000 100%, #000 100%);
+        }
+
+        /* ---- Sheets follow the skin --------------------------------------------------
+           Scoped to the sheet panels, so nothing else that legitimately wants white loses it
+           — the code plate under a barcode above all, which is exempt everywhere. */
+        .ui-sheet { background: var(--sheet-bg); color: var(--sheet-ink); }
+        .ui-sheet :is(.bg-white, .bg-gray-50, .bg-gray-100) { background-color: var(--sheet-fill); }
+        .ui-sheet :is(.text-gray-900, .text-gray-800) { color: var(--sheet-ink); }
+        .ui-sheet :is(.text-gray-700, .text-gray-600, .text-gray-500, .text-gray-400) { color: var(--sheet-sub); }
+        .ui-sheet :is(.border-gray-100, .border-gray-200, .border-gray-300) { border-color: var(--sheet-line); }
+        /* The drag grabber, and any input the sheet holds. */
+        .ui-sheet .bg-gray-300 { background-color: var(--sheet-line); }
+        .ui-sheet :is(input, textarea, select) { color: var(--sheet-ink); caret-color: var(--accent); }
+        .ui-sheet ::placeholder { color: var(--sheet-sub); }
+
+        /* The segmented tabs were hardcoded #6b7280 on #ffffff — invisible on a dark sheet. */
+        .create-tab-btn { color: var(--sheet-sub); }
+        /* Filled with the accent, not with --sheet-raised.
+           --accent-text is the ink that reads ON the accent, and pairing it with a near-white
+           raised surface put white type on a pale mint pill — legible in the token names,
+           invisible on the screen. One filled pill and one quiet one, the same rule the
+           Library and category chips follow. */
+        .create-tab-btn.active {
+            background: var(--accent);
+            color: var(--accent-text);
+            box-shadow: 0 4px 12px -4px var(--accent);
+        }
+
+        /* Ink is a property of the SURFACE, not of the skin.
+
+           These were first written onto body[data-skin="glass"] and body[data-skin="soft"]
+           as a pair of "this skin is light" overrides. Glass is not a light skin: its
+           wallpaper, header and Library are light, and its Settings panel is still the dark
+           #2c2c2e one. So dark ink meant for a light surface landed on a dark panel, and the
+           skin picker's own description measured 1.01:1 against the card behind it —
+           invisible, and caught by the contrast test rather than by eye.
+
+           Listed per surface instead. Adding a light surface means adding it here, which is
+           the point: the failure above is what happens when the two drift apart. */
+        body[data-skin="soft"] :is(#os-header, #main-dock, #library-overlay, #settings-panel,
+                                   #account-panel, #folder-overlay),
+        body[data-skin="glass"] :is(#os-header, #main-dock, #library-overlay) {
+            --ink-strong: color-mix(in srgb, var(--pal-1) 22%, #16181f);
+            --ink-soft: color-mix(in srgb, var(--pal-1) 26%, rgba(28,31,40,0.80));
+            --ink-dim: color-mix(in srgb, var(--pal-1) 30%, rgba(30,33,42,0.64));
+        }
+
+        /* ---- Chrome text reads from the ink tokens, not from Tailwind's greys ----------
+
+           Every panel in the app labelled its sections with text-gray-400 (#9ca3af) and its
+           helper copy with text-gray-500 (#6b7280). Those are mid-greys chosen for white
+           backgrounds; on a palette-tinted dark panel they measure about 2.6:1 against the
+           surface behind them, under half of what body text needs. In the walkthrough
+           recording "SCREEN GRID", "ACCENT COLOR" and the whole Restoring explainer are
+           visible as shapes and not readable as words.
+
+           Remapped rather than rewritten in sixty places, and scoped to the palette-tinted
+           chrome so the white sheets — which legitimately want dark greys on white — are
+           untouched. The tokens already know what each skin's ground is, so this comes out
+           right on Soft and Glass too, where the ground is light and the ink inverts. */
+        /* One class, not a list of seven ids.
+           A `:is(#a,#b,...) :is(.x,.y)` descendant selector has to be evaluated against every
+           element in the document, and changing data-skin invalidates the whole tree — which
+           made the skin morph 300ms of style recalculation on a mid-range phone. `.ui-chrome`
+           is stamped on the panels once, at startup. */
+        .ui-chrome :is(.text-gray-300, .text-gray-400) { color: var(--ink-soft); }
+        .ui-chrome :is(.text-gray-500, .text-gray-600) { color: var(--ink-dim); }
+        /* Section labels earn more presence than a remap alone gives them: they are the only
+           signposts in a long scrolling panel. */
+        :is(#settings-panel, #account-panel) .text-xs.font-bold.uppercase {
+            color: var(--ink-strong);
+            opacity: 0.88;
+            letter-spacing: 0.11em;
+            font-size: 11px;
+        }
 
         /* ---- Library, in the same language as the home screen ---------------------- */
         /* An opaque ground, built from the palette. Library used to be a 50% black scrim
@@ -709,7 +829,20 @@
             transition: background 0.35s ease, transform 0.2s var(--spring-snappy);
         }
         #dock-container .app-icon-wrapper:active { transform: scale(0.93); }
-        body.edit-mode #main-dock { transform: translateY(150%); opacity: 0; pointer-events: none; }
+        /* Out of the way AND out of the flow.
+           Translating alone left the dock's 130px box sitting in the bottom stack while the
+           dock itself was painted off-screen, so the page controls were pushed up over the
+           last row of codes and the grid reserved space for something invisible. Absolute
+           positioning keeps the slide-out animation and gives the space back: the stack
+           collapses to just the controls, and the ResizeObserver on it re-runs the layout. */
+        /* No `position: relative` on #bottom-stack: it is already `absolute` from the markup,
+           which makes it a containing block already, and an id rule saying `relative` beats
+           the utility class — it put the stack back in normal flow and took 138px away from
+           the pager, which cost the grid a whole row on every screen. */
+        body.edit-mode #main-dock {
+            position: absolute; left: 0; right: 0; bottom: 0;
+            transform: translateY(150%); opacity: 0; pointer-events: none;
+        }
         
         .custom-drag-ghost { opacity: 0 !important; }
         .empty-slot { width: 100%; height: var(--app-size); border-radius: var(--squircle-radius); opacity: 0; pointer-events: none; transition: all 0.2s; }
@@ -807,23 +940,38 @@
         .apple-toggle-knob { transition: transform 0.4s var(--spring-snappy), background-color 0.3s ease, width 0.2s ease; }
         input:active + .apple-toggle-bg .apple-toggle-knob { width: 26px; }
 
-        .grid-select-btn { transition: all 0.2s ease; }
+        .grid-select-btn { transition: all 0.2s ease; color: var(--ink-soft); }
         .grid-select-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
 
+        /* Category chips. The inactive state was #6b7280 on #f3f4f6 — two literals that only
+           work on paper, so on a themed sheet the UNSELECTED chips were bright white slabs and
+           the selected one was a faint tint: the state read backwards. Same pattern as the
+           Library pills now — one filled, the rest quiet. */
         .tpl-cat-btn {
-            position: relative; flex: none; padding: 0.4rem 0.85rem; border-radius: 999px;
+            position: relative; flex: none; padding: 0.45rem 0.9rem; border-radius: 999px;
             font-size: 12px; font-weight: 700; letter-spacing: 0.01em;
-            color: #6b7280; background: #f3f4f6; border: 1px solid transparent;
-            transition: transform 0.2s var(--spring-snappy), background-color 0.2s ease, color 0.2s ease;
+            color: var(--sheet-sub); background: var(--sheet-fill);
+            border: 0.5px solid transparent;
+            transition: transform 0.2s var(--spring-snappy), background-color 0.25s ease, color 0.25s ease;
         }
         .tpl-cat-btn:active { transform: scale(0.94); }
         .tpl-cat-btn.active {
-            color: var(--accent);
-            background-color: color-mix(in srgb, var(--accent) 14%, transparent);
-            border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+            color: var(--accent-text);
+            background-color: var(--accent);
+            border-color: color-mix(in srgb, var(--accent) 65%, #ffffff);
+            box-shadow: 0 6px 16px -8px var(--accent);
         }
-        .create-tab-btn { color: #6b7280; }
-        .create-tab-btn.active { background: #ffffff; color: #111827; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
+
+        /* The template glyph plate. Was a pure black circle — fine on paper, a hole punched in
+           a dark sheet. Palette-tinted, with the accent's own readable ink on it. */
+        .tpl-glyph {
+            background: linear-gradient(150deg,
+                        color-mix(in srgb, var(--accent) 88%, #ffffff) 0%,
+                        var(--accent) 100%);
+            color: var(--accent-text);
+            box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset,
+                        0 6px 14px -8px var(--accent);
+        }
 
         .template-btn { transition: transform 0.15s var(--spring-snappy), box-shadow 0.15s ease; }
         .template-btn:active { transform: scale(0.93); }
@@ -914,16 +1062,24 @@
            could tint, which reads as glare rather than as a light interface. Mixed with the
            palette it becomes a tinted daylight instead of a blank one. */
         body[data-skin="glass"] {
-            --ink-strong: color-mix(in srgb, var(--pal-1) 22%, #16181f);
-            --ink-soft: color-mix(in srgb, var(--pal-1) 30%, rgba(30,33,42,0.55));
+            --sheet-bg: color-mix(in srgb, var(--pal-1) 10%, #ffffff);
+            --sheet-ink: color-mix(in srgb, var(--pal-1) 24%, #14161c);
+            --sheet-sub: color-mix(in srgb, var(--pal-1) 28%, rgba(24,27,34,0.72));
+            --sheet-fill: color-mix(in srgb, var(--pal-1) 14%, rgba(16,18,24,0.06));
+            --sheet-line: color-mix(in srgb, var(--pal-2) 26%, rgba(16,18,24,0.10));
+            --sheet-raised: #ffffff;
             --wall-ink-a: color-mix(in srgb, var(--pal-1) 52%, #ffffff);
             --wall-ink-b: color-mix(in srgb, var(--pal-3) 56%, #f4f6fd);
             --wall-bloom: 84%;
             --wall-tint-base: #ffffff;      /* light skins tint towards light, symmetrically */
         }
         body[data-skin="soft"] {
-            --ink-strong: color-mix(in srgb, var(--pal-1) 22%, #16181f);
-            --ink-soft: color-mix(in srgb, var(--pal-1) 30%, rgba(30,33,42,0.55));
+            --sheet-bg: color-mix(in srgb, var(--pal-1) 10%, #ffffff);
+            --sheet-ink: color-mix(in srgb, var(--pal-1) 24%, #14161c);
+            --sheet-sub: color-mix(in srgb, var(--pal-1) 28%, rgba(24,27,34,0.72));
+            --sheet-fill: color-mix(in srgb, var(--pal-1) 14%, rgba(16,18,24,0.06));
+            --sheet-line: color-mix(in srgb, var(--pal-2) 26%, rgba(16,18,24,0.10));
+            --sheet-raised: #ffffff;
             --wall-ink-a: color-mix(in srgb, var(--pal-1) 32%, #f7f9fd);
             --wall-ink-b: color-mix(in srgb, var(--pal-3) 38%, #eef2f8);
             --wall-bloom: 62%;
@@ -2482,6 +2638,22 @@
 
         const freshDefaultState = () => JSON.parse(JSON.stringify(DEFAULT_STATE));
 
+        // Stamp the chrome and sheet panels once, at startup.
+        //
+        // These used to be addressed by long :is(#a,#b,...) id lists in the stylesheet, which
+        // the engine has to evaluate against the whole document — and flipping data-skin
+        // invalidates the whole document. Measured at 300ms of style recalculation per skin
+        // change on a mid-range phone. A class on seven elements costs nothing to match.
+        document.addEventListener('DOMContentLoaded', () => {
+            const chrome = ['settings-panel', 'account-panel', 'library-overlay',
+                            'search-overlay', 'os-header', 'main-dock', 'folder-overlay'];
+            const sheets = ['create-panel', 'rename-panel', 'scanner-result-sheet',
+                            'scanner-batch-tray'];
+            chrome.forEach(id => document.getElementById(id)?.classList.add('ui-chrome'));
+            sheets.forEach(id => document.getElementById(id)?.classList.add('ui-sheet'));
+        });
+
+
         // Which of the six palette pairings a tile wears.
         //
         // Hashed from the id, not from the position, not from a counter, and never stored.
@@ -2895,9 +3067,39 @@
             return iconSvg(name, `w-4 h-4 ${colorClass}`);
         }
 
+        // Draw only the icons that are not drawn yet.
+        //
+        // lucide.createIcons() with no argument walks the WHOLE document looking for
+        // [data-lucide] and replaces each one with an SVG. That is 12-22ms per call on a
+        // mid-range phone, and it is called after every render — including the renders where
+        // keyed reconciliation reused every node and their SVGs were already sitting there.
+        //
+        // A node that has already been converted no longer carries the attribute, so querying
+        // for what remains is exactly the set that needs work: usually zero. The full sweep
+        // stays as the fallback, because lucide's `nodes` option is version-dependent and a
+        // silent no-op would mean invisible icons.
         function safeCreateIcons() {
-            try { if (typeof lucide !== 'undefined') lucide.createIcons(); }
-            catch (e) { XanLogger.error("Icon render skipped", e); }
+            try {
+                if (typeof lucide === 'undefined') return;
+                // :not(svg) matters. This build of lucide leaves data-lucide ON the <svg> it
+                // creates, so a bare [data-lucide] query matches every icon that has ALREADY
+                // been drawn — 49 of them at rest. The "pending" set was therefore never empty,
+                // the early return never fired, and the probe below concluded the library
+                // ignores `nodes`. Net effect: two full document sweeps per render instead of
+                // the zero this function exists to achieve.
+                const pending = document.querySelectorAll(':not(svg)[data-lucide]');
+                if (!pending.length) return;
+                // Whether this build honours `nodes` is a property of the vendored library, so
+                // it is worth exactly one probe. Without the cache the fallback ran on every
+                // single render and the sweep happened twice instead of once.
+                if (safeCreateIcons.nodesOk === false) { lucide.createIcons(); return; }
+                lucide.createIcons({ nodes: pending });
+                if (safeCreateIcons.nodesOk === undefined) {
+                    safeCreateIcons.nodesOk =
+                        document.querySelectorAll('[data-lucide]').length < pending.length;
+                    if (!safeCreateIcons.nodesOk) lucide.createIcons();
+                }
+            } catch (e) { XanLogger.error("Icon render skipped", e); }
         }
 
         function getItemCreatedLabel(item) {
@@ -3059,6 +3261,42 @@
                     clearTimeout(timeout);
                     timeout = setTimeout(() => this.calculateGrid(), 100);
                 });
+                this.watchBottomStack();
+            }
+
+            // Re-run the layout whenever the bottom stack changes height.
+            //
+            // The stack is not a fixed thing: edit mode swaps the dock for page arrows, a page
+            // name chip and the dots; a skin changes the pill's padding and radius; the dock
+            // icon size follows the grid. Every one of those moves the ceiling the rows must
+            // fit under, and every one used to need its own call site — so the paths nobody
+            // thought of silently drew the bottom row of codes underneath the controls.
+            // Measured at 412x915 in edit mode: the last row ran 639-757 with the page controls
+            // sitting at 661-749, straight through it. Reported as "have you not noticed the
+            // overlapping elements".
+            //
+            // One observer instead of N hooks, so the paths written later are covered too. The
+            // 6px threshold is what stops it oscillating: a re-layout changes the dock's own
+            // size a little, which would otherwise resize the stack and call this again.
+            watchBottomStack() {
+                const stack = document.getElementById('bottom-stack');
+                if (!stack || typeof ResizeObserver === 'undefined') return;
+                let last = stack.getBoundingClientRect().height;
+                let queued = false;
+                new ResizeObserver(() => {
+                    // Coalesced to one call per frame. A dock sliding out of edit mode fires
+                    // this on every frame of the transition, and each one used to be a full
+                    // layout pass.
+                    if (queued) return;
+                    queued = true;
+                    requestAnimationFrame(() => {
+                        queued = false;
+                        const now = stack.getBoundingClientRect().height;
+                        if (Math.abs(now - last) < 6) return;
+                        last = now;
+                        this.calculateGrid();
+                    });
+                }).observe(stack);
             }
 
             // How wide one column actually is, and how big an icon should be to fill it.
@@ -3119,12 +3357,15 @@
             // padding; the row inside it adds px-1 and gap-1 between items. Measured off those
             // rather than assumed, and never larger than a grid icon — a dock icon bigger than
             // the codes above it would look wrong even where it fits.
-            dockSizeFor(width, gridSize) {
-                // Read the pill's ACTUAL padding rather than assuming it. Padding is a
-                // per-skin token now, and a hardcoded guess here is what made the tiles shrink
-                // whenever the bar was given more padding, cancelling the change out.
-                const nav = document.getElementById('main-dock');
-                const pad = nav ? parseFloat(getComputedStyle(nav).paddingLeft) || 12 : 12;
+            dockSizeFor(width, gridSize, navPad) {
+                // The pill's ACTUAL padding, not an assumption: padding is a per-skin token,
+                // and a hardcoded guess here is what made the tiles shrink whenever the bar was
+                // given more padding, cancelling the change out. Passed in rather than read
+                // here, because by the time this runs the pass has already written CSS
+                // variables and any read would force a fresh layout to answer it.
+                const pad = navPad !== undefined ? navPad
+                    : (() => { const n = document.getElementById('main-dock');
+                               return n ? parseFloat(getComputedStyle(n).paddingLeft) || 12 : 12; })();
                 const bar = Math.min(440, width - 8);
                 const items = (window.OS_STATE.apps || []).filter(a => a.type === 'dock').length || 5;
                 const inner = bar - pad * 2 - 8 - Math.max(0, items - 1) * 3;
@@ -3147,10 +3388,29 @@
                 return Math.round(size + 72);
             }
 
+            // Read every measurement the pass needs, in one go, before anything is written.
+            //
+            // This used to be interleaved: measure the stack, write --dock-reserve, read the
+            // dock's computed padding, write --app-size, read main's box, write more. Every
+            // read after a write forces the browser to lay the page out again to answer it,
+            // and there were four of them. Measured at 4x CPU throttle: 187-288ms per call
+            // with only 28ms of that inside render(). The rest was thrash.
+            measure() {
+                const nav = document.getElementById('main-dock');
+                const main = document.querySelector('main');
+                return {
+                    reserve: this.dockReserve(),
+                    navPad: nav ? parseFloat(getComputedStyle(nav).paddingLeft) || 12 : 12,
+                    mainH: main ? main.getBoundingClientRect().height : window.innerHeight - 60,
+                };
+            }
+
             calculateGrid() {
                 const width = window.innerWidth; const height = window.innerHeight;
                 const isLandscape = width > height;
-                const reserve = this.dockReserve();
+                const m = this.measure();
+                const reserve = m.reserve;
+                // Every write from here down. Nothing reads geometry again this pass.
                 document.documentElement.style.setProperty('--dock-reserve', reserve + 'px');
                 
                 if (window.OS_STATE.gridSize !== 'auto') {
@@ -3173,7 +3433,7 @@
                     document.documentElement.style.setProperty('--grid-gap-y', gap + 'px');
                     document.documentElement.style.setProperty('--grid-rows', rows);
                     document.documentElement.style.setProperty('--dock-size',
-                        this.dockSizeFor(width, size) + 'px');
+                        this.dockSizeFor(width, size, m.navPad) + 'px');
                 } else {
                     if (width >= 1024) window.OS_STATE.gridCols = 6; 
                     else if (width >= 768) window.OS_STATE.gridCols = isLandscape ? 6 : 5; 
@@ -3186,8 +3446,7 @@
                     // be `height - 180` — a single number standing in for a header, a dock and
                     // two paddings at once, which is why rows-per-page never matched what the
                     // page could really show.
-                    const main = document.querySelector('main');
-                    const mainH = main ? main.getBoundingClientRect().height : height - 60;
+                    const mainH = m.mainH;
                     const padTop = Math.max(height * 0.02, 20);
                     const availableHeight = Math.max(120, mainH - padTop - reserve);
 
@@ -3201,13 +3460,31 @@
                     document.documentElement.style.setProperty('--app-size', size + 'px');
                     document.documentElement.style.setProperty('--grid-gap-y', gap + 'px');
                     document.documentElement.style.setProperty('--dock-size',
-                        this.dockSizeFor(width, size) + 'px');
+                        this.dockSizeFor(width, size, m.navPad) + 'px');
 
                     const rowHeight = this.rowHeightFor(size, gap);
                     window.OS_STATE.gridRows = Math.max(2, Math.min(7, Math.floor(availableHeight / rowHeight)));
                     document.documentElement.style.setProperty('--grid-rows', window.OS_STATE.gridRows);
                 }
-                this.renderer.render();
+                // Re-render only when the SHAPE of the grid changed.
+                //
+                // calculateGrid used to end in an unconditional render(), and render() rebuilds
+                // every page, re-runs the icon sweep and re-seats the drag engine: 26-33ms a
+                // call on a mid-range phone, and it is called on every resize, every skin
+                // change and every time the bottom stack moves. Under a drag that turned into
+                // 187-288ms stalls — measured at 4x CPU throttle, which is roughly a mid-range
+                // Android.
+                //
+                // Almost none of those calls need a render. Icon size, gap and reserve are CSS
+                // custom properties: publishing them IS the layout change, and the browser
+                // reflows without our help. Only a change in how many squares a page has
+                // requires rebuilding the pages, because that is what decides which code lands
+                // on which page.
+                const shape = window.OS_STATE.gridCols + 'x' + window.OS_STATE.gridRows;
+                if (shape !== this._lastShape) {
+                    this._lastShape = shape;
+                    this.renderer.render();
+                }
 
                 // The dock's height depends on the icon size this pass just chose, and the row
                 // tracks depend on the dock's height — so the first pass on a cold load reserves
@@ -5550,9 +5827,9 @@
                 this.templateGrid.innerHTML = '';
                 QUICK_TEMPLATES.filter(t => t.cat === this.activeCategory).forEach(t => {
                     const btn = document.createElement('button');
-                    btn.className = 'template-btn flex flex-col items-center gap-2 p-3 rounded-2xl bg-gray-50 border border-gray-100 hover:bg-gray-100';
+                    btn.className = 'template-btn flex flex-col items-center gap-2 p-3 rounded-2xl bg-gray-50 border border-gray-100';
                     btn.innerHTML = `
-                        <div class="w-11 h-11 rounded-2xl bg-black text-white flex items-center justify-center">
+                        <div class="tpl-glyph w-11 h-11 rounded-2xl flex items-center justify-center">
                             <i data-lucide="${t.icon}" class="w-5 h-5"></i>
                         </div>
                         <span class="text-[11px] font-bold text-gray-700 text-center leading-tight">${t.label}</span>
@@ -6518,6 +6795,14 @@
                 this.syncGridButtonsUI();
             }
 
+            // The fade at the foot of the panel is only honest while there IS more below it,
+            // so it lifts at the end rather than permanently ghosting the last row.
+            syncScrollEnd() {
+                const el = this.panel;
+                el.classList.toggle('at-end',
+                    el.scrollTop + el.clientHeight >= el.scrollHeight - 4);
+            }
+
             open() {
                 this.syncGridButtonsUI();
                 window.markLayerOpened(this.modal);
@@ -6525,6 +6810,12 @@
                 this.modal.classList.add('opacity-100', 'pointer-events-auto');
                 this.panel.classList.remove('scale-90');
                 this.panel.classList.add('scale-100');
+                if (!this._scrollWatched) {
+                    this._scrollWatched = true;
+                    this.panel.addEventListener('scroll', () => this.syncScrollEnd(), { passive: true });
+                }
+                // After the panel has been laid out at its open size, not before it.
+                requestAnimationFrame(() => this.syncScrollEnd());
             }
 
             close() {
@@ -7845,7 +8136,7 @@
                             <h4 class="text-white font-bold text-[15px] truncate tracking-wide"></h4>
                             <p class="text-white/45 text-[11px] font-mono truncate mt-0.5"></p>
                             <div class="flex gap-2 mt-1.5 items-center">
-                                <span class="accent-text accent-bg-soft text-[9.5px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded"></span>
+                                <span class="lib-format accent-text accent-bg-soft text-[9.5px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded"></span>
                                 <span class="lib-meta text-white/35 text-[10px] font-semibold">${this.rowMeta(app)}</span>
                             </div>
                         </div>
@@ -7858,7 +8149,12 @@
                     // payload is arbitrary attacker-controlled text and must never be parsed as markup.
                     row.querySelector('h4').textContent = app.title || 'Untitled';
                     row.querySelector('p').textContent = app.data || '';
-                    row.querySelector('span').textContent = FORMAT_NAMES[app.bcid] || app.bcid || 'code';
+                    // .lib-format, not 'span'. The row's first span used to be the format
+                    // badge; the monogram chip now comes before it in the markup, so a bare
+                    // querySelector('span') wrote the format into the monogram and the badge
+                    // stayed empty — a blank 12px pill sitting in every row.
+                    row.querySelector('.lib-format').textContent =
+                        FORMAT_NAMES[app.bcid] || app.bcid || 'code';
 
                     const star = row.querySelector('.lib-star');
                     if (star) {
@@ -8369,6 +8665,19 @@
                         if (!g || g.mode !== 'undecided') return;
                         g.pressed = true;
                         window.OS_STATE.isEditMode = true;
+                        // Edit mode swaps the dock for a taller stack — page arrows, a page
+                        // name chip, the dots — and the grid has to be told, or it keeps the
+                        // row spacing it computed for the dock alone. Measured at 412x915:
+                        // the last row ran 639-757 while the page controls sat at 661-749,
+                        // drawn straight through the bottom row of codes. Reported long ago
+                        // as "have you not noticed the overlapping elements".
+                        //
+                        // Deferred a frame so the controls are in the DOM and laid out before
+                        // the stack is measured; measuring them while still hidden is what
+                        // would make this look fixed and not be.
+                        requestAnimationFrame(() => {
+                            if (window.Layout) window.Layout.calculateGrid();
+                        });
                         document.body.classList.add('edit-mode');
                         const done = document.getElementById('btn-done-editing');
                         if (done) { done.classList.remove('hidden'); done.classList.add('flex'); }
@@ -8685,7 +8994,15 @@
             document.querySelectorAll('.jiggle-target').forEach(j => j.style.animation = 'none');
 
             window.DragEngine.destroy();
-            setTimeout(() => { window.Renderer.render(); }, 400);
+            setTimeout(() => {
+                window.Renderer.render();
+                // The bottom stack shrinks back when the page controls go away, so the rows
+                // get their space back — including any pass the drag itself postponed.
+                if (window.Layout) {
+                    window.Layout._deferred = false;
+                    window.Layout.calculateGrid();
+                }
+            }, 400);
         };
 
         // Leaving edit mode by tapping the background is LauncherInput.tap()'s job now. It

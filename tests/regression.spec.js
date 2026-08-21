@@ -889,10 +889,19 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         await page.goto('/index.html');
         await page.waitForTimeout(1200);
 
+        // The grid's bottom padding is the measured dock reserve, and a skin legitimately
+        // changes the dock's padding and radius — so it lands a pixel apart between skins and
+        // is rounded here. The horizontal padding and the icon size are the parts that must
+        // not move at all.
         const size = () => page.evaluate(() => {
             const icon = getComputedStyle(document.querySelector('.app-icon'));
             const grid = getComputedStyle(document.querySelector('.os-grid'));
-            return { iconW: icon.width, iconH: icon.height, gridPad: grid.padding };
+            const pad = grid.padding.split(' ');
+            return {
+                iconW: icon.width, iconH: icon.height,
+                gridPadX: pad[1],
+                gridPadBottom: Math.round(parseFloat(pad[2] || pad[0]) / 8) * 8,
+            };
         });
         const shape = () => page.evaluate(() => ({
             iconRadius: getComputedStyle(document.querySelector('.app-icon')).borderRadius,
@@ -7676,5 +7685,211 @@ test.describe('A tile shows a name, not a barcode', () => {
         // the words themselves. That it reads IS rather than <S is the point: the monogram
         // takes letters, and the markup never gets near the DOM as markup.
         expect(r.mono, 'the monogram is not derived from the title text').toBe('IS');
+    });
+});
+
+// ============================================================================================
+//  Polish pass: what the walkthrough recording showed
+//
+//  Recorded a 30-second run through the whole app, pulled the frames, and read them. These are
+//  the defects that were visible in the frames and nowhere in the test suite.
+// ============================================================================================
+test.describe('Polish pass', () => {
+    const seeded = async (page, n = 19) => {
+        await page.addInitScript((count) => {
+            const dock = [['nav_home', 'Home', 'grid'], ['nav_gen', 'Create', 'plus-circle'],
+                          ['nav_wifi', 'WiFi', 'wifi'], ['nav_lib', 'Library', 'layout-list'],
+                          ['nav_scan', 'Scan', 'scan-line']];
+            const apps = dock.map(([id, title, icon], i) => ({ id, title, icon, type: 'dock', order: i }));
+            for (let i = 0; i < count; i++) {
+                apps.push({ id: 'seed' + i, title: 'Seed Code ' + i, type: 'grid',
+                            bcid: 'qrcode', data: 'seed-' + i, page: 0, order: i });
+            }
+            localStorage.setItem('xancode_v2_state', JSON.stringify({
+                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
+                autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
+            }));
+        }, n);
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+    };
+
+    test('edit mode does not draw its controls over the codes', async ({ page }) => {
+        // Measured off the recording at 412x915: the last row of codes ran 639-757 while the
+        // page arrows sat at 661-705 and the page-name chip at 717-749 — both painted straight
+        // through the bottom row. Reported long before that as "have you not noticed the
+        // overlapping elements".
+        await seeded(page);
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(1200);
+
+        const r = await page.evaluate(() => {
+            const stack = document.getElementById('bottom-stack').getBoundingClientRect();
+            const page0 = document.querySelector('#workspace-pager .page-wrapper .os-grid');
+            const bottoms = [...page0.querySelectorAll('.app-icon-wrapper')]
+                .map(e => e.getBoundingClientRect().bottom);
+            return { last: Math.max(...bottoms), controlsTop: stack.top };
+        });
+        expect(r.last, `the bottom row ends at ${r.last.toFixed(0)}, under controls that start at ${r.controlsTop.toFixed(0)}`)
+            .toBeLessThanOrEqual(r.controlsTop);
+    });
+
+    test('entering edit mode does not cost the grid a row', async ({ page }) => {
+        // The fix for the overlap is to give the grid the real height. It must not take MORE
+        // than the real height: the dock is translated out of the way in edit mode, and if its
+        // box is still counted the rows compress and the whole grid jumps as you long-press.
+        await seeded(page);
+        const rows = () => page.evaluate(() =>
+            parseInt(getComputedStyle(document.documentElement).getPropertyValue('--grid-rows'), 10));
+        const before = await rows();
+        await page.evaluate(() => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+        });
+        await page.waitForTimeout(1200);
+        expect(await rows(), `the grid went from ${before} rows to ${await rows()} on entering edit mode`)
+            .toBe(before);
+    });
+
+    test('the format badge in the Library says the format', async ({ page }) => {
+        // The row's first span used to be the format badge. The monogram chip now comes before
+        // it in the markup, so a bare querySelector('span') wrote the format into the monogram
+        // and left a blank 12px pill in every row.
+        await seeded(page);
+        await page.evaluate(() => window.LibraryManager.open());
+        await page.waitForTimeout(800);
+        const r = await page.evaluate(() => {
+            const row = document.querySelector('#library-list > div');
+            return {
+                format: row.querySelector('.lib-format').textContent.trim(),
+                mono: row.querySelector('.lib-mono').textContent.trim(),
+            };
+        });
+        expect(r.format, 'the format badge is empty').toBeTruthy();
+        expect(r.mono, 'the monogram is empty').toBeTruthy();
+        expect(r.format, 'the format was written into the monogram chip').not.toBe(r.mono);
+    });
+
+    test('chrome text is readable on every skin', async ({ page }) => {
+        // Section labels and helper copy were Tailwind's mid-greys — #9ca3af and #6b7280,
+        // colours chosen for white backgrounds. On the palette-tinted panels they measured
+        // about 2.6:1, and in the recording "SCREEN GRID" and the Restoring explainer are
+        // shapes rather than words.
+        await seeded(page);
+        await page.evaluate(() => window.SettingsManager.open());
+        await page.waitForTimeout(800);
+
+        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            await page.evaluate(s => { window.OS_STATE.skin = s; document.body.dataset.skin = s; }, skin);
+            await page.waitForTimeout(400);
+
+            const worst = await page.evaluate(() => {
+                const lum = (r, g, b) => {
+                    const f = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+                    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+                };
+                // Chromium serialises a color-mix() result as `color(srgb 0.9 0.93 0.99)`
+                // with 0-1 floats, not as rgb() with 0-255 ints. Reading both the same way
+                // made every tinted surface look almost black and every ratio come out 1.00:1.
+                const parse = c => {
+                    const n = (c.match(/[\d.]+/g) || []).map(Number);
+                    return /^color\(/.test(c) ? [n[0]*255, n[1]*255, n[2]*255, n[3]] : n;
+                };
+                // Composite a possibly-translucent colour over its opaque backdrop.
+                const solidBehind = el => {
+                    let n = el;
+                    while (n && n !== document.documentElement) {
+                        const c = parse(getComputedStyle(n).backgroundColor);
+                        if (c.length >= 3 && (c[3] === undefined || c[3] > 0.85)) return c;
+                        n = n.parentElement;
+                    }
+                    return [20, 20, 24];
+                };
+                let min = 99, culprit = '';
+                const panel = document.getElementById('settings-panel');
+                for (const el of panel.querySelectorAll('div, p, span, label')) {
+                    const txt = (el.childNodes[0] && el.childNodes[0].nodeType === 3)
+                        ? el.childNodes[0].textContent.trim() : '';
+                    if (txt.length < 3) continue;
+                    const fg = parse(getComputedStyle(el).color);
+                    const bg = solidBehind(el);
+                    const a = fg[3] === undefined ? 1 : fg[3];
+                    const mixed = [0, 1, 2].map(i => fg[i] * a + bg[i] * (1 - a));
+                    const l1 = lum(...mixed), l2 = lum(bg[0], bg[1], bg[2]);
+                    const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+                    if (ratio < min) { min = ratio; culprit = txt.slice(0, 40); }
+                }
+                return { min, culprit };
+            });
+
+            // 3.4:1 is below AA for small body text and this suite does not pretend otherwise —
+            // it is the floor that catches the 2.6:1 class of defect the recording showed,
+            // without failing on the deliberately quiet tertiary lines.
+            expect(worst.min,
+                   `${skin}: "${worst.culprit}" sits at ${worst.min.toFixed(2)}:1 against its panel`)
+                .toBeGreaterThan(3.4);
+        }
+    });
+
+    test('a sheet is not a sheet of white paper on a dark skin', async ({ page }) => {
+        // The Create sheet was literal bg-white with text-gray-900. On the Dark and Scan Card
+        // skins that is printer paper thrown over a themed app, and it was the loudest thing
+        // in the recording.
+        await seeded(page);
+        await page.evaluate(() => window.CodeGenerator.open());
+        await page.waitForTimeout(800);
+        // Same color(srgb ...) serialisation as above.
+        const lightness = () => page.evaluate(() => {
+            const raw = getComputedStyle(document.getElementById('create-panel')).backgroundColor;
+            const n = (raw.match(/[\d.]+/g) || []).map(Number);
+            const scale = /^color\(/.test(raw) ? 255 : 1;
+            return ((n[0] + n[1] + n[2]) / 3) * scale;
+        });
+        expect(await lightness(), 'the Create sheet is white on a dark skin').toBeLessThan(90);
+
+        await page.evaluate(() => { window.OS_STATE.skin = 'soft'; document.body.dataset.skin = 'soft'; });
+        await page.waitForTimeout(400);
+        expect(await lightness(), 'the Create sheet stayed dark on a light skin').toBeGreaterThan(150);
+    });
+
+    test('a layout pass does not re-render the grid unless the grid changed shape', async ({ page }) => {
+        // calculateGrid used to end in an unconditional render(), and render() rebuilds every
+        // page, re-runs the icon sweep and re-seats the drag engine. It is called on every
+        // resize, every skin change and every time the bottom stack moves — 187-288ms a call
+        // at 4x CPU throttle, with only 28ms of that inside render() itself.
+        await seeded(page);
+        const renders = await page.evaluate(async () => {
+            let n = 0;
+            const orig = window.Renderer.render.bind(window.Renderer);
+            window.Renderer.render = function (...a) { n++; return orig(...a); };
+            for (let i = 0; i < 5; i++) {
+                window.Layout.calculateGrid();
+                await new Promise(r => setTimeout(r, 60));
+            }
+            return n;
+        });
+        expect(renders, `five no-op layout passes rebuilt the grid ${renders} times`).toBe(0);
+    });
+
+    test('the icon sweep only touches icons that are not drawn yet', async ({ page }) => {
+        // lucide.createIcons() with no argument walks the whole document. It ran after every
+        // render, including the renders where reconciliation reused every node and the SVGs
+        // were already there.
+        await seeded(page);
+        const calls = await page.evaluate(async () => {
+            let n = 0;
+            const orig = window.lucide.createIcons.bind(window.lucide);
+            window.lucide.createIcons = function (...a) { n++; return orig(...a); };
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 300));
+            return n;
+        });
+        expect(calls, `a no-change render swept the document for icons ${calls} times`).toBe(0);
     });
 });
