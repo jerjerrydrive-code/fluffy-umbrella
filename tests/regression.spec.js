@@ -116,12 +116,30 @@ test.describe('Settings', () => {
         await swatch.dispatchEvent('pointerdown');
         await page.waitForTimeout(80);
         await swatch.dispatchEvent('pointerup');
-        await page.waitForTimeout(200);
+        // Long enough for the accent's 450ms cross-fade to settle. --accent is a registered
+        // <color> now so that a palette change animates instead of snapping, which means a
+        // read taken 200ms in returns a mid-interpolation value — rgb(115,68,68) on its way to
+        // rgb(114,69,71). Nothing in the app reads the computed value, but this test did.
+        await page.waitForTimeout(700);
 
         const afterTapAccent = await page.evaluate(() =>
             getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
         expect(afterTapAccent.toLowerCase()).not.toBe(initialAccent.toLowerCase());
-        expect((await page.evaluate(() => window.OS_STATE.accent)).toLowerCase()).toBe(afterTapAccent.toLowerCase());
+
+        // Compare the COLOUR, not the spelling of it. --accent is a registered <color>
+        // property now, so that it can animate — and a registered property is serialised in
+        // its computed form, `rgb(114, 69, 71)`, where the state still holds `#734444`. The
+        // two agree; only the notation differs.
+        const asRgb = hex => page.evaluate(h => {
+            const d = document.createElement('div');
+            d.style.color = h;
+            document.body.appendChild(d);
+            const out = getComputedStyle(d).color;
+            d.remove();
+            return out;
+        }, hex);
+        const stateAccent = await page.evaluate(() => window.OS_STATE.accent);
+        expect(await asRgb(stateAccent)).toBe(await asRgb(afterTapAccent));
 
         // long-press (>550ms): pin as favorite
         await swatch.dispatchEvent('pointerdown');
@@ -8273,5 +8291,102 @@ test.describe('The screen holds still', () => {
         // Whatever the clock reads, and nothing else.
         expect(header.text, `the header says "${header.text}"`).toMatch(/^\d{1,2}:\d{2}$/);
         expect(header.height, `the header is ${header.height}px tall`).toBeLessThan(70);
+    });
+});
+
+// ============================================================================================
+//  The palette moves, and the grid arrives once
+//
+//  "smooth animations? doesnt seem like the pallettes cycle how they used to"
+//
+//  Two separate things, both real.
+// ============================================================================================
+test.describe('The palette moves, and the grid arrives once', () => {
+    test('a palette change interpolates rather than snapping', async ({ page }) => {
+        // A custom property is a string to the engine, so changing --pal-1 repainted every
+        // gradient built from it in a single frame — wallpaper, twenty tiles, dock, Library,
+        // viewer, all at once. Correct, and it read as a glitch. @property gives them a type,
+        // and typed colours interpolate.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+
+        const r = await page.evaluate(async () => {
+            const read = () => getComputedStyle(document.documentElement)
+                .getPropertyValue('--pal-1').trim();
+            const before = read();
+            window.ThemeManager.applyAccent('#E97A7A', false,
+                ['#E97A7A', '#8B4F80', '#8B76A5', '#B9C0D5']);
+            const mid = [];
+            for (let i = 0; i < 4; i++) {
+                await new Promise(res => requestAnimationFrame(res));
+                await new Promise(res => setTimeout(res, 60));
+                mid.push(read());
+            }
+            await new Promise(res => setTimeout(res, 800));
+            return { before, mid, after: read() };
+        });
+
+        expect(r.after, 'the palette never reached its target').not.toBe(r.before);
+        // At least one sample must be neither the old value nor the new one — that is what
+        // "interpolating" means, and an untyped custom property cannot produce it.
+        const between = r.mid.filter(v => v !== r.before && v !== r.after);
+        expect(between.length,
+               `--pal-1 jumped straight from ${r.before} to ${r.after}: ${r.mid.join(' ')}`)
+            .toBeGreaterThan(0);
+    });
+
+    test('tapping the same swatch walks its four colours in order', async ({ page }) => {
+        // A swatch is 44px tall, so a band is 11px — narrower than the part of a thumb that
+        // registers. Picking purely by band meant tapping a palette, getting a colour you did
+        // not aim at, tapping again and getting the same one.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        const seen = await page.evaluate(() => {
+            const quad = ['#111111', '#222222', '#333333', '#444444'];
+            const out = [];
+            for (let i = 0; i < 6; i++) {
+                window.ThemeManager.selectSwatch(quad, null, null);
+                out.push(window.ThemeManager.current.toUpperCase());
+            }
+            return out;
+        });
+        expect(seen, `repeated taps gave ${seen.join(' -> ')}`)
+            .toEqual(['#111111', '#222222', '#333333', '#444444', '#111111', '#222222']);
+    });
+
+    test('a different swatch takes the band you touched, not the cycle', async ({ page }) => {
+        // The cycle must not steal a deliberate aim. Tapping a NEW palette in its third band
+        // gives that palette's third colour.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        const picked = await page.evaluate(() => {
+            const tm = window.ThemeManager;
+            tm.selectSwatch(['#aaaaaa', '#bbbbbb', '#cccccc', '#dddddd'], null, null);
+            // A synthetic tap two thirds of the way down a 40px swatch: band 2.
+            const btn = { getBoundingClientRect: () => ({ height: 40, top: 0 }) };
+            tm.selectSwatch(['#111111', '#222222', '#333333', '#444444'], null,
+                            { currentTarget: btn, clientY: 28 });
+            return tm.current.toUpperCase();
+        });
+        expect(picked, 'a fresh swatch ignored the band that was touched').toBe('#333333');
+    });
+
+    test('the grid arrives once and never again', async ({ page }) => {
+        // An entrance is what a launcher feels like; the same animation on every render is the
+        // flicker that was reported two rounds ago. The difference is entirely in the guard.
+        await page.goto('/index.html');
+        await page.waitForTimeout(2200);
+
+        const armed = await page.evaluate(() => document.body.classList.contains('first-paint'));
+        expect(armed, 'the arrival class was never cleared, so any render can retrigger it')
+            .toBe(false);
+
+        const animating = await page.evaluate(async () => {
+            window.Renderer.render();
+            await new Promise(r => setTimeout(r, 80));
+            return [...document.querySelectorAll('#workspace-pager .app-icon-wrapper')]
+                .some(el => getComputedStyle(el).animationName !== 'none');
+        });
+        expect(animating, 'a re-render replayed the arrival animation').toBe(false);
     });
 });
