@@ -329,12 +329,31 @@
            same weight as the unselected pills next to it, so the row read as four equal
            chips and you had to look for the state rather than see it. Every reference
            screen does this the same way: one filled pill, the rest quiet. */
+        /* One recessed track per row, not six pills floating on the panel.
+           
+           Six free-standing pills over two rows cost about 110px of the Library before a single
+           code was visible, and read as six independent buttons rather than as two either/or
+           choices — which is what they are: one source, one sort. Settings has had the right
+           idiom for this all along in its Screen Grid picker, so this is the app's own pattern
+           rather than a new one: a sunken track, equal segments, exactly one filled.
+           
+           Named .seg-track and applied to the two existing rows, so the JS that builds and
+           toggles them is untouched. */
+        .seg-track {
+            display: flex; gap: 3px;
+            padding: 3px; border-radius: 14px;
+            background: color-mix(in srgb, var(--pal-1) 16%, rgba(0,0,0,0.28));
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.22);
+        }
         .library-sort-btn, .library-src-btn {
             position: relative;
-            padding: 0.5rem 0.95rem; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+            flex: 1 1 0; min-width: 0;
+            padding: 0.42rem 0.5rem; border-radius: 11px;
+            font-size: 12.5px; font-weight: 700;
             letter-spacing: 0.01em; color: var(--ink-soft);
-            background: color-mix(in srgb, var(--pal-1) 14%, rgba(255,255,255,0.07));
+            background: transparent;
             border: 0.5px solid transparent;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
             transition: transform 0.2s var(--spring-snappy), background-color 0.25s ease, color 0.25s ease;
         }
         .library-sort-btn:active, .library-src-btn:active { transform: scale(0.94); }
@@ -342,7 +361,7 @@
             color: var(--accent-text);
             background-color: var(--accent);
             border-color: color-mix(in srgb, var(--accent) 65%, #ffffff);
-            box-shadow: 0 6px 16px -8px var(--accent);
+            box-shadow: 0 4px 12px -6px var(--accent);
         }
 
         html, body {
@@ -890,7 +909,35 @@
                100% is the cell, because the wrapper is the grid item. The padding keeps the
                text off the join even when two long names sit side by side. */
             text-align: center; width: 100%; padding: 0 4px; box-sizing: border-box;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            /* TWO lines, then ellipsis. Not one.
+               
+               At four columns on a 390px screen a cell is about 88px, which fits roughly eleven
+               characters — so on a realistic home screen "Gym Membership", "Boarding Pass" and
+               "Parcel Tracking" all came out as "Gym Memb…", and three of eight codes were
+               identified by a truncation. The names people give these things are two words;
+               giving them the second line makes most of them whole.
+               
+               Clamped rather than left to wrap freely: a four-word name would otherwise push
+               the row taller than its neighbours and break the grid's alignment, which is a
+               worse problem than an ellipsis. */
+            /* NOT -webkit-line-clamp. It is the obvious way to do this and it cannot work
+               here: the label is a direct child of .app-icon-wrapper, which is a flex
+               container, and a flex item's display is blockified — Chrome turns
+               `display: -webkit-box` into `flow-root`, the clamp is computed but never
+               applied, and the second line renders and is then sliced through the middle of
+               its glyphs by the overflow. That is exactly what shipped for one screenshot.
+               
+               An exact two-line max-height cuts on a line boundary instead, so a name too long
+               for two lines loses a whole word rather than half a row of letters.
+               
+               flex: none because the column was squashing a 30px label into 23px, which is the
+               other half of the same sliced-text bug. */
+            display: block;
+            line-height: 1.2;
+            max-height: 2.4em;
+            flex: none;
+            overflow: hidden;
+            overflow-wrap: anywhere;
             /* The label morphs with the skin. RESTORED.
                
                I cut font-size, letter-spacing and margin-top from here on the theory that
@@ -1204,7 +1251,7 @@
         .lib-title { font-size: 34px; font-weight: 700; letter-spacing: -0.025em; line-height: 1; }
 
         .os-grid {
-            --row-min: calc(var(--app-size) + 24px);
+            --row-min: calc(var(--app-size) + var(--label-box, 39px));
             display: grid;
             grid-template-columns: repeat(var(--grid-cols), minmax(0, 1fr));
             grid-template-rows: repeat(var(--grid-rows, 6), minmax(var(--row-min), 1fr));
@@ -1869,11 +1916,14 @@
            !important, which deliberately outranks this. */
         body[data-skin="glass"] #library-overlay svg { color: rgba(36, 31, 61, 0.5); }
         body[data-skin="glass"] #library-list .lib-meta { color: rgba(36, 31, 61, 0.5); }
-        body[data-skin="glass"] .library-sort-btn {
+        body[data-skin="glass"] .seg-track {
             background: rgba(255, 255, 255, 0.45);
+            box-shadow: inset 0 1px 2px rgba(36, 31, 61, 0.10);
+        }
+        body[data-skin="glass"] :is(.library-sort-btn, .library-src-btn) {
             color: rgba(36, 31, 61, 0.65);
         }
-        body[data-skin="glass"] .library-sort-btn.active {
+        body[data-skin="glass"] :is(.library-sort-btn, .library-src-btn).active {
             background: color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.6));
             color: color-mix(in srgb, var(--accent) 75%, #241f3d);
         }
@@ -2000,12 +2050,21 @@
            only .library-sort-btn was listed here, so the Saved/Scanned/Created row kept the
            dark skin's 55%-white text on a pale panel: 1.22:1, which is not dim but gone. Naming
            both means the next one to be added is a visible omission rather than a silent one. */
-        body[data-skin="soft"] :is(.library-sort-btn, .library-src-btn) {
-            background: var(--soft-bg); border: none;
-            box-shadow: var(--soft-raised-sm); color: var(--soft-ink-soft);
+        body[data-skin="soft"] .seg-track {
+            background: var(--soft-bg);
+            box-shadow: var(--soft-inset);
         }
+        body[data-skin="soft"] :is(.library-sort-btn, .library-src-btn) {
+            background: transparent; border: none; box-shadow: none;
+            color: var(--soft-ink-soft);
+        }
+        /* Raised, not inset. On every other skin the selected segment is a filled pill sitting
+           in the track; on a moulded one the track is already pressed in, so the thing that
+           reads as chosen is the segment pushed back OUT of it. */
         body[data-skin="soft"] :is(.library-sort-btn, .library-src-btn).active {
-            box-shadow: var(--soft-inset); color: var(--accent-readable, var(--accent));
+            background: var(--soft-bg);
+            box-shadow: var(--soft-raised-sm);
+            color: var(--accent-readable, var(--accent));
         }
 
         /* Soft has no dark surfaces at all, so every accent-coloured piece of text on it needs
@@ -2253,6 +2312,20 @@
         body[data-skin="cloud"] :is(#library-overlay, #item-fullscreen-layer) {
             background: var(--cl-ground);
         }
+        body[data-skin="cloud"] .seg-track {
+            background: color-mix(in srgb, var(--pal-1) 8%, #e2e7f1);
+            box-shadow: inset 0 1px 3px rgba(27,33,53,0.10);
+        }
+        /* :not(.active), and the specificity is the whole reason.
+           
+           `body[data-skin="cloud"] :is(.library-src-btn)` scores (0,2,1); the base
+           `.library-sort-btn.active` that colours the selected segment scores (0,2,0). So this
+           rule quietly won on the chosen segment too, putting dark slate ink on the accent fill
+           — the contrast sweep read "Saved" as invisible. Every other skin happened to be safe
+           because each one also has an .active rule of its own; cloud did not. */
+        body[data-skin="cloud"] :is(.library-sort-btn, .library-src-btn):not(.active) {
+            color: var(--cl-ink-soft);
+        }
         body[data-skin="cloud"] #library-list > div {
             background: var(--cl-panel);
             border: 1px solid var(--cl-line);
@@ -2399,7 +2472,7 @@
             background: rgba(255, 255, 255, 0.07);
             border-color: var(--aur-edge);
         }
-        body[data-skin="aurora"] .library-sort-btn.active {
+        body[data-skin="aurora"] :is(.library-sort-btn, .library-src-btn).active {
             background: color-mix(in srgb, var(--accent) 26%, transparent);
             border-color: var(--aur-edge);
         }
@@ -2735,8 +2808,8 @@
                 <i data-lucide="search" class="w-[18px] h-[18px] text-white/40 mr-2.5 shrink-0"></i>
                 <input type="text" id="library-search" class="bg-transparent text-white w-full h-11 outline-none placeholder:text-white/40 font-medium text-[15px]" placeholder="Filter by name, data or format">
             </div>
-            <div class="flex gap-2" id="library-source-row"></div>
-            <div class="flex gap-2" id="library-sort-row">
+            <div class="seg-track" id="library-source-row"></div>
+            <div class="seg-track" id="library-sort-row">
                 <button class="library-sort-btn tap-extend active" data-sort="recent">Recent</button>
                 <button class="library-sort-btn tap-extend" data-sort="name">Name</button>
                 <button class="library-sort-btn tap-extend" data-sort="format">Format</button>
@@ -4114,6 +4187,16 @@
             }
         }
 
+        // The vertical space one row reserves for its label: two lines at 12.5px/1.2, plus the
+        // 8px gap under the icon, plus a pixel of slack.
+        //
+        // It is a constant in ONE place because two things need it and they must agree: the row
+        // count is computed from it (rowHeightFor), and the CSS row track is sized by it
+        // (--row-min). When it was 24 in both, written out separately, that was survivable;
+        // moving one of them without the other would have let the grid compute six rows into a
+        // space that fits five, which is the overlap failure this file has hit twice.
+        const LABEL_BOX = 39;
+
         class LayoutManager {
             constructor(renderer) {
                 this.renderer = renderer;
@@ -4204,7 +4287,14 @@
             // The label sits under the icon, so a row is the icon plus its label plus the gap.
             // Measuring it from the real numbers is what keeps rows-per-page honest when the
             // icon size changes; it used to be a constant 88 that no longer described anything.
-            rowHeightFor(size, gap) { return size + 24 + gap; }
+            //
+            // LABEL_BOX is two lines, not one, and it has to agree with --row-min in the CSS or
+            // this lies to the row count. Names people give these things are two words — "Gym
+            // Membership", "Boarding Pass", "Parcel Tracking" — and at four columns on a 390px
+            // screen a single line fits about eleven characters, so three of eight codes on a
+            // realistic home screen were identified by an ellipsis. The second line costs 15px
+            // a row and is worth it.
+            rowHeightFor(size, gap) { return size + LABEL_BOX + gap; }
 
             // How far apart rows sit, measured the same way as the icon size.
             //
@@ -4290,6 +4380,10 @@
                 const reserve = m.reserve;
                 // Every write from here down. Nothing reads geometry again this pass.
                 document.documentElement.style.setProperty('--dock-reserve', reserve + 'px');
+                // Before the branch, because BOTH paths size rows with rowHeightFor and both
+                // need the CSS track to agree with it. Written in one place so a change to
+                // LABEL_BOX cannot reach the auto grid and miss the explicit one.
+                document.documentElement.style.setProperty('--label-box', LABEL_BOX + 'px');
                 
                 if (window.OS_STATE.gridSize !== 'auto') {
                     const [cols, rows] = window.OS_STATE.gridSize.split('x').map(Number);
@@ -8522,7 +8616,11 @@
         class OSSkinManager {
             constructor() {
                 this.pickerEl = document.getElementById('skin-picker');
-                this.current = window.OS_STATE.skin || 'dock';
+                // DEFAULT_STATE.skin, not a second copy of the answer. This read
+                // `|| 'dock'`, so a state object without a skin key — an older backup, a
+                // partial restore — landed on dark however the app was configured to start,
+                // and changing the default in one place silently did nothing in the other.
+                this.current = window.OS_STATE.skin || DEFAULT_STATE.skin || 'dock';
                 if (RETIRED_SKINS[this.current]) {
                     this.current = RETIRED_SKINS[this.current];
                     window.OS_STATE.skin = this.current;
