@@ -8653,9 +8653,11 @@ test.describe('The wallet', () => {
         await page.waitForTimeout(900);
 
         const r = await page.evaluate(() => {
+            // Cards 1 and 2, not 0 and 1: card 0 is open, and the open card deliberately has
+            // nothing overlapping it. The overlap being measured here is the stack's.
             const cards = [...document.querySelectorAll('.wallet-card')];
-            const a = cards[0].getBoundingClientRect();
-            const b = cards[1].getBoundingClientRect();
+            const a = cards[1].getBoundingClientRect();
+            const b = cards[2].getBoundingClientRect();
             return { height: a.height, pitch: b.top - a.top };
         });
         expect(r.pitch, `cards are pitched ${Math.round(r.pitch)}px apart on a ${Math.round(r.height)}px card — that is a list, not a stack`)
@@ -8729,9 +8731,17 @@ test.describe('The wallet', () => {
     });
 
     test('tapping a pass opens the same viewer the grid opens', async ({ page }) => {
+        // Two taps, not one, and that is the point: the first brings the pass to the front so
+        // you can hold it up to a scanner, the second enlarges it. A wallet you have to open a
+        // full-screen sheet in before the code is visible is a list with extra steps.
         await seeded(page);
         await page.evaluate(() => window.WalletView.open());
         await page.waitForTimeout(800);
+        await page.click('.wallet-card[data-id="w2"]');
+        await page.waitForTimeout(800);
+        expect(await page.evaluate(() =>
+            parseFloat(getComputedStyle(document.getElementById('item-fullscreen-layer')).opacity)),
+            'the first tap opened the viewer instead of promoting the card').toBeLessThan(0.5);
         await page.click('.wallet-card[data-id="w2"]');
         await page.waitForTimeout(800);
         const r = await page.evaluate(() => ({
@@ -8781,5 +8791,170 @@ test.describe('The wallet', () => {
         });
         expect(r.cards).toBe(0);
         expect(r.msg, 'an empty wallet renders nothing at all').toBeTruthy();
+    });
+
+    test('the front card shows its code, and it is the only one drawn', async ({ page }) => {
+        // The whole reason this view exists. A wallet where you still have to open something
+        // to see the code is a list.
+        //
+        // And exactly one canvas, whatever the pass count: rasterising forty barcodes on open
+        // is what gave the old Library a 452ms freeze. An undrawn canvas is 300x150 by spec,
+        // so "drawn" means dimensions that are neither that nor zero.
+        await seeded(page, 40);
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(1200);
+
+        const r = await page.evaluate(() => {
+            const drawn = [...document.querySelectorAll('.wallet-canvas')].filter(c => {
+                if (!c.width || !c.height) return false;
+                if (c.width === 300 && c.height === 150) return false;
+                return c.getContext('2d').getImageData(0, 0, c.width, c.height)
+                        .data.some((v, i) => i % 4 === 3 && v > 0);
+            });
+            const front = document.querySelector('.wallet-card.is-active');
+            const plate = front && front.querySelector('.wallet-plate').getBoundingClientRect();
+            return {
+                cards: document.querySelectorAll('.wallet-card').length,
+                drawn: drawn.length,
+                onFront: drawn.length === 1 && drawn[0].closest('.wallet-card') === front,
+                plateH: plate ? plate.height : 0,
+            };
+        });
+        expect(r.cards).toBe(40);
+        expect(r.drawn, `${r.drawn} of ${r.cards} passes rasterised a barcode; the front one should be the only one`)
+            .toBe(1);
+        expect(r.onFront, 'the drawn code is not on the front card').toBe(true);
+        expect(r.plateH, 'the front card has no visible code plate').toBeGreaterThan(80);
+    });
+
+    test('the code is full size on the FIRST open, not the second', async ({ page }) => {
+        // A real defect this caught: open() rendered the stack and then removed .hidden, and
+        // .wallet-view.hidden is display: none — so the card fitPlate measured was zero pixels
+        // wide and the plate fell back to its 120px floor. The wallet looked right the moment
+        // you promoted anything, and wrong every time you first opened it, which is the one
+        // view of it everybody gets.
+        // On a phone, deliberately. At the suite's default 1280px the height cap binds before
+        // the width one does, so a plate sized off the 120px floor and a correctly fitted plate
+        // come out the same size and the bug is invisible.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await seeded(page, 6);
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(1200);
+
+        const first = await page.evaluate(() => {
+            const c = document.querySelector('.wallet-card.is-active');
+            return { plate: c.querySelector('.wallet-plate').getBoundingClientRect().width,
+                     card: c.getBoundingClientRect().width };
+        });
+        // Re-promoting the same card runs the fit again, this time unambiguously visible. If
+        // opening measured a hidden card the two disagree.
+        await page.evaluate(() => window.WalletView.setActive(window.WalletView.activeId, true));
+        await page.waitForTimeout(900);
+        const second = await page.evaluate(() =>
+            document.querySelector('.wallet-card.is-active .wallet-plate').getBoundingClientRect().width);
+
+        expect(Math.abs(first.plate - second),
+            `the plate was ${Math.round(first.plate)}px on open and ${Math.round(second)}px once promoted`)
+            .toBeLessThan(2);
+        expect(first.plate, `a ${Math.round(first.plate)}px plate on a ${Math.round(first.card)}px card is the floor, not a fit`)
+            .toBeGreaterThan(first.card * 0.5);
+    });
+
+    test('promoting a pass moves the code and frees the old one', async ({ page }) => {
+        await seeded(page, 12);
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(1000);
+
+        const before = await page.evaluate(() =>
+            document.querySelector('.wallet-card.is-active').dataset.id);
+        await page.evaluate(() => window.WalletView.setActive('w7'));
+        await page.waitForTimeout(1000);
+
+        const r = await page.evaluate(() => {
+            const old = document.querySelector('.wallet-card[data-id="w7"]');
+            const prev = document.querySelector('.wallet-card[data-id="w0"] .wallet-canvas');
+            return {
+                active: document.querySelectorAll('.wallet-card.is-active').length,
+                id: document.querySelector('.wallet-card.is-active').dataset.id,
+                nowDrawn: old.querySelector('.wallet-canvas').width > 1,
+                // The card that left the front must release its backing store, or thumbing
+                // through a long wallet accumulates a raster per pass that nothing can see.
+                oldFreed: prev.width <= 1,
+            };
+        });
+        expect(before).toBe('w0');
+        expect(r.active, 'two passes are at the front at once').toBe(1);
+        expect(r.id).toBe('w7');
+        expect(r.nowDrawn, 'the promoted pass did not draw its code').toBe(true);
+        expect(r.oldFreed, 'the demoted pass kept its canvas buffer').toBe(true);
+    });
+
+    test('nothing covers the open card', async ({ page }) => {
+        // The pass you are holding up to a scanner is never half under the next one.
+        await seeded(page, 10);
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(1100);
+        const r = await page.evaluate(() => {
+            const front = document.querySelector('.wallet-card.is-active');
+            const next = front.nextElementSibling;
+            const f = front.getBoundingClientRect();
+            const plate = front.querySelector('.wallet-plate').getBoundingClientRect();
+            return { gap: next ? next.getBoundingClientRect().top - f.bottom : 999,
+                     plateInside: plate.bottom <= f.bottom + 0.5 };
+        });
+        expect(r.gap, `the card below overlaps the open one by ${Math.round(-r.gap)}px`)
+            .toBeGreaterThanOrEqual(0);
+        expect(r.plateInside, 'the code plate hangs off the bottom of its card').toBe(true);
+    });
+
+    test('the plate takes the shape of the code', async ({ page }) => {
+        // A code contained inside a plate of the wrong shape is a symbol marooned in white,
+        // and it reads as a rendering bug rather than as a pass.
+        //
+        // This was first written as a square/wide classifier with a 25% tolerance, and it was
+        // wrong about the two formats that matter most: bwip draws Code 128 at 360x289 and
+        // EAN-13 at 380x289, so both were classified square. The plate is measured from the
+        // rendered canvas now, which is why this test checks the FIT rather than the bucket:
+        // whatever the symbology, the white plate must be the shape of the thing on it.
+        await seeded(page, 4);
+        await page.evaluate(() => {
+            const set = (id, bcid, data) => {
+                const a = window.OS_STATE.apps.find(x => x.id === id);
+                a.bcid = bcid; a.data = data;
+            };
+            set('w1', 'code128', '9876543210');
+            set('w2', 'pdf417', 'BOARDING PASS 12A');
+            set('w3', 'qrcode', 'https://example.com');
+            window.WalletView.open();
+        });
+        await page.waitForTimeout(1000);
+
+        const measure = async (id) => {
+            await page.evaluate((x) => window.WalletView.setActive(x), id);
+            await page.waitForTimeout(900);
+            return page.evaluate(() => {
+                const c = document.querySelector('.wallet-card.is-active');
+                const cv = c.querySelector('.wallet-canvas');
+                const p = c.querySelector('.wallet-plate').getBoundingClientRect();
+                const box = cv.getBoundingClientRect();
+                return { id: c.dataset.id, code: cv.width / cv.height,
+                         plate: (p.width - 28) / (p.height - 26),
+                         fitsCard: p.width <= c.getBoundingClientRect().width - 39,
+                         box: [box.width, box.height] };
+            });
+        };
+
+        for (const id of ['w1', 'w2', 'w3']) {
+            const r = await measure(id);
+            expect(r.id).toBe(id);
+            // The plate's content box and the symbol are the same shape, within a pixel of
+            // rounding at each edge.
+            expect(Math.abs(r.plate - r.code) / r.code,
+                `${id}: the code is ${r.code.toFixed(2)}:1 but its plate is ${r.plate.toFixed(2)}:1`)
+                .toBeLessThan(0.06);
+            expect(r.fitsCard, `${id}: the plate is wider than the card holding it`).toBe(true);
+            expect(Math.min(...r.box), `${id}: the code renders at ${r.box.join('x')}`)
+                .toBeGreaterThan(45);
+        }
     });
 });

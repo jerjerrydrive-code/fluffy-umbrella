@@ -567,12 +567,22 @@
             position: relative;
             flex: none;
             height: var(--wallet-card-h);
+            /* The open plate, sized to the SHAPE of the code rather than to one number: the
+               plate hugs the symbol, so there is never white space in it that isn't quiet zone.
+               Both are overwritten inline, per card, from the rendered canvas's own aspect —
+               see setActive. These are the fallbacks for the frame before that lands.
+               
+               Declared on the CARD, not on the scroller: a var() inside a custom property is
+               substituted where that property is declared, so a --wallet-plate-h set per card
+               could never have reached a --wallet-card-open-h declared on the parent. */
+            --wallet-plate-h: 150px;
+            --wallet-plate-w: auto;
             border-radius: 26px;
             /* Content in the top band, not the middle. Two thirds of every card except the
                last is covered by the one below it, so anything centred vertically would be
                centred in the hidden part. */
             padding: 15px 20px 0;
-            display: flex; align-items: flex-start; gap: 16px;
+            display: flex; flex-direction: column;
             text-align: left;
             box-sizing: border-box;
             background: linear-gradient(145deg,
@@ -590,7 +600,7 @@
                         0 calc(14px - var(--depth, 0) * 8px) calc(30px - var(--depth, 0) * 14px)
                           calc(-12px + var(--depth, 0) * 4px) rgba(0,0,0,0.6);
             transition: transform 0.25s var(--spring-smooth), filter 0.25s ease,
-                        box-shadow 0.25s ease;
+                        box-shadow 0.25s ease, height 0.44s var(--spring-smooth);
             will-change: transform;
             cursor: pointer;
         }
@@ -605,6 +615,74 @@
                         rgba(255,255,255,0.30) 0%,
                         rgba(255,255,255,0.08) 32%,
                         rgba(255,255,255,0) 55%);
+        }
+
+        .wallet-head {
+            position: relative; z-index: 1;
+            flex: none;
+            display: flex; align-items: flex-start; gap: 16px;
+        }
+
+        /* THE FRONT CARD.
+           
+           A wallet is not a list you tap into — it is a stack you thumb through until the pass
+           you want is on top, and then you hold the phone up. So exactly one card is open at a
+           time and it shows its actual code, ready to scan. Tapping the open one enlarges it.
+           
+           It also stops receding: --depth still gets written to it by syncDepth, and the
+           transform and filter here deliberately ignore it. A barcode dimmed by
+           brightness(0.9) is a barcode a scanner can miss. */
+        .wallet-card.is-active {
+            /* 105px = 15 top padding + 60 head + 14 above the plate + 16 below it. Written out
+               rather than `height: auto`, because auto does not animate and the promotion of a
+               card to the front is the one motion this whole view is about. */
+            height: calc(var(--wallet-plate-h) + 105px);
+            transform: none;
+            filter: none;
+            z-index: 3;
+            box-shadow: 0 1px 0 rgba(255,255,255,0.28) inset,
+                        0 22px 44px -18px rgba(0,0,0,0.72);
+        }
+        .wallet-card.is-active:active { transform: scale(0.985); }
+        .wallet-card.is-active .wallet-chevron { color: rgba(255,255,255,0.85); }
+        /* Nothing overlaps the open card — the pass you are holding up is never half covered. */
+        .wallet-card.is-active + .wallet-card { margin-top: 14px; }
+
+        .wallet-plate {
+            position: relative; z-index: 4;
+            /* Above the card's ::after gloss, which spans the full card. On the tiles the same
+               mistake painted a white sheen straight over the bars. */
+            flex: none;
+            height: 0; margin-top: 0; opacity: 0;
+            overflow: hidden;
+            box-sizing: border-box;
+            border-radius: 16px;
+            background: #ffffff;
+            box-shadow: 0 8px 20px -10px rgba(0,0,0,0.55);
+            display: flex; align-items: center; justify-content: center;
+            padding: 0 14px;
+            transition: height 0.44s var(--spring-smooth),
+                        margin-top 0.44s var(--spring-smooth),
+                        padding 0.44s var(--spring-smooth),
+                        opacity 0.24s ease 0.06s;
+        }
+        .wallet-card.is-active .wallet-plate {
+            height: var(--wallet-plate-h);
+            width: var(--wallet-plate-w);
+            max-width: 100%;
+            margin: 14px auto 0;
+            padding: 13px 14px;
+            opacity: 1;
+        }
+        /* The plate is already the symbol's shape, so contain here is belt and braces: it
+           costs nothing and it guarantees a code can never be stretched out of proportion by
+           a rounding error in the fit. Percentages rather than intrinsic pixels, because a
+           152x152 Aztec drawn at its own size would sit in the middle of the plate looking
+           like a thumbnail of itself. */
+        .wallet-canvas {
+            display: block;
+            width: 100%; height: 100%;
+            object-fit: contain;
         }
 
         .wallet-mono {
@@ -4065,8 +4143,14 @@
             open() {
                 if (!this.el) return;
                 window.OS_STATE.view = 'wallet';
-                this.render();
+                // Unhidden BEFORE the render, not after. .wallet-view.hidden is display: none,
+                // and fitPlate sizes the front card's plate from that card's measured width —
+                // which is zero while the view is display: none. Rendering first meant every
+                // first open of the wallet drew its code into a plate sized off the 120px
+                // floor, and only a second promotion put it right. Nothing is visible either
+                // way: the view is at opacity 0 until wallet-in lands a frame later.
                 this.el.classList.remove('hidden');
+                this.render();
                 document.getElementById('workspace-pager').classList.add('opacity-0', 'pointer-events-none');
                 // One frame before the entrance, so the cards animate from their start state
                 // rather than appearing already settled.
@@ -4084,6 +4168,74 @@
                 this.el.classList.add('hidden');
                 document.getElementById('workspace-pager').classList.remove('opacity-0', 'pointer-events-none');
                 haptic(8);
+            },
+
+            // Promote one card to the front of the stack and draw its code.
+            //
+            // Only ONE barcode is ever rasterised in this view, however many passes are in it.
+            // That is the difference between a wallet that opens instantly with forty codes in
+            // it and the Library's old 452ms freeze: the stack is type and colour, and exactly
+            // one canvas.
+            setActive(id, keepScroll) {
+                if (!this.scroll) return;
+                this.activeId = id;
+                const card = this.scroll.querySelector(`.wallet-card[data-id="${id}"]`);
+                if (!card) return;
+
+                // Draw and size BEFORE promoting, in that order deliberately.
+                //
+                // fitPlate reads clientWidth, which forces a layout. Doing that after the
+                // is-active class was already on meant the browser committed the fallback plate
+                // height as the transition's target, then retargeted mid-flight when the real
+                // value landed a line later — the card visibly overshot and settled back on
+                // every tap. Both custom properties are in place before anything can animate.
+                const app = window.OS_STATE.apps.find(a => a.id === id);
+                const canvas = card.querySelector('.wallet-canvas');
+                if (app && canvas) {
+                    try {
+                        window.renderCode(canvas, app, { scale: 4, padding: 0 });
+                        this.fitPlate(card, canvas);
+                    } catch (e) { XanLogger.error('Wallet code render skipped', e); }
+                }
+
+                this.scroll.querySelectorAll('.wallet-card').forEach(c => {
+                    const on = c.dataset.id === id;
+                    c.classList.toggle('is-active', on);
+                    // Drop the raster of whatever card just left the front. Without this a long
+                    // thumb through a forty-pass wallet accumulates forty canvas backing stores
+                    // that nothing can ever see again — they are behind `height: 0; overflow:
+                    // hidden`. Setting width to 0 releases the buffer.
+                    if (!on) {
+                        const dead = c.querySelector('.wallet-canvas');
+                        if (dead && dead.width > 1) { dead.width = 0; dead.height = 0; }
+                        c.style.removeProperty('--wallet-plate-w');
+                        c.style.removeProperty('--wallet-plate-h');
+                    }
+                });
+
+                if (!keepScroll) {
+                    card.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                }
+                requestAnimationFrame(() => this.syncDepth());
+            },
+
+            // Fit the code into the plate, and the plate around the code.
+            //
+            // The first version of this classified codes as square or wide and gave each a
+            // fixed plate. It was wrong about the formats that matter: bwip renders Code 128 at
+            // 360x289 and EAN-13 at 380x289 — nothing like the thin strips a 1D symbol is drawn
+            // as on paper — so both landed in the square bucket and came out cropped-looking.
+            // Measuring beats guessing: one contain fit, and the plate takes the result's shape.
+            fitPlate(card, canvas) {
+                if (!canvas.width || !canvas.height) return;
+                // 40px is the card's own left+right padding, 28px the plate's.
+                const maxW = Math.max(120, card.clientWidth - 40 - 28);
+                const MAX_H = 190;
+                const k = Math.min(maxW / canvas.width, MAX_H / canvas.height);
+                card.style.setProperty('--wallet-plate-w',
+                    Math.round(canvas.width * k) + 28 + 'px');
+                card.style.setProperty('--wallet-plate-h',
+                    Math.round(canvas.height * k) + 26 + 'px');
             },
 
             // The card nearest the top of the scroller is the one you are looking at, so it
@@ -4126,12 +4278,17 @@
                     card.dataset.id = app.id;
                     card.style.setProperty('--i', i);
                     card.innerHTML = `
-                        <span class="wallet-mono"></span>
-                        <span class="wallet-meta">
-                            <span class="wallet-title"></span>
-                            <span class="wallet-format"></span>
+                        <span class="wallet-head">
+                            <span class="wallet-mono"></span>
+                            <span class="wallet-meta">
+                                <span class="wallet-title"></span>
+                                <span class="wallet-format"></span>
+                            </span>
+                            <span class="wallet-chevron"><i data-lucide="chevron-right"></i></span>
                         </span>
-                        <span class="wallet-chevron"><i data-lucide="chevron-right"></i></span>`;
+                        <span class="wallet-plate">
+                            <canvas class="wallet-canvas pixelated"></canvas>
+                        </span>`;
 
                     // textContent for every field that came from a scan. HARD RULE 9.
                     const g = window.tileMonogram(app.title);
@@ -4142,13 +4299,25 @@
                     card.querySelector('.wallet-format').textContent =
                         (window.FORMAT_NAMES && window.FORMAT_NAMES[app.bcid]) || app.bcid || 'code';
 
+                    // Tap a card in the stack to bring it to the front; tap the front card to
+                    // open it full screen. That is the gesture a wallet has: you thumb through
+                    // to the pass you want, and the one on top is the one you hold up.
                     card.addEventListener('click', () => {
                         const live = window.OS_STATE.apps.find(a => a.id === app.id) || app;
-                        window.InteractionManager.openEnlarge(live);
+                        if (this.activeId === app.id) {
+                            window.InteractionManager.openEnlarge(live);
+                        } else {
+                            this.setActive(app.id);
+                        }
                     });
                     frag.appendChild(card);
                 });
                 this.scroll.appendChild(frag);
+                // The front card is the one that shows its code. Keep whatever was already at
+                // the front across a re-render — losing it would mean the pass you had ready
+                // vanished because something unrelated changed.
+                const stillThere = codes.some(c => c.id === this.activeId);
+                this.setActive(stillThere ? this.activeId : codes[0].id, true);
                 safeCreateIcons();
                 this.syncDepth();
             }
