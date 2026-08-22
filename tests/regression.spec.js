@@ -8607,3 +8607,179 @@ test.describe('The last two screens', () => {
         expect(r.headingSize, `the heading is only ${r.headingSize}px`).toBeGreaterThanOrEqual(15);
     });
 });
+
+// ============================================================================================
+//  The wallet
+//
+//  "that looooks like the same app lmao not a completly new ui"
+//
+//  Fair. Everything before this was polish inside one structure: the same 4-column grid, the
+//  same dock, the same modals. This is a second layout over the same state — passes stacked
+//  the way they sit in a wallet — because a launcher grid is the right shape for LAUNCHING and
+//  the wrong shape for finding the one pass you are about to hold up to a scanner.
+//
+//  Nothing is duplicated. Both views read window.OS_STATE.apps, both open the same viewer, and
+//  a code's colour comes from the same hash in either.
+// ============================================================================================
+test.describe('The wallet', () => {
+    const seeded = async (page, n = 8) => {
+        await page.addInitScript((count) => {
+            const dock = [['nav_home', 'Home', 'grid'], ['nav_gen', 'Create', 'plus-circle'],
+                          ['nav_wifi', 'WiFi', 'wifi'], ['nav_lib', 'Library', 'layout-list'],
+                          ['nav_scan', 'Scan', 'scan-line']];
+            const apps = dock.map(([id, title, icon], i) => ({ id, title, icon, type: 'dock', order: i }));
+            for (let i = 0; i < count; i++) {
+                apps.push({ id: 'w' + i, title: 'Wallet Pass ' + i, type: 'grid',
+                            bcid: 'azteccode', data: 'wallet-' + i, page: 0, order: i });
+            }
+            localStorage.setItem('xancode_v2_state', JSON.stringify({
+                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
+                autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
+            }));
+        }, n);
+        await page.goto('/index.html');
+        await page.waitForTimeout(1500);
+    };
+
+    test('the cards actually overlap', async ({ page }) => {
+        // The bug this exists for: the overlap was first written as
+        // `gap: calc(var(--wallet-card-h) * -0.34)`, and the gap properties are clamped at
+        // zero. It did nothing, silently, and the wallet came out as evenly spaced list rows —
+        // the exact layout it exists in order not to be. Same shape of failure as the purged
+        // Tailwind classes: a declaration that is legal, ignored, and invisible.
+        await seeded(page);
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(900);
+
+        const r = await page.evaluate(() => {
+            const cards = [...document.querySelectorAll('.wallet-card')];
+            const a = cards[0].getBoundingClientRect();
+            const b = cards[1].getBoundingClientRect();
+            return { height: a.height, pitch: b.top - a.top };
+        });
+        expect(r.pitch, `cards are pitched ${Math.round(r.pitch)}px apart on a ${Math.round(r.height)}px card — that is a list, not a stack`)
+            .toBeLessThan(r.height * 0.8);
+        // ...and not so far under that the name of the card below is buried.
+        expect(r.pitch, 'the overlap swallows the card underneath').toBeGreaterThan(r.height * 0.45);
+    });
+
+    test('the name and format of every card are readable', async ({ page }) => {
+        // Two thirds of every card is covered by the one below it, so content centred
+        // vertically would be centred in the part you cannot see.
+        await seeded(page);
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(900);
+
+        const buried = await page.evaluate(() => {
+            const cards = [...document.querySelectorAll('.wallet-card')];
+            const bad = [];
+            for (let i = 0; i < cards.length - 1; i++) {
+                const covered = cards[i + 1].getBoundingClientRect().top;
+                const title = cards[i].querySelector('.wallet-title').getBoundingClientRect();
+                if (title.bottom > covered) bad.push(cards[i].dataset.id);
+            }
+            return bad;
+        });
+        expect(buried, `these cards have their name hidden under the next one: ${buried.join(', ')}`)
+            .toEqual([]);
+    });
+
+    test('a code is the same colour in both views', async ({ page }) => {
+        // The two views are the same app. A code you know as the green one has to be the green
+        // one wherever you are looking at it.
+        await seeded(page);
+        const gridClass = await page.evaluate(() => {
+            const el = document.querySelector('#workspace-pager [data-id="w3"] .code-tile');
+            return [...el.classList].find(c => c.startsWith('tile-'));
+        });
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(700);
+        const walletClass = await page.evaluate(() => {
+            const el = document.querySelector('.wallet-card[data-id="w3"]');
+            return [...el.classList].find(c => c.startsWith('tile-'));
+        });
+        expect(walletClass, `the same code is ${gridClass} in the grid and ${walletClass} in the wallet`)
+            .toBe(gridClass);
+    });
+
+    test('the Home key switches between the two, and still goes home', async ({ page }) => {
+        // Home was the only dock key whose job you could already do by swiping. It toggles the
+        // view now — but from a later page it still takes you back to the first one first,
+        // because that is what anyone who reached for it was expecting.
+        await seeded(page, 40);
+        const open = () => page.evaluate(() => window.WalletView.isOpen());
+
+        expect(await open()).toBe(false);
+        await page.evaluate(() => window.dockAction({ id: 'nav_home', type: 'dock' })());
+        await page.waitForTimeout(700);
+        expect(await open(), 'Home did not open the wallet').toBe(true);
+
+        await page.evaluate(() => window.dockAction({ id: 'nav_home', type: 'dock' })());
+        await page.waitForTimeout(700);
+        expect(await open(), 'Home did not close the wallet').toBe(false);
+
+        // On page 2 of the grid, Home goes back to page 1 rather than switching views.
+        await page.evaluate(() => window.LauncherInput.goTo(1));
+        await page.waitForTimeout(700);
+        await page.evaluate(() => window.dockAction({ id: 'nav_home', type: 'dock' })());
+        await page.waitForTimeout(700);
+        expect(await open(), 'Home opened the wallet instead of returning to page 1').toBe(false);
+        expect(await page.evaluate(() => window.OS_STATE.currentPage || 0)).toBe(0);
+    });
+
+    test('tapping a pass opens the same viewer the grid opens', async ({ page }) => {
+        await seeded(page);
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(800);
+        await page.click('.wallet-card[data-id="w2"]');
+        await page.waitForTimeout(800);
+        const r = await page.evaluate(() => ({
+            open: parseFloat(getComputedStyle(document.getElementById('item-fullscreen-layer')).opacity),
+            title: document.getElementById('fullscreen-item-title').textContent.trim(),
+        }));
+        expect(r.open, 'the viewer did not open').toBeGreaterThan(0.5);
+        expect(r.title).toBe('Wallet Pass 2');
+    });
+
+    test('a title is never interpolated into a card', async ({ page }) => {
+        // A title is whatever a scanned payload contained. HARD RULE 9 applies to the new view
+        // exactly as it does to the old one.
+        await seeded(page, 1);
+        const r = await page.evaluate(async () => {
+            window.__xss = false;
+            const app = window.OS_STATE.apps.find(a => a.type === 'grid');
+            app.title = '<img src=x onerror="window.__xss=true">';
+            window.WalletView.open();
+            await new Promise(res => setTimeout(res, 600));
+            const card = document.querySelector('.wallet-card');
+            return {
+                fired: window.__xss,
+                injected: !!card.querySelector('img'),
+                shown: card.querySelector('.wallet-title').textContent,
+            };
+        });
+        expect(r.fired, 'a title executed script in the wallet').toBe(false);
+        expect(r.injected, 'a title created an element in the wallet').toBe(false);
+        expect(r.shown).toBe('<img src=x onerror="window.__xss=true">');
+    });
+
+    test('an empty wallet says so', async ({ page }) => {
+        // Explicitly cleared: the suite runs with a storageState that seeds three demo codes
+        // for the older tests, so "a fresh page" is not an empty one here.
+        await page.addInitScript(() => {
+            try { localStorage.removeItem('xancode_v2_state'); } catch (e) {}
+        });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(700);
+        const r = await page.evaluate(() => {
+            const e = document.querySelector('.wallet-empty-title');
+            return { cards: document.querySelectorAll('.wallet-card').length,
+                     msg: e ? e.textContent.trim() : '' };
+        });
+        expect(r.cards).toBe(0);
+        expect(r.msg, 'an empty wallet renders nothing at all').toBeTruthy();
+    });
+});

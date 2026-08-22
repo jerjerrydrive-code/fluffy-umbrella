@@ -524,6 +524,147 @@
             body.first-paint .app-icon-wrapper { animation: none; }
         }
 
+        /* ======================= WALLET =======================
+           
+           Cards that overlap, the way passes sit in a wallet. Each one shows only what you
+           need to pick it out of a stack — a colour, initials, a name, a format — and the one
+           at the top of the viewport is the one you are looking at, so it sits flat and full
+           strength while the ones below it recede.
+           
+           The recession is a single custom property, --depth, written by a rAF-throttled
+           scroll handler and read by three declarations here. No per-card JS animation. */
+        .wallet-view {
+            position: absolute; inset: 0;
+            display: flex; flex-direction: column;
+            opacity: 0;
+            transition: opacity 0.32s var(--spring-smooth);
+        }
+        .wallet-view.wallet-in { opacity: 1; }
+        .wallet-view.hidden { display: none; }
+
+        .wallet-scroll {
+            flex: 1;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+            padding: 6px max(5vw, 18px) var(--dock-reserve, 130px);
+            display: flex; flex-direction: column;
+            --wallet-card-h: 122px;
+        }
+        /* The overlap, and it has to be a negative MARGIN.
+           
+           This was written as `gap: calc(var(--wallet-card-h) * -0.34)` first, which does
+           nothing at all: the gap properties are clamped at zero, so the stack came out as
+           twelve evenly spaced list rows — the exact layout the wallet exists to not be.
+           
+           A third of a card under the one above it. That leaves the monogram and the name of
+           every card in the stack readable while still reading as a stack. */
+        .wallet-card + .wallet-card {
+            margin-top: calc(var(--wallet-card-h) * -0.36);
+        }
+
+        .wallet-card {
+            position: relative;
+            flex: none;
+            height: var(--wallet-card-h);
+            border-radius: 26px;
+            /* Content in the top band, not the middle. Two thirds of every card except the
+               last is covered by the one below it, so anything centred vertically would be
+               centred in the hidden part. */
+            padding: 15px 20px 0;
+            display: flex; align-items: flex-start; gap: 16px;
+            text-align: left;
+            box-sizing: border-box;
+            background: linear-gradient(145deg,
+                        var(--tile-a, var(--pal-1)) 0%,
+                        var(--tile-b, var(--pal-3)) 100%);
+            /* Recede with depth: the further down the stack, the smaller, dimmer and flatter.
+               Transform and opacity only — both composited, so a twelve-card stack scrolls at
+               frame rate on a phone. */
+            transform: scale(calc(1 - var(--depth, 0) * 0.055))
+                       translateY(calc(var(--depth, 0) * 6px));
+            /* A light touch. At 0.22 the bottom of a long stack went muddy, and a card you
+               cannot read the name of is not in the wallet as far as you are concerned. */
+            filter: brightness(calc(1 - var(--depth, 0) * 0.10));
+            box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset,
+                        0 calc(14px - var(--depth, 0) * 8px) calc(30px - var(--depth, 0) * 14px)
+                          calc(-12px + var(--depth, 0) * 4px) rgba(0,0,0,0.6);
+            transition: transform 0.25s var(--spring-smooth), filter 0.25s ease,
+                        box-shadow 0.25s ease;
+            will-change: transform;
+            cursor: pointer;
+        }
+        .wallet-card:active {
+            transform: scale(0.975) translateY(calc(var(--depth, 0) * 6px));
+        }
+        /* A specular sweep across the top, as on the tiles — the two views are the same app. */
+        .wallet-card::after {
+            content: ''; position: absolute; inset: 0; border-radius: inherit;
+            pointer-events: none;
+            background: linear-gradient(165deg,
+                        rgba(255,255,255,0.30) 0%,
+                        rgba(255,255,255,0.08) 32%,
+                        rgba(255,255,255,0) 55%);
+        }
+
+        .wallet-mono {
+            position: relative; z-index: 1;
+            width: 60px; height: 60px; flex: none;
+            border-radius: 19px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 25px; font-weight: 700; letter-spacing: -0.03em;
+            color: rgba(255,255,255,0.96);
+            background: rgba(255,255,255,0.16);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.35);
+            text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+        }
+        .wallet-mono[data-len="2"] { font-size: 19px; }
+
+        .wallet-meta {
+            position: relative; z-index: 1;
+            flex: 1; min-width: 0;
+            display: flex; flex-direction: column; gap: 3px;
+        }
+        .wallet-title {
+            font-size: 18px; font-weight: 700; letter-spacing: -0.015em;
+            color: #fff;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .wallet-format {
+            font-size: 11px; font-weight: 700; letter-spacing: 0.09em;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.72);
+        }
+        .wallet-chevron {
+            position: relative; z-index: 1;
+            flex: none; color: rgba(255,255,255,0.55);
+            display: flex; align-items: center;
+        }
+        .wallet-chevron svg { width: 20px; height: 20px; }
+
+        .wallet-empty {
+            margin: auto; text-align: center; padding: 0 32px;
+        }
+        .wallet-empty-title {
+            color: var(--ink-strong); font-size: 19px; font-weight: 700; margin-bottom: 6px;
+        }
+        .wallet-empty-sub { color: var(--ink-soft); font-size: 13.5px; line-height: 1.5; }
+
+        /* The cards arrive as a fan. Same rules as the grid's entrance: an animation rather
+           than a transition, so a re-render cannot replay it, and off under reduced motion. */
+        @keyframes wallet-deal {
+            from { opacity: 0; transform: translateY(26px) scale(0.95); }
+            to   { opacity: 1; }
+        }
+        .wallet-in .wallet-card {
+            animation: wallet-deal 0.42s var(--spring-smooth) backwards;
+            animation-delay: calc(var(--i, 0) * 34ms);
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .wallet-in .wallet-card { animation: none; }
+        }
+
         .code-tile {
             box-sizing: border-box;
             /* No `isolation: isolate` here. It was creating a stacking context per tile —
@@ -2166,6 +2307,18 @@
         <main class="flex-1 w-full relative overflow-hidden flex flex-col -mt-2">
             <div id="workspace-pager" class="w-full h-full flex overflow-x-auto snap-x snap-mandatory hide-scrollbar transition-opacity duration-500">
             </div>
+
+            <!-- WALLET. The second way to look at the same codes.
+                 
+                 A launcher grid is the right shape for LAUNCHING things — twenty small
+                 targets, one tap each. It is the wrong shape for a wallet, which is what this
+                 actually is: a stack of passes you flick through until you find the one you
+                 are about to hold up to a scanner. So there are two views over the same state
+                 now, and the Home key switches between them. Nothing is duplicated: both read
+                 the same apps array, and a code opens the same viewer from either. -->
+            <div id="wallet-view" class="wallet-view hidden">
+                <div id="wallet-scroll" class="wallet-scroll hide-scrollbar"></div>
+            </div>
         </main>
 
         <!-- Page dots and dock share one bottom stack so the dots always sit directly above
@@ -2944,6 +3097,7 @@
         // Shared bcid -> human label map. Used by the item viewer and the Library; keep it one
         // map so a new format shows up correctly in both instead of only where it was added.
         const FORMAT_NAMES = { azteccode: 'Aztec Code', qrcode: 'QR Code', pdf417: 'PDF417', datamatrix: 'Data Matrix', code128: 'Code 128' };
+        window.FORMAT_NAMES = FORMAT_NAMES;
 
         const DEFAULT_STATE = {
             currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: true,
@@ -3077,7 +3231,18 @@
         // resort that reads the ICON — because whatever an item is called, a dock entry drawn
         // as a scan-line is the scanner.
         const DOCK_ACTIONS = {
-            nav_home:  () => window.LauncherInput.goTo(0),
+            // Home is a toggle, not a "go to page 1".
+            //
+            // It was the only dock key whose job you could already do by swiping, which made
+            // it the one key with nothing to say. It switches between the launcher grid and
+            // the wallet now — and still returns you to the first page when you are already on
+            // the grid, so the old behaviour is intact for anyone who reached for it.
+            nav_home: () => {
+                if (!window.WalletView) return window.LauncherInput.goTo(0);
+                if (window.WalletView.isOpen()) { window.WalletView.close(); return; }
+                if ((window.OS_STATE.currentPage || 0) > 0) { window.LauncherInput.goTo(0); return; }
+                window.WalletView.open();
+            },
             nav_gen:   () => window.CodeGenerator && window.CodeGenerator.open(),
             nav_lib:   () => window.LibraryManager && window.LibraryManager.open(),
             nav_scan:  () => window.ScannerEngine && window.ScannerEngine.start(),
@@ -3860,6 +4025,134 @@
                 }
             }
         }
+
+        // ======================= WALLET VIEW =======================
+        //
+        // The same codes, laid out as a stack of passes rather than a field of launcher icons.
+        //
+        // Why a second view instead of replacing the grid: a launcher grid is the right shape
+        // for LAUNCHING — twenty small targets, one tap each, muscle memory by position. It is
+        // the wrong shape for the thing this app is actually used for, which is finding the one
+        // pass you are about to hold up to a scanner. Those are different jobs and they want
+        // different layouts, so the app has both and the Home key switches.
+        //
+        // No second copy of anything. Both views read window.OS_STATE.apps, both open the same
+        // viewer, and a code's colour comes from the same tileVariant hash — so a code you know
+        // as the green one is the green one in either.
+        window.WalletView = {
+            el: null,
+            scroll: null,
+
+            init() {
+                this.el = document.getElementById('wallet-view');
+                this.scroll = document.getElementById('wallet-scroll');
+                if (!this.scroll) return;
+                // Parallax on the header of whichever card is at the top of the viewport. Read
+                // in a rAF off a passive listener: a scroll handler that measures synchronously
+                // is the classic way to make a scroll feel heavy.
+                let queued = false;
+                this.scroll.addEventListener('scroll', () => {
+                    if (queued) return;
+                    queued = true;
+                    requestAnimationFrame(() => { queued = false; this.syncDepth(); });
+                }, { passive: true });
+            },
+
+            isOpen() { return !!this.el && !this.el.classList.contains('hidden'); },
+
+            toggle() { this.isOpen() ? this.close() : this.open(); },
+
+            open() {
+                if (!this.el) return;
+                window.OS_STATE.view = 'wallet';
+                this.render();
+                this.el.classList.remove('hidden');
+                document.getElementById('workspace-pager').classList.add('opacity-0', 'pointer-events-none');
+                // One frame before the entrance, so the cards animate from their start state
+                // rather than appearing already settled.
+                requestAnimationFrame(() => {
+                    this.el.classList.add('wallet-in');
+                    this.syncDepth();
+                });
+                haptic(12);
+            },
+
+            close() {
+                if (!this.el) return;
+                window.OS_STATE.view = 'grid';
+                this.el.classList.remove('wallet-in');
+                this.el.classList.add('hidden');
+                document.getElementById('workspace-pager').classList.remove('opacity-0', 'pointer-events-none');
+                haptic(8);
+            },
+
+            // The card nearest the top of the scroller is the one you are looking at, so it
+            // sits flat and full-strength; the ones below it recede. This is the whole reason
+            // the layout reads as a stack rather than as a list of boxes.
+            syncDepth() {
+                const cards = this.scroll.querySelectorAll('.wallet-card');
+                const top = this.scroll.getBoundingClientRect().top;
+                cards.forEach(card => {
+                    const d = card.getBoundingClientRect().top - top;
+                    // 0 at the top of the viewport, 1 by the time it is a screen away.
+                    const t = Math.max(0, Math.min(1, d / (this.scroll.clientHeight * 0.9)));
+                    card.style.setProperty('--depth', t.toFixed(3));
+                });
+            },
+
+            render() {
+                if (!this.scroll) return;
+                const codes = (window.OS_STATE.apps || [])
+                    .filter(a => a.type === 'grid' && !a.folderId)
+                    .sort((a, b) => (a.page - b.page) || (a.order - b.order));
+
+                this.scroll.replaceChildren();
+
+                if (!codes.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'wallet-empty';
+                    empty.innerHTML = '<p class="wallet-empty-title"></p><p class="wallet-empty-sub"></p>';
+                    empty.querySelector('.wallet-empty-title').textContent = 'No passes yet';
+                    empty.querySelector('.wallet-empty-sub').textContent =
+                        'Scan or create a code and it will stack up here.';
+                    this.scroll.appendChild(empty);
+                    return;
+                }
+
+                const frag = document.createDocumentFragment();
+                codes.forEach((app, i) => {
+                    const card = document.createElement('button');
+                    card.className = `wallet-card tile-${window.tileVariant(app.id)}`;
+                    card.dataset.id = app.id;
+                    card.style.setProperty('--i', i);
+                    card.innerHTML = `
+                        <span class="wallet-mono"></span>
+                        <span class="wallet-meta">
+                            <span class="wallet-title"></span>
+                            <span class="wallet-format"></span>
+                        </span>
+                        <span class="wallet-chevron"><i data-lucide="chevron-right"></i></span>`;
+
+                    // textContent for every field that came from a scan. HARD RULE 9.
+                    const g = window.tileMonogram(app.title);
+                    const mono = card.querySelector('.wallet-mono');
+                    mono.textContent = g;
+                    mono.dataset.len = String(g.length);
+                    card.querySelector('.wallet-title').textContent = app.title || 'Untitled';
+                    card.querySelector('.wallet-format').textContent =
+                        (window.FORMAT_NAMES && window.FORMAT_NAMES[app.bcid]) || app.bcid || 'code';
+
+                    card.addEventListener('click', () => {
+                        const live = window.OS_STATE.apps.find(a => a.id === app.id) || app;
+                        window.InteractionManager.openEnlarge(live);
+                    });
+                    frag.appendChild(card);
+                });
+                this.scroll.appendChild(frag);
+                safeCreateIcons();
+                this.syncDepth();
+            }
+        };
 
         class OSRenderer {
             constructor() {
@@ -8865,6 +9158,7 @@
         setTimeout(() => document.body.classList.remove('first-paint'), 900);
 
         window.Renderer = new OSRenderer();
+        window.WalletView.init();
         window.DragEngine = new SlotDragEngine();
         window.SlotDragEngine = SlotDragEngine;
         window.SearchEngine = new OSSearchEngine();
