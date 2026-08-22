@@ -2076,6 +2076,237 @@
             background: rgba(190, 200, 216, 0.55);
         }
 
+
+        /* ---------- SKIN: "cloud" (soft light UI) ----------
+
+           A near-white, cool-grey app. Flat ground, panels that sit a hair above it on one soft
+           shadow, near-black navy type, and colour used only where it carries meaning — a pastel
+           chip, a code tile — never as a wash across the screen.
+
+           This is NOT the "soft" skin with the contrast turned down. Soft is moulded: every
+           surface is the same material pushed up or pressed in, with a light and a shade shadow
+           on each, and the ground carries big palette blooms. Cloud is the opposite discipline —
+           one shadow, one direction, no bloom, and the palette shows up as small saturated
+           accents on an otherwise neutral field. Putting both in the app is the point: they are
+           two different answers to "light", not two settings of one.
+
+           The one thing it borrows from soft is the inset press, because a recessed control on a
+           light ground has no better idiom.
+
+           A theme still has to do something here, or the palette picker is decoration. It gets a
+           6% tint on the ground and full strength on the tiles and chips — a light hand on the
+           field, no restraint at all on the accents. */
+        body[data-skin="cloud"], .skin-tokens-cloud {
+            --squircle-radius: 30%;
+            --dock-radius: 0px; --dock-pad: 0.55rem; --dock-max: 100%; --dock-gap: 0.15rem;
+            --label-size: 12px; --label-weight: 600; --label-track: 0px;
+            --label-case: none; --label-gap: 8px; --row-scale: 1.06;
+            --preview-bg: linear-gradient(150deg, #f4f6fb, #e4e8f2);
+            --dock-preview-w: 100%;
+        }
+
+        body[data-skin="cloud"] {
+            /* The ground and the two surfaces above it. Only 6% palette so the field stays
+               neutral and the accents can be loud. */
+            --cl-ground: color-mix(in srgb, var(--pal-1) 6%, #e9ecf4);
+            --cl-panel:  color-mix(in srgb, var(--pal-1) 3%, #f5f7fc);
+            --cl-panel-2: #ffffff;
+            --cl-line: color-mix(in srgb, var(--pal-1) 8%, #dde2ed);
+
+            --cl-ink: #1b2135;
+            /* Both a step darker than they look like they should be on a screen this light.
+               #6f7c9b/#98a3bd are the greys this style is usually drawn with, and the helper
+               line under the palette row measured 2.04:1 against its card in them — the same
+               "quiet, therefore unreadable" failure the mid-greys caused before. A light skin
+               gets less room for grey text, not more. */
+            --cl-ink-soft: #4d5876;
+            --cl-ink-dim: #5f6c8a;
+
+            /* One shadow, cast one way. The whole difference from "soft" is in these two
+               lines: no light-source highlight on the opposite corner, so panels read as
+               resting ON the ground rather than being pushed OUT of it. */
+            --cl-lift: 0 1px 2px rgba(27,33,53,0.04), 0 6px 16px -6px rgba(27,33,53,0.14);
+            --cl-lift-lg: 0 2px 4px rgba(27,33,53,0.05), 0 18px 34px -14px rgba(27,33,53,0.20);
+            --cl-press: inset 0 2px 6px rgba(27,33,53,0.12);
+
+            --ink-strong: var(--cl-ink);
+            --ink-soft: var(--cl-ink-soft);
+            --ink-dim: var(--cl-ink-dim);
+
+            --sheet-bg: var(--cl-panel);
+            --sheet-ink: var(--cl-ink);
+            --sheet-sub: var(--cl-ink-soft);
+            --sheet-fill: color-mix(in srgb, var(--pal-1) 6%, #e6eaf3);
+            --sheet-line: var(--cl-line);
+            --sheet-raised: var(--cl-panel-2);
+
+            --viewer-ink: var(--cl-ink);
+            --viewer-soft: var(--cl-ink-soft);
+            --viewer-dim: var(--cl-ink-dim);
+            --viewer-chip: color-mix(in srgb, var(--pal-1) 8%, #e6eaf3);
+
+            --wall-ink-a: var(--cl-ground);
+            --wall-ink-b: var(--cl-ground);
+            --wall-bloom: 0%;
+            --wall-tint-base: #ffffff;
+        }
+
+        /* Flat. No blooms at all — this is the skin where the ground is a surface, not a sky. */
+        body[data-skin="cloud"]::before {
+            content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+            background: var(--cl-ground);
+        }
+
+        body[data-skin="cloud"] .ios-glass {
+            background: var(--cl-panel);
+            backdrop-filter: none; -webkit-backdrop-filter: none;
+            border: 1px solid var(--cl-line);
+            box-shadow: var(--cl-lift);
+        }
+        body[data-skin="cloud"] #os-header button {
+            background: var(--cl-panel);
+            backdrop-filter: none; -webkit-backdrop-filter: none;
+            border: 1px solid var(--cl-line);
+            box-shadow: var(--cl-lift);
+            color: var(--cl-ink);
+        }
+        body[data-skin="cloud"] #os-header button:active { box-shadow: var(--cl-press); }
+        body[data-skin="cloud"] #os-clock { color: var(--cl-ink); text-shadow: none; }
+        body[data-skin="cloud"] :is(#os-header, #main-dock, #library-overlay) svg { color: var(--cl-ink); }
+
+        body[data-skin="cloud"] .app-label {
+            color: var(--cl-ink);
+            text-shadow: none;
+        }
+        body[data-skin="cloud"] .app-icon { box-shadow: var(--cl-lift); }
+
+        /* The dock is a bar, not a floating pill: full width, flat, sitting on a hairline.
+           That is the shape this style uses everywhere and the reason it reads as an app rather
+           than as a home screen. */
+        body[data-skin="cloud"] #main-dock {
+            background: color-mix(in srgb, var(--pal-1) 2%, #f7f9fd);
+            border: none;
+            border-top: 1px solid var(--cl-line);
+            border-radius: 0;
+            box-shadow: 0 -8px 24px -18px rgba(27,33,53,0.5);
+            backdrop-filter: none; -webkit-backdrop-filter: none;
+        }
+        /* The stack is absolutely positioned at bottom: 16px, which is right for a floating
+           pill and wrong for a bar — it left a 16px band of ground under the dock that read as
+           a rendering slip. A bar sits ON the edge; the inset moves inside it, where it doubles
+           as room for the home indicator. */
+        body[data-skin="cloud"] #bottom-stack {
+            padding-left: 0; padding-right: 0; bottom: 0;
+        }
+        body[data-skin="cloud"] #main-dock {
+            padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 8px));
+        }
+        body[data-skin="cloud"] #dock-container .app-icon-wrapper {
+            background: transparent;
+            box-shadow: none;
+        }
+        body[data-skin="cloud"] #dock-container .app-icon-wrapper:active {
+            background: color-mix(in srgb, var(--pal-1) 8%, #e6eaf3);
+        }
+        body[data-skin="cloud"] .pagination-dot { background: var(--cl-ink-dim); }
+        body[data-skin="cloud"] .pagination-dot.active { background: var(--cl-ink); }
+
+        /* A code tile is a pastel card with dark type on it, not a saturated plate with white
+           type. Same tileVariant hash picks the hue; only the mix changes. */
+        /* 40/52, not 26/34.
+           
+           The first pass mixed the palette down to about 15% saturation and every tile came out
+           the same pale grey-green — six codes that the tileVariant hash had deliberately given
+           six different hues, rendered indistinguishable. The ceiling on this is contrast: the
+           type on a cloud tile is near-black, so the tile has to stay light. 52% of the darkest
+           palette colour this app ships (#516091) against white is #8593b3, which holds 5.3:1
+           against the ink — so 52% is about as much colour as this skin can take, and it takes
+           all of it. */
+        body[data-skin="cloud"] .code-tile {
+            background: linear-gradient(150deg,
+                        color-mix(in srgb, var(--tile-a, var(--pal-1)) 40%, #ffffff) 0%,
+                        color-mix(in srgb, var(--tile-b, var(--pal-3)) 52%, #ffffff) 100%);
+            box-shadow: var(--cl-lift);
+        }
+        body[data-skin="cloud"] .tile-mono { color: var(--cl-ink); text-shadow: none; }
+
+        body[data-skin="cloud"] .wallet-card {
+            background: linear-gradient(150deg,
+                        color-mix(in srgb, var(--tile-a, var(--pal-1)) 38%, #ffffff) 0%,
+                        color-mix(in srgb, var(--tile-b, var(--pal-3)) 50%, #ffffff) 100%);
+            box-shadow: var(--cl-lift);
+        }
+        body[data-skin="cloud"] .wallet-card.is-active { box-shadow: var(--cl-lift-lg); }
+        body[data-skin="cloud"] .wallet-card::after { background: none; }
+        body[data-skin="cloud"] .wallet-title { color: var(--cl-ink); text-shadow: none; }
+        body[data-skin="cloud"] .wallet-format { color: var(--cl-ink-soft); }
+        body[data-skin="cloud"] .wallet-chevron { color: var(--cl-ink-dim); }
+        /* A deeper patch of the card's own hue, not white. White-on-pale was a chip you could
+           not see the edge of — the monogram floated. */
+        body[data-skin="cloud"] .wallet-mono {
+            background: color-mix(in srgb, var(--tile-a, var(--pal-1)) 40%, #ffffff);
+            color: var(--cl-ink);
+            text-shadow: none;
+            box-shadow: none;
+        }
+
+        body[data-skin="cloud"] :is(#library-overlay, #item-fullscreen-layer) {
+            background: var(--cl-ground);
+        }
+        body[data-skin="cloud"] #library-list > div {
+            background: var(--cl-panel);
+            border: 1px solid var(--cl-line);
+            box-shadow: var(--cl-lift);
+        }
+        body[data-skin="cloud"] #library-list > div:active { box-shadow: var(--cl-press); }
+        body[data-skin="cloud"] .viewer-shelf {
+            background: color-mix(in srgb, var(--pal-2) 14%, #ffffff);
+        }
+        body[data-skin="cloud"] .viewer-action-plate {
+            background: var(--cl-panel-2);
+            box-shadow: var(--cl-lift);
+            color: var(--cl-ink);
+        }
+
+        body[data-skin="cloud"] :is(#settings-modal, #account-modal, #rename-modal, #create-modal) {
+            background: rgba(233, 236, 244, 0.72);
+        }
+
+        /* The panels themselves, and this is the whole reason the contrast test exists.
+           
+           Cloud sets dark ink at body level, because on this skin every surface is light. The
+           Settings and Account panels are not: their background is a bg-[#1c1c1e] utility in the
+           markup, which no token reaches. So dark ink landed on a near-black card and "SCREEN
+           GRID" measured 1.29:1 — the exact failure the note above the per-surface ink list
+           describes, reproduced by the next person to add a light skin, which was me.
+           
+           The fix is to make the surface match the ink rather than the other way round: on a
+           skin where everything is light, a dark modal is the thing that is wrong. */
+        body[data-skin="cloud"] :is(#settings-panel, #account-panel) {
+            background: var(--cl-panel);
+            border: 1px solid var(--cl-line);
+            box-shadow: var(--cl-lift-lg);
+        }
+        body[data-skin="cloud"] :is(#settings-panel, #account-panel) :is(.text-white, .text-gray-200) {
+            color: var(--cl-ink);
+        }
+        body[data-skin="cloud"] :is(#settings-panel, #account-panel) :is(.bg-white\/10, .bg-black\/20, .bg-white\/5) {
+            background-color: color-mix(in srgb, var(--pal-1) 7%, #e6eaf3);
+        }
+        body[data-skin="cloud"] :is(#settings-panel, #account-panel) :is(.border-white\/10, .border-white\/5) {
+            border-color: var(--cl-line);
+        }
+        body[data-skin="cloud"] :is(#settings-panel, #account-panel) svg { color: var(--cl-ink); }
+        /* The section cards inside the panel, which are their own dark surface — bg-[#2c2c2e],
+           remapped to --surface-2. Lightening the panel and stopping there is what left "Screen
+           Grid" at 1.29:1 on a card that was still nearly black: the panel was fixed, the thing
+           the text actually sits on was not. Soft and Aurora each have their own version of this
+           rule for the same reason. */
+        body[data-skin="cloud"] :is(#settings-panel, #account-panel) .bg-\[\#2c2c2e\] {
+            background-color: color-mix(in srgb, var(--pal-1) 5%, #eaeef6);
+            box-shadow: inset 0 0 0 1px var(--cl-line);
+        }
+
         /* ---------- SKIN: "aurora" (dark mesh gradient) ----------
            Vivid colour blooms drifting behind near-black glass, with high-contrast type sitting
            on top. Third of the four, and the easiest of the three so far for one reason worth
@@ -8271,8 +8502,13 @@
             { id: 'dock',     label: 'Dark',      description: 'Squircle plates, floating pill dock.' },
             { id: 'scancard', label: 'Scan Card', description: 'Sharp cards, full-width bar, caps labels.' },
             { id: 'glass',    label: 'Glass',     description: 'Round plates on light frosted glass.' },
-            { id: 'soft',     label: 'Soft',      description: 'Pillowy and roomy, moulded from light.' }
+            { id: 'soft',     label: 'Soft',      description: 'Pillowy and roomy, moulded from light.' },
+            { id: 'cloud',    label: 'Cloud',     description: 'Near-white and flat, colour only where it means something.' }
         ];
+        // Exported so the test suite can enumerate skins from the app instead of from fourteen
+        // hand-maintained copies of the same array — every one of which would have silently
+        // skipped a new skin rather than failing.
+        window.SKINS = SKINS;
 
         // A retired skin still lives in somebody's saved state, and in the settings of anyone
         // who has not opened the app since. Left unmapped they would land on data-skin values
@@ -8299,6 +8535,9 @@
                 SKINS.forEach(skin => {
                     const active = skin.id === this.current;
                     const btn = document.createElement('button');
+                    // Named, so a test can assert every shipped skin is actually reachable here
+                    // rather than inferring it from the label text.
+                    btn.dataset.skinId = skin.id;
                     btn.className = `w-full flex items-center gap-3.5 p-3 rounded-2xl border transition-all text-left ${active ? 'accent-bg-soft accent-border-soft' : 'bg-black/20 border-transparent hover:bg-black/30'}`;
                     // The tile is the skin's own tokens at a sixth of the size — same corner
                     // radius, same dock geometry, same density — so what you see is what you

@@ -6,6 +6,16 @@
 // Run with: npm test  (spins up scripts/dev-server.mjs automatically, see playwright.config.js)
 import { test, expect } from '@playwright/test';
 
+// EVERY skin the app ships, in one place.
+//
+// This list was written out fourteen times across this file. That is not a style problem: a new
+// skin added to the app would have been absent from all fourteen, so the contrast floors, the
+// overlap sweeps and the themed-sheet checks would all have quietly kept testing the old four
+// and passed. A skin nobody tests is a skin that is broken for somebody.
+//
+// `the suite tests every skin the app ships` below fails if this drifts from window.SKINS.
+const ALL_SKINS = ['dock', 'scancard', 'glass', 'soft', 'cloud'];
+
 // Every test gets a fresh page with pageerror/console-error collection wired up, and fails at
 // teardown if anything unexpected was thrown — "zero page errors" is a hard requirement here,
 // not just a spot-check.
@@ -804,7 +814,8 @@ test.describe('The dark skin, and the two that were folded into it', () => {
                 return { state: window.OS_STATE.skin, rows: [...document.querySelectorAll('#skin-picker button')].length };
             }, dead);
             expect(r.state, `${dead} was left selected after being retired`).toBe('dock');
-            expect(r.rows, 'the picker is not showing four skins').toBe(4);
+            expect(r.rows, `the picker is showing ${r.rows} skins, not ${ALL_SKINS.length}`)
+                .toBe(ALL_SKINS.length);
         }
     });
 
@@ -954,7 +965,7 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         await page.waitForTimeout(1200);
         // dock, scancard, glass, soft, aurora, classic — kept in step with the loop below so
         // adding a SKINS entry without a matching case here fails loudly.
-        const skins = ['dock', 'scancard', 'glass', 'soft'];
+        const skins = ALL_SKINS;
         const rendered = await page.evaluate(() =>
             document.querySelectorAll('#skin-picker button').length);
         expect(rendered).toBe(skins.length);
@@ -2931,7 +2942,7 @@ test.describe('Text stays readable on every skin', () => {
     // That is how the Library's Saved/Scanned/Created row ended up at 1.22:1 on Soft and the
     // code viewer's title at 1.11:1 on Aurora — present in the DOM, invisible on screen. Found
     // by sweeping scripts/motion-audit.mjs across all six skins; this keeps it swept.
-    const SKINS = ['dock', 'scancard', 'glass', 'soft'];
+    const SKINS = ALL_SKINS;
 
     // Mirrors the audit's measurement, including its one hard-won rule: stop at a background
     // IMAGE rather than walking past it to a colour underneath. The wallpaper is a gradient on
@@ -4879,7 +4890,7 @@ test.describe('No skin costs the app its frame rate', () => {
         await page.waitForTimeout(900);
 
         const slow = [];
-        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+        for (const skin of ALL_SKINS) {
             await page.evaluate((s) => document.body.setAttribute('data-skin', s), skin);
             await page.waitForTimeout(800);
             const frames = await page.evaluate(async () => {
@@ -4903,9 +4914,9 @@ test.describe('No skin costs the app its frame rate', () => {
         // all costs the whole frame budget however the animation is written.
         await page.goto('/index.html');
         await page.waitForTimeout(1000);
-        const offenders = await page.evaluate(() => {
+        const offenders = await page.evaluate((skins) => {
             const bad = [];
-            for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            for (const skin of skins) {
                 document.body.setAttribute('data-skin', skin);
                 for (const el of [document.body, document.documentElement]) {
                     for (const pseudo of ['::before', '::after']) {
@@ -4921,7 +4932,7 @@ test.describe('No skin costs the app its frame rate', () => {
                 }
             }
             return bad;
-        });
+        }, ALL_SKINS);
         expect(offenders, `an animated heavy blur is back:\n${offenders.join('\n')}`).toEqual([]);
     });
 });
@@ -5989,7 +6000,7 @@ test.describe('The home screen does not blink', () => {
 //  over one interface rather than a different one.
 // ============================================================================================
 test.describe('A skin changes the interface, not just its colour', () => {
-    const SKINS = ['dock', 'scancard', 'glass', 'soft'];
+    const SKINS = ALL_SKINS;
 
     // Everything about a skin you could recognise from across the room, with colour left out
     // on purpose — colour was never the part that was missing.
@@ -6735,7 +6746,7 @@ test.describe('The dock icons fit the dock', () => {
             await page.setViewportSize({ width: w, height: h });
             await page.goto('/index.html');
             await page.waitForTimeout(1300);
-            for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            for (const skin of ALL_SKINS) {
                 const r = await page.evaluate((skin) => {
                     document.body.dataset.skin = skin;
                     const nav = document.getElementById('main-dock');
@@ -6964,7 +6975,7 @@ test.describe('The dock glyph grows with the dock', () => {
             await page.setViewportSize({ width: w, height: h });
             await page.goto('/index.html');
             await page.waitForTimeout(1300);
-            for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            for (const skin of ALL_SKINS) {
                 const r = await page.evaluate((skin) => {
                     document.body.dataset.skin = skin;
                     const row = document.getElementById('dock-container');
@@ -7013,7 +7024,7 @@ test.describe('The dock pill itself is the thing that grows', () => {
             await page.setViewportSize({ width: w, height: h });
             await page.goto('/index.html');
             await page.waitForTimeout(1300);
-            for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+            for (const skin of ALL_SKINS) {
                 const r = await page.evaluate((skin) => {
                     document.body.dataset.skin = skin;
                     const nav = document.getElementById('main-dock');
@@ -7229,7 +7240,7 @@ test.describe('The grid fills the page', () => {
         await page.waitForTimeout(1400);
         await fillPage(page);
 
-        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+        for (const skin of ALL_SKINS) {
             await page.evaluate(s => {
                 window.OS_STATE.skin = s;
                 document.body.dataset.skin = s;
@@ -7286,7 +7297,7 @@ test.describe('A code reads as an app icon', () => {
             await new Promise(r => setTimeout(r, 500));
         });
 
-        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+        for (const skin of ALL_SKINS) {
             await page.evaluate(s => {
                 window.OS_STATE.skin = s;
                 document.body.dataset.skin = s;
@@ -7814,7 +7825,7 @@ test.describe('Polish pass', () => {
         await page.evaluate(() => window.SettingsManager.open());
         await page.waitForTimeout(800);
 
-        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+        for (const skin of ALL_SKINS) {
             await page.evaluate(s => { window.OS_STATE.skin = s; document.body.dataset.skin = s; }, skin);
             await page.waitForTimeout(400);
 
@@ -7957,7 +7968,7 @@ test.describe('The viewer is the hero screen', () => {
 
     test('everything written on the viewer is readable against it', async ({ page }) => {
         await open(page);
-        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+        for (const skin of ALL_SKINS) {
             await page.evaluate(s => { window.OS_STATE.skin = s; document.body.dataset.skin = s; }, skin);
             await page.waitForTimeout(400);
 
@@ -7994,7 +8005,7 @@ test.describe('The viewer is the hero screen', () => {
 
     test('the plate under the code is pure white, whatever the ground is', async ({ page }) => {
         await open(page);
-        for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+        for (const skin of ALL_SKINS) {
             await page.evaluate(s => { window.OS_STATE.skin = s; document.body.dataset.skin = s; }, skin);
             await page.waitForTimeout(400);
             const bg = await page.evaluate(() =>
@@ -8192,7 +8203,7 @@ test.describe('Nothing overlaps, and no class in the markup is a no-op', () => {
             for (const [name, open] of Object.entries(scenes)) {
                 await page.evaluate(`(${open.toString()})()`);
                 await page.waitForTimeout(900);
-                for (const skin of ['dock', 'scancard', 'glass', 'soft']) {
+                for (const skin of ALL_SKINS) {
                     await page.evaluate(s => {
                         window.OS_STATE.skin = s;
                         document.body.dataset.skin = s;
@@ -9132,6 +9143,39 @@ test.describe('The wallet', () => {
             expect(r.fitsCard, `${id}: the plate is wider than the card holding it`).toBe(true);
             expect(Math.min(...r.box), `${id}: the code renders at ${r.box.join('x')}`)
                 .toBeGreaterThan(45);
+        }
+    });
+});
+
+
+// ============================================================================================
+//  The suite and the app agree on what exists
+// ============================================================================================
+test.describe('Skin coverage', () => {
+    test('the suite tests every skin the app ships', async ({ page }) => {
+        // The list above used to be fourteen separate literals. Adding a skin to the app and
+        // forgetting one of them would not have failed anything — it would have silently
+        // narrowed the contrast, overlap and themed-sheet sweeps back to the old four.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const shipped = await page.evaluate(() => (window.SKINS || []).map(s => s.id));
+        expect(shipped.length, 'the app does not export window.SKINS').toBeGreaterThan(0);
+        const untested = shipped.filter(s => !ALL_SKINS.includes(s));
+        const stale = ALL_SKINS.filter(s => !shipped.includes(s));
+        expect(untested, `these skins ship but nothing tests them: ${untested.join(', ')}`).toEqual([]);
+        expect(stale, `these skins are tested but no longer ship: ${stale.join(', ')}`).toEqual([]);
+    });
+
+    test('every skin is reachable from the settings picker', async ({ page }) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const rows = await page.evaluate(() => {
+            window.SettingsManager.open();
+            return [...document.querySelectorAll('#skin-picker [data-skin-id]')]
+                .map(el => el.dataset.skinId);
+        });
+        for (const s of ALL_SKINS) {
+            expect(rows, `${s} has no row in the skin picker, so nobody can select it`).toContain(s);
         }
     });
 });
