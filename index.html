@@ -659,7 +659,8 @@
             border-radius: 16px;
             background: #ffffff;
             box-shadow: 0 8px 20px -10px rgba(0,0,0,0.55);
-            display: flex; align-items: center; justify-content: center;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
             padding: 0 14px;
             transition: height 0.44s var(--spring-smooth),
                         margin-top 0.44s var(--spring-smooth),
@@ -681,9 +682,24 @@
            like a thumbnail of itself. */
         .wallet-canvas {
             display: block;
-            width: 100%; height: 100%;
+            width: 100%;
+            flex: 1; min-height: 0;
             object-fit: contain;
         }
+        /* The number under the bars, as it is on the card in your pocket. It is there for a
+           practical reason: when the scanner will not read it, somebody types it in. 1D only —
+           see isOneD. :empty collapses the row on the 2D formats that never set it. */
+        .wallet-digits {
+            flex: none;
+            max-width: 100%;
+            padding-top: 7px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 13px; font-weight: 600; letter-spacing: 0.15em;
+            line-height: 1.15;
+            color: #16181c;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .wallet-digits:empty { display: none; }
 
         .wallet-mono {
             position: relative; z-index: 1;
@@ -3172,9 +3188,20 @@
          * =====================================================================================
          */
 
-        // Shared bcid -> human label map. Used by the item viewer and the Library; keep it one
-        // map so a new format shows up correctly in both instead of only where it was added.
-        const FORMAT_NAMES = { azteccode: 'Aztec Code', qrcode: 'QR Code', pdf417: 'PDF417', datamatrix: 'Data Matrix', code128: 'Code 128' };
+        // Shared bcid -> human label map, used by the viewer, the Library and the wallet.
+        //
+        // Filled in from CODE_FORMATS further down, which is the table that already knows every
+        // symbology this app can encode. Keeping it one map was always the intent, and it still
+        // went wrong: it was a hand-written literal with five of the eleven in it, and the six
+        // it left out — EAN-13, EAN-8, UPC-A, Code 39, Code 93, ITF —
+        // fell through to the raw bcid at all five places that read it. So the Library listed
+        // a supermarket barcode as "ean13", the viewer captioned it "upca", and searching the
+        // Library for "EAN" matched nothing at all, because the search reads this too.
+        //
+        // Declared here rather than beside CODE_FORMATS only because everything that reads it
+        // is above it. Nothing reads it during the top-level pass, so it is populated by the
+        // time any of them run.
+        const FORMAT_NAMES = {};
         window.FORMAT_NAMES = FORMAT_NAMES;
 
         const DEFAULT_STATE = {
@@ -4232,10 +4259,15 @@
                 const maxW = Math.max(120, card.clientWidth - 40 - 28);
                 const MAX_H = 190;
                 const k = Math.min(maxW / canvas.width, MAX_H / canvas.height);
+                // Measured, not assumed to be 20-odd pixels: the row is one line of monospace
+                // whose size the skin is free to change, and a plate short by its height would
+                // clip the last thing anyone falls back to when a scanner fails.
+                const digits = card.querySelector('.wallet-digits');
+                const under = digits && digits.textContent ? digits.offsetHeight : 0;
                 card.style.setProperty('--wallet-plate-w',
                     Math.round(canvas.width * k) + 28 + 'px');
                 card.style.setProperty('--wallet-plate-h',
-                    Math.round(canvas.height * k) + 26 + 'px');
+                    Math.round(canvas.height * k) + 26 + under + 'px');
             },
 
             // The card nearest the top of the scroller is the one you are looking at, so it
@@ -4288,6 +4320,7 @@
                         </span>
                         <span class="wallet-plate">
                             <canvas class="wallet-canvas pixelated"></canvas>
+                            <span class="wallet-digits"></span>
                         </span>`;
 
                     // textContent for every field that came from a scan. HARD RULE 9.
@@ -4298,6 +4331,11 @@
                     card.querySelector('.wallet-title').textContent = app.title || 'Untitled';
                     card.querySelector('.wallet-format').textContent =
                         (window.FORMAT_NAMES && window.FORMAT_NAMES[app.bcid]) || app.bcid || 'code';
+                    // The number under the bars, on 1D formats only — see isOneD. textContent,
+                    // like every other field here that came from a scan. HARD RULE 9.
+                    if (window.isOneD && window.isOneD(app.bcid)) {
+                        card.querySelector('.wallet-digits').textContent = app.data || '';
+                    }
 
                     // Tap a card in the stack to bring it to the front; tap the front card to
                     // open it full screen. That is the gesture a wallet has: you thumb through
@@ -5882,6 +5920,18 @@
                   : (d.length % 2 ? 'ITF needs an even number of digits.' : null) }
         ];
         window.CODE_FORMATS = CODE_FORMATS;
+        CODE_FORMATS.forEach(f => { FORMAT_NAMES[f.bcid] = f.label; });
+
+        // Is this symbology one that carries its own number in print?
+        //
+        // Every 1D barcode on a real card has the digits under the bars, and they are there for
+        // a reason: when the scanner will not read it, somebody types them in. A 2D code has no
+        // such convention, and its payload is often a URL, a vCard or a Wi-Fi password — none of
+        // which belongs printed on the face of a pass you hold up to a stranger.
+        window.isOneD = function(bcid) {
+            const f = CODE_FORMATS.find(x => x.bcid === bcid);
+            return !!f && f.kind === '1D';
+        };
 
         // Single place to ask "will this data actually encode in this format?". Returns an error
         // string or null. Used by the Custom form live and again on save.

@@ -8907,6 +8907,80 @@ test.describe('The wallet', () => {
         expect(r.plateInside, 'the code plate hangs off the bottom of its card').toBe(true);
     });
 
+    test('a 1D code prints its number, a 2D code never does', async ({ page }) => {
+        // Every 1D barcode on a real card has the digits under the bars, and they are there
+        // for a reason: when the scanner will not read it, somebody types them in.
+        //
+        // The 2D half of this is the one that matters. A 2D payload is routinely a URL, a
+        // vCard or — as here — a Wi-Fi password. Printing it across the face of a pass you
+        // hold up to a stranger would be a leak, so the rule is the symbology's kind, not the
+        // length of the string.
+        await seeded(page, 4);
+        await page.evaluate(() => {
+            const set = (id, bcid, data) => {
+                const a = window.OS_STATE.apps.find(x => x.id === id);
+                a.bcid = bcid; a.data = data;
+            };
+            set('w0', 'ean13', '5901234123457');
+            set('w1', 'code128', 'GYM-8823410077');
+            set('w2', 'qrcode', 'WIFI:S:Home;T:WPA;P:hunter2;;');
+            set('w3', 'pdf417', 'BP LHR/JFK 12A');
+            window.WalletView.open();
+        });
+        await page.waitForTimeout(1100);
+
+        const rows = await page.evaluate(() => [...document.querySelectorAll('.wallet-card')]
+            .map(c => ({ id: c.dataset.id,
+                         fmt: c.querySelector('.wallet-format').textContent,
+                         digits: c.querySelector('.wallet-digits').textContent })));
+        const by = (id) => rows.find(r => r.id === id);
+
+        expect(by('w0').digits, 'an EAN-13 did not print its number').toBe('5901234123457');
+        expect(by('w1').digits).toBe('GYM-8823410077');
+        expect(by('w2').digits, 'a QR payload was printed on the card face').toBe('');
+        expect(by('w3').digits, 'a PDF417 payload was printed on the card face').toBe('');
+        // Nothing anywhere in the view leaks the password.
+        const leaked = await page.evaluate(() =>
+            document.getElementById('wallet-scroll').textContent.includes('hunter2'));
+        expect(leaked, 'a Wi-Fi password is rendered somewhere in the wallet').toBe(false);
+
+        // And the row is laid out, not just populated: the plate has to have grown for it.
+        await page.evaluate(() => window.WalletView.setActive('w0'));
+        await page.waitForTimeout(900);
+        const fits = await page.evaluate(() => {
+            const c = document.querySelector('.wallet-card.is-active');
+            const d = c.querySelector('.wallet-digits').getBoundingClientRect();
+            const p = c.querySelector('.wallet-plate').getBoundingClientRect();
+            return { h: d.height, inside: d.bottom <= p.bottom + 0.5 && d.top >= p.top };
+        });
+        expect(fits.h, 'the number row has no height').toBeGreaterThan(10);
+        expect(fits.inside, 'the number is clipped out of its own plate').toBe(true);
+    });
+
+    test('every format the app can encode has a name', async ({ page }) => {
+        // FORMAT_NAMES was a hand-written literal holding five of the eleven symbologies in
+        // CODE_FORMATS. The other six fell through to the raw bcid at all five places that
+        // read it: the Library listed a supermarket barcode as "ean13", the viewer captioned
+        // it "upca", and searching the Library for "EAN" matched nothing, because the search
+        // reads the same table. It is derived from CODE_FORMATS now.
+        await seeded(page, 1);
+        const r = await page.evaluate(() => {
+            const missing = window.CODE_FORMATS
+                .filter(f => !window.FORMAT_NAMES[f.bcid])
+                .map(f => f.bcid);
+            const raw = Object.entries(window.FORMAT_NAMES)
+                .filter(([bcid, label]) => label === bcid)
+                .map(([bcid]) => bcid);
+            return { missing, raw, count: Object.keys(window.FORMAT_NAMES).length,
+                     ean: window.FORMAT_NAMES.ean13, upc: window.FORMAT_NAMES.upca };
+        });
+        expect(r.missing, `these formats have no display name: ${r.missing.join(', ')}`).toEqual([]);
+        expect(r.raw, `these formats display their raw bcid: ${r.raw.join(', ')}`).toEqual([]);
+        expect(r.count).toBeGreaterThanOrEqual(11);
+        expect(r.ean).toBe('EAN-13');
+        expect(r.upc).toBe('UPC-A');
+    });
+
     test('the plate takes the shape of the code', async ({ page }) => {
         // A code contained inside a plate of the wrong shape is a symbol marooned in white,
         // and it reads as a rendering bug rather than as a pass.
@@ -8937,8 +9011,11 @@ test.describe('The wallet', () => {
                 const cv = c.querySelector('.wallet-canvas');
                 const p = c.querySelector('.wallet-plate').getBoundingClientRect();
                 const box = cv.getBoundingClientRect();
+                // A 1D code prints its number under the bars, and that row is part of the
+                // plate but not part of the symbol.
+                const under = c.querySelector('.wallet-digits').getBoundingClientRect().height;
                 return { id: c.dataset.id, code: cv.width / cv.height,
-                         plate: (p.width - 28) / (p.height - 26),
+                         plate: (p.width - 28) / (p.height - 26 - under),
                          fitsCard: p.width <= c.getBoundingClientRect().width - 39,
                          box: [box.width, box.height] };
             });
