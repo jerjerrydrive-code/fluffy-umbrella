@@ -6,3 +6,4 @@ playwright/.cache/
 motion-audit/
 .capture/
 _*.mjs
+tests/fixtures/sw-freshness.html
