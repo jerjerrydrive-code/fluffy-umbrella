@@ -1238,6 +1238,104 @@
             filter: blur(12px) brightness(0.7);
         }
 
+        /* ================= THE VIEWFINDER =================
+           
+           The corners were 56px boxes with a 40px border-radius, which is not a corner bracket
+           — it is a quarter of a very round rectangle. Four of them around a 288px cutout read
+           as one broken outline with the middle of each side missing, rather than as a frame.
+           Every camera UI draws this the same way and for the same reason: a SHORT arm on each
+           side of the corner, with a small radius where they meet, so the eye completes the
+           rectangle without anything being drawn along the sides.
+           
+           And it is palette-tinted, like everything else. This screen was the last one in the
+           app still rendering in pure black and white. */
+        .scan-corner {
+            position: absolute;
+            width: 34px; height: 34px;
+            border-style: solid;
+            border-color: color-mix(in srgb, var(--pal-2) 70%, #ffffff);
+            border-width: 0;
+            filter: drop-shadow(0 0 6px color-mix(in srgb, var(--pal-2) 60%, transparent));
+            transition: border-color 0.3s ease, filter 0.3s ease;
+        }
+        .scan-corner-tl { top: -3px; left: -3px;
+            border-top-width: 3px; border-left-width: 3px; border-top-left-radius: 14px; }
+        .scan-corner-tr { top: -3px; right: -3px;
+            border-top-width: 3px; border-right-width: 3px; border-top-right-radius: 14px; }
+        .scan-corner-bl { bottom: -3px; left: -3px;
+            border-bottom-width: 3px; border-left-width: 3px; border-bottom-left-radius: 14px; }
+        .scan-corner-br { bottom: -3px; right: -3px;
+            border-bottom-width: 3px; border-right-width: 3px; border-bottom-right-radius: 14px; }
+
+        /* The sweep takes the palette too, and it is a gradient rather than a flat bar — a
+           line with weight in the middle and nothing at the ends reads as light passing over
+           the frame instead of a white rule sliding down it. */
+        #scanner-laser {
+            background: linear-gradient(90deg,
+                        transparent 0%,
+                        color-mix(in srgb, var(--pal-2) 80%, #ffffff) 22%,
+                        #ffffff 50%,
+                        color-mix(in srgb, var(--pal-2) 80%, #ffffff) 78%,
+                        transparent 100%) !important;
+            box-shadow: 0 0 16px 2px color-mix(in srgb, var(--pal-2) 65%, transparent) !important;
+        }
+
+        /* The four camera controls are one group, so they read as a toolbar rather than as
+           four unrelated buttons of equal weight competing with the close control. */
+        .scan-tools {
+            display: flex; align-items: center; gap: 2px;
+            padding: 4px;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--pal-1) 26%, rgba(0,0,0,0.42));
+            border: 0.5px solid color-mix(in srgb, var(--pal-2) 30%, rgba(255,255,255,0.14));
+            backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+            box-shadow: 0 8px 24px -12px rgba(0,0,0,0.7);
+        }
+        .scan-tools > button {
+            border-radius: 999px;
+            transition: background 0.2s ease, transform 0.16s var(--spring-snappy);
+        }
+        .scan-tools > button:active {
+            transform: scale(0.9);
+            background: color-mix(in srgb, var(--pal-2) 30%, rgba(255,255,255,0.14));
+        }
+        #btn-close-scanner {
+            background: color-mix(in srgb, var(--pal-1) 26%, rgba(0,0,0,0.42)) !important;
+            border-color: color-mix(in srgb, var(--pal-2) 30%, rgba(255,255,255,0.14)) !important;
+        }
+        #scanner-status {
+            background: color-mix(in srgb, var(--pal-1) 32%, rgba(0,0,0,0.62)) !important;
+            border: 0.5px solid color-mix(in srgb, var(--pal-2) 26%, rgba(255,255,255,0.12));
+        }
+
+        /* ---- Account: the one screen where somebody decides to trust the app ---------- */
+        .acct-hero {
+            display: flex; align-items: center; justify-content: center; gap: 14px;
+            padding: 20px 0 4px;
+        }
+        .acct-hero-plate {
+            width: 56px; height: 56px; border-radius: 18px;
+            display: flex; align-items: center; justify-content: center;
+            color: var(--accent-text);
+            background: linear-gradient(150deg,
+                        color-mix(in srgb, var(--accent) 86%, #ffffff) 0%,
+                        var(--accent) 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.28),
+                        0 10px 22px -12px var(--accent);
+        }
+        /* The destination is drawn dimmer than the source, because it is not true yet. */
+        .acct-hero-plate-dim {
+            background: color-mix(in srgb, var(--pal-1) 22%, rgba(255,255,255,0.07));
+            color: var(--ink-dim);
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+        }
+        .acct-hero-arrow { color: var(--ink-dim); }
+        .acct-line-strong {
+            color: var(--ink-strong); font-size: 15.5px; font-weight: 700;
+            letter-spacing: -0.01em; margin-bottom: 3px;
+        }
+        .acct-line-soft { color: var(--ink-soft); font-size: 13px; line-height: 1.45; }
+
         @keyframes scan-laser {
             0% { transform: translateY(16px); opacity: 0; }
             15% { opacity: 1; }
@@ -2259,8 +2357,26 @@
                 </button>
             </div>
 
-            <div id="account-guest-view" class="flex flex-col gap-3">
-                <p class="text-white/60 text-sm leading-relaxed px-1">You're browsing as a <strong class="text-white">Guest</strong>. Your codes are saved on this device only. Sign in with Google to back them up and sync across your devices.</p>
+            <!-- A picture of what signing in DOES, not a paragraph about it.
+                 
+                 This was three lines of prose in 60%-white above a button — the one screen in
+                 the app where somebody decides whether to trust it with their data, and it
+                 read like a terms-of-service footnote. One glyph, one line that says where the
+                 codes are now, one that says where they would be. -->
+            <div id="account-guest-view" class="flex flex-col gap-4">
+                <div class="acct-hero">
+                    <div class="acct-hero-plate">
+                        <i data-lucide="smartphone" class="w-6 h-6"></i>
+                    </div>
+                    <i data-lucide="arrow-right" class="acct-hero-arrow w-4 h-4"></i>
+                    <div class="acct-hero-plate acct-hero-plate-dim">
+                        <i data-lucide="cloud-off" class="w-6 h-6"></i>
+                    </div>
+                </div>
+                <div class="px-1">
+                    <p class="acct-line-strong">Saved on this device only</p>
+                    <p class="acct-line-soft">Sign in to back your codes up and keep them in step across everything you use.</p>
+                </div>
                 <button id="btn-google-signin" class="w-full bg-white text-gray-900 py-3.5 rounded-2xl font-bold flex items-center justify-center gap-3 active:scale-95 transition-all shadow-md">
                     <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
                     Sign in with Google
@@ -2425,10 +2541,10 @@
         <div class="absolute inset-0 z-10 flex flex-col items-center justify-center overflow-hidden pointer-events-none">
             <div id="scanner-cutout" class="w-72 h-72 rounded-[2.5rem] relative transition-all duration-400 ease-out" style="box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55); will-change: transform;">
                 <div id="scanner-laser" class="absolute left-6 right-6 top-0 h-0.5 bg-white shadow-[0_0_15px_3px_rgba(255,255,255,0.8)] rounded-full animate-scan-laser"></div>
-                <div class="absolute -top-[2px] -left-[2px] w-14 h-14 border-t-[4px] border-l-[4px] border-white/90 rounded-tl-[2.5rem] transition-colors duration-300" id="corner-1"></div>
-                <div class="absolute -top-[2px] -right-[2px] w-14 h-14 border-t-[4px] border-r-[4px] border-white/90 rounded-tr-[2.5rem] transition-colors duration-300" id="corner-2"></div>
-                <div class="absolute -bottom-[2px] -left-[2px] w-14 h-14 border-b-[4px] border-l-[4px] border-white/90 rounded-bl-[2.5rem] transition-colors duration-300" id="corner-3"></div>
-                <div class="absolute -bottom-[2px] -right-[2px] w-14 h-14 border-b-[4px] border-r-[4px] border-white/90 rounded-br-[2.5rem] transition-colors duration-300" id="corner-4"></div>
+                <div class="scan-corner scan-corner-tl" id="corner-1"></div>
+                <div class="scan-corner scan-corner-tr" id="corner-2"></div>
+                <div class="scan-corner scan-corner-bl" id="corner-3"></div>
+                <div class="scan-corner scan-corner-br" id="corner-4"></div>
             </div>
         </div>
         <p id="scanner-status" class="absolute bottom-[104px] left-1/2 -translate-x-1/2 z-20 text-center text-xs text-white font-bold drop-shadow-md bg-black/60 backdrop-blur-md rounded-full py-1.5 px-4 shadow-sm pointer-events-none transition-opacity duration-300">Starting camera...</p>
@@ -2436,19 +2552,19 @@
             <button id="btn-close-scanner" class="p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white pointer-events-auto">
                 <i data-lucide="x" class="w-6 h-6"></i>
             </button>
-            <div class="flex items-center gap-3">
+            <div class="scan-tools pointer-events-auto">
                 <input type="file" id="scan-image-input" accept="image/*" class="hidden">
-                <button id="btn-scan-batch" title="Batch mode" class="relative p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white pointer-events-auto">
+                <button id="btn-scan-batch" title="Batch mode" class="relative p-3 active:scale-90 transition-all duration-300 text-white pointer-events-auto">
                     <i data-lucide="layers" class="w-5 h-5"></i>
                     <span id="scan-batch-count" class="hidden absolute -top-1 -right-1 min-w-[20px] h-5 px-1 accent-bg accent-on-accent text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-transparent shadow-md">0</span>
                 </button>
-                <button id="btn-scan-image" title="Scan an image" class="p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white pointer-events-auto">
+                <button id="btn-scan-image" title="Scan an image" class="p-3 active:scale-90 transition-all duration-300 text-white pointer-events-auto">
                     <i data-lucide="image" class="w-5 h-5"></i>
                 </button>
-                <button id="btn-switch-cam" class="p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white opacity-50" style="pointer-events: none;">
+                <button id="btn-switch-cam" class="p-3 active:scale-90 transition-all duration-300 text-white opacity-50" style="pointer-events: none;">
                     <i data-lucide="switch-camera" class="w-5 h-5"></i>
                 </button>
-                <button id="btn-toggle-flash" class="p-3 bg-black/30 backdrop-blur-md rounded-full active:scale-90 transition-all duration-300 border border-white/10 shadow-lg text-white pointer-events-auto">
+                <button id="btn-toggle-flash" class="p-3 active:scale-90 transition-all duration-300 text-white pointer-events-auto">
                     <i data-lucide="zap" class="w-5 h-5"></i>
                 </button>
             </div>

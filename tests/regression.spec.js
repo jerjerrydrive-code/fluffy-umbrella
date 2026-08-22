@@ -8509,3 +8509,101 @@ test.describe('A dock key is one button', () => {
         expect(r.overGlyphCentre, 'the badge is painted across the middle of the glyph').toBe(false);
     });
 });
+
+// ============================================================================================
+//  The last two screens
+//
+//  The scanner and the account panel were the only surfaces never touched by the theming work.
+//  The scanner in particular was still rendering in pure black and white while every other
+//  screen in the app was palette-driven.
+// ============================================================================================
+test.describe('The last two screens', () => {
+    const open = async (page, id) => {
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+        await page.evaluate(i => {
+            const m = document.getElementById(i);
+            m.classList.remove('opacity-0', 'pointer-events-none');
+            m.classList.add('opacity-100');
+        }, id);
+        await page.waitForTimeout(600);
+    };
+
+    test('the viewfinder is four corner brackets, not one broken outline', async ({ page }) => {
+        // They were 56px boxes with a 40px radius — a quarter of a very round rectangle, not a
+        // corner. Four of those around a 288px cutout read as one outline with the middle of
+        // every side missing. A bracket needs a SHORT arm and a SMALL radius, so the eye
+        // completes the rectangle without anything being drawn along the sides.
+        await open(page, 'scanner-modal');
+        const r = await page.evaluate(() => {
+            const c = document.getElementById('corner-1');
+            const cut = document.getElementById('scanner-cutout');
+            const cs = getComputedStyle(c);
+            return {
+                arm: c.getBoundingClientRect().width,
+                cutout: cut.getBoundingClientRect().width,
+                radius: parseFloat(cs.borderTopLeftRadius),
+            };
+        });
+        // An arm longer than a third of the cutout stops reading as a corner and starts
+        // reading as a side that ran out.
+        expect(r.arm / r.cutout, `each bracket arm is ${Math.round(r.arm)}px of a ${Math.round(r.cutout)}px cutout`)
+            .toBeLessThan(0.34);
+        expect(r.radius, `the corner radius is ${r.radius}px — that is an arc, not a corner`)
+            .toBeLessThan(r.arm * 0.6);
+    });
+
+    test('the scanner is themed like the rest of the app', async ({ page }) => {
+        // It was the last screen still rendering in pure black and white.
+        await open(page, 'scanner-modal');
+        const before = await page.evaluate(() => ({
+            corner: getComputedStyle(document.getElementById('corner-1')).borderTopColor,
+            tools: getComputedStyle(document.querySelector('.scan-tools')).backgroundColor,
+        }));
+        await page.evaluate(() =>
+            window.ThemeManager.applyAccent('#E97A7A', false,
+                ['#E97A7A', '#8B4F80', '#8B76A5', '#B9C0D5']));
+        await page.waitForTimeout(900);
+        const after = await page.evaluate(() => ({
+            corner: getComputedStyle(document.getElementById('corner-1')).borderTopColor,
+            tools: getComputedStyle(document.querySelector('.scan-tools')).backgroundColor,
+        }));
+        expect(after.corner, 'the viewfinder ignores the palette').not.toBe(before.corner);
+        expect(after.tools, 'the camera toolbar ignores the palette').not.toBe(before.tools);
+    });
+
+    test('the camera controls are one group, not four loose buttons', async ({ page }) => {
+        // Four identical circles competing with the close control for the same attention. They
+        // are one toolbar now, which is also what stops the close button reading as a fifth
+        // member of the set.
+        await open(page, 'scanner-modal');
+        const r = await page.evaluate(() => {
+            const tools = document.querySelector('.scan-tools');
+            const close = document.getElementById('btn-close-scanner');
+            return {
+                grouped: !!tools && tools.querySelectorAll('button').length,
+                closeOutside: !!tools && !tools.contains(close),
+            };
+        });
+        expect(r.grouped, 'the camera controls are not grouped').toBeGreaterThanOrEqual(4);
+        expect(r.closeOutside, 'the close control got swept into the toolbar').toBe(true);
+    });
+
+    test('the account panel shows what signing in does', async ({ page }) => {
+        // It was three lines of 60%-white prose above a button, on the one screen where
+        // somebody decides whether to trust the app with their data.
+        await open(page, 'account-modal');
+        const r = await page.evaluate(() => {
+            const hero = document.querySelector('#account-guest-view .acct-hero');
+            const strong = document.querySelector('#account-guest-view .acct-line-strong');
+            return {
+                plates: hero ? hero.querySelectorAll('.acct-hero-plate').length : 0,
+                heading: strong ? strong.textContent.trim() : '',
+                headingSize: strong ? parseFloat(getComputedStyle(strong).fontSize) : 0,
+            };
+        });
+        expect(r.plates, 'the before/after pair is not being drawn').toBe(2);
+        expect(r.heading, 'there is no heading above the explanation').toBeTruthy();
+        expect(r.headingSize, `the heading is only ${r.headingSize}px`).toBeGreaterThanOrEqual(15);
+    });
+});
