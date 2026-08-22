@@ -1083,11 +1083,22 @@
 
         /* A deck, not a picture. Two cards behind the plate, each smaller and lower, which is
            what tells the eye the code is an object sitting on top of something. */
-        .viewer-stage { position: relative; }
+        /* THE SHAPE OF THE PLATE.
+           
+           The plate was aspect-square, whatever was on it. Measured on a phone: a PDF417
+           boarding pass painted 278x66 inside a 326x326 white panel — SEVENTEEN per cent of it —
+           a strip of bars marooned in the middle of a white slab. The wallet card was showing
+           the same code better than the full-screen viewer, which is backwards.
+           
+           One ratio, set from the rendered canvas by fitViewerPlate, and the plate and both
+           shelves behind it read it — so the deck keeps its shape rather than leaving two square
+           cards sticking out below a short plate. Falls back to 1 (square) if it is never set,
+           which is what every 2D code wants anyway. */
+        .viewer-stage { position: relative; --viewer-plate-ratio: 1; }
         .viewer-shelf {
             position: absolute; left: 0; right: 0; top: 0;
-            aspect-ratio: 1 / 1;
-            border-radius: 2.5rem;
+            aspect-ratio: var(--viewer-plate-ratio, 1);
+            border-radius: var(--viewer-plate-radius, 2.5rem);
             background: color-mix(in srgb, var(--pal-2) 30%, #ffffff);
             box-shadow: 0 12px 30px -18px rgba(0,0,0,0.5);
         }
@@ -1099,6 +1110,10 @@
            is a rectangle with a blur and three is an object in a room. */
         #item-fullscreen-layer .fullscreen-canvas-panel {
             position: relative; z-index: 2;
+            aspect-ratio: var(--viewer-plate-ratio, 1);
+            /* A fixed 2.5rem is a nice corner on a 326px square and a lozenge on the 114px
+               strip a boarding pass now gets. Scaled with the plate, in fitViewerPlate. */
+            border-radius: var(--viewer-plate-radius, 2.5rem);
             box-shadow: 0 2px 4px rgba(0,0,0,0.10),
                         0 12px 24px -12px rgba(0,0,0,0.35),
                         0 40px 70px -30px color-mix(in srgb, var(--pal-1) 70%, rgba(0,0,0,0.55));
@@ -2667,7 +2682,7 @@
             <div class="viewer-stage w-full">
                 <div class="viewer-shelf viewer-shelf-2"></div>
                 <div class="viewer-shelf viewer-shelf-1"></div>
-                <div class="fullscreen-canvas-panel bg-white p-6 rounded-[2.5rem] w-full aspect-square flex items-center justify-center relative group transition-all duration-500">
+                <div class="fullscreen-canvas-panel bg-white p-6 w-full flex items-center justify-center relative group transition-all duration-500">
                     <canvas id="fullscreen-canvas" class="max-w-full max-h-full pixelated transition-transform duration-300"></canvas>
                 </div>
             </div>
@@ -5510,9 +5525,36 @@
                 requestAnimationFrame(() => {
                     // The viewer may already have been closed or moved on to another code.
                     if (this.activeItem !== drawing) return;
-                    try { window.renderCode('fullscreen-canvas', drawing, { scale: 5, padding: 3 }); }
-                    catch (e) { XanLogger.error('Fullscreen canvas error', e); }
+                    try {
+                        window.renderCode('fullscreen-canvas', drawing, { scale: 5, padding: 3 });
+                        this.fitViewerPlate();
+                    } catch (e) { XanLogger.error('Fullscreen canvas error', e); }
                 });
+            }
+
+            // Give the plate the shape of the code standing on it.
+            //
+            // Solved with a ratio rather than a height because the ratio is what the shelves
+            // behind the plate need too, and because a height would have to be recomputed on
+            // every resize while an aspect-ratio just holds. It is not width-independent — the
+            // 24px of quiet zone around the code is a fixed inset, so the ratio is computed at
+            // the width the plate actually has — but the viewer recomputes it on every open,
+            // which is the only time it can be wrong enough to see.
+            fitViewerPlate() {
+                const canvas = document.getElementById('fullscreen-canvas');
+                const stage = document.querySelector('.viewer-stage');
+                if (!canvas || !stage || !canvas.width || !canvas.height) return;
+                const W = stage.clientWidth;
+                if (!W) return;
+                const PAD = 48;                       // p-6 on each side
+                const inner = Math.max(40, W - PAD);
+                const h = inner * (canvas.height / canvas.width) + PAD;
+                // Never taller than square: nothing this app encodes is, and an unbounded
+                // ratio would let one bad number push the title off the screen.
+                const ratio = Math.max(1, Math.min(3.4, W / h));
+                stage.style.setProperty('--viewer-plate-ratio', ratio.toFixed(4));
+                stage.style.setProperty('--viewer-plate-radius',
+                    Math.round(Math.min(40, (W / ratio) * 0.22)) + 'px');
             }
 
             // Fills the skin-dependent "Scan Card" elements (badge + stat rows). These sit

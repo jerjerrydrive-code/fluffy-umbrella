@@ -8033,6 +8033,58 @@ test.describe('The viewer is the hero screen', () => {
         expect(r.belowPlate, 'the title is not under the code').toBe(true);
         expect(r.size, `the title is only ${r.size}px`).toBeGreaterThanOrEqual(24);
     });
+
+    test('the plate is the shape of the code standing on it', async ({ page }) => {
+        // The plate was aspect-square whatever was on it. Measured on a phone: a PDF417
+        // boarding pass painted 278x66 inside a 326x326 white panel — 17% of it — a strip of
+        // bars marooned in a white slab. The wallet card was showing the same code better than
+        // the full-screen viewer, which is backwards.
+        //
+        // The floor is a coverage fraction rather than an aspect match, because the plate keeps
+        // a fixed 24px of quiet zone on every side: on a short strip that padding is most of
+        // what is left, and demanding the panel match the code's aspect would be demanding the
+        // quiet zone be dropped.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1400);
+
+        const show = async (bcid, data) => {
+            await page.evaluate(async ({ bcid, data }) => {
+                const app = { id: 'shape', title: 'Shape', type: 'grid', bcid, data };
+                window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.id !== 'shape');
+                window.OS_STATE.apps.push(app);
+                window.InteractionManager.openEnlarge(app);
+                await new Promise(r => setTimeout(r, 800));
+            }, { bcid, data });
+            return page.evaluate(() => {
+                const panel = document.querySelector('.fullscreen-canvas-panel').getBoundingClientRect();
+                const box = document.getElementById('fullscreen-canvas').getBoundingClientRect();
+                const shelf = document.querySelector('.viewer-shelf-1').getBoundingClientRect();
+                return {
+                    fill: (box.width * box.height) / (panel.width * panel.height),
+                    panelRatio: panel.width / panel.height,
+                    shelfRatio: shelf.width / shelf.height,
+                    tall: panel.height > panel.width + 1,
+                };
+            });
+        };
+
+        for (const [bcid, data] of [['pdf417', 'BP LHR/JFK 12A SEAT 22C'],
+                                    ['ean13', '5901234123457'],
+                                    ['code128', 'GYM-8823410077'],
+                                    ['qrcode', 'https://example.com']]) {
+            const r = await show(bcid, data);
+            expect(r.fill, `${bcid} covers ${Math.round(r.fill * 100)}% of its plate`)
+                .toBeGreaterThan(0.42);
+            // The two cards behind the plate are what make it read as a deck. They were
+            // aspect-ratio: 1/1 independently, so a short plate would have left two square
+            // shelves sticking out below it.
+            expect(Math.abs(r.shelfRatio - r.panelRatio) / r.panelRatio,
+                `${bcid}: the plate is ${r.panelRatio.toFixed(2)}:1 but the shelf behind it is ${r.shelfRatio.toFixed(2)}:1`)
+                .toBeLessThan(0.02);
+            expect(r.tall, `${bcid}: the plate is taller than it is wide`).toBe(false);
+        }
+    });
 });
 
 // ============================================================================================
