@@ -4800,12 +4800,38 @@
                 cancelBtn.addEventListener('click', () => this.closeSearch());
             }
             
+            // The nearest thing under the finger that can actually scroll, if any.
+            //
+            // Walks up rather than asking the target, because the finger lands on a card or a
+            // label, never on the scroller itself.
+            scrollerUnder(node) {
+                for (let el = node; el && el !== document.body; el = el.parentElement) {
+                    if (el.scrollHeight - el.clientHeight <= 1) continue;
+                    const oy = getComputedStyle(el).overflowY;
+                    if (oy === 'auto' || oy === 'scroll') return el;
+                }
+                return null;
+            }
+
             onTouchStart(e) {
                 // If a modal is open, we disable gesture engine entirely
                 if (window.OS_STATE.isEditMode || window.ScannerEngine?.isScanning || this.isSearchActive || document.querySelector('.modal-spring.opacity-100')) {
                     this.startY = null; 
                     return;
                 }
+
+                // A drag that starts inside a list which is already scrolled belongs to the
+                // list, not to search.
+                //
+                // This engine listens on the document and knew about one surface: the home
+                // grid, which does not scroll vertically, so "drag down means search" was
+                // always safe. The wallet is a scroller, and there dragging down is how you get
+                // back to the top of the stack — it was opening search instead, from any
+                // position in the list. Same rule as every OS: the pull only starts when there
+                // is nothing above you to pull back to, which is why the test is scrollTop and
+                // not which view is open. Any scroller added later gets this for free.
+                const sc = this.scrollerUnder(e.target);
+                if (sc && sc.scrollTop > 0) { this.startY = null; return; }
                 
                 this.startX = e.touches[0].clientX;
                 this.startY = e.touches[0].clientY;

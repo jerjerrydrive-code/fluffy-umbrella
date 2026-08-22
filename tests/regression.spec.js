@@ -8957,6 +8957,54 @@ test.describe('The wallet', () => {
         expect(fits.inside, 'the number is clipped out of its own plate').toBe(true);
     });
 
+    test('dragging down a scrolled stack belongs to the stack, not to search', async ({ page }) => {
+        // The pull-down-to-search engine listens on the document and knew about one surface:
+        // the home grid, which does not scroll vertically, so "drag down means search" was
+        // always safe there. The wallet is a scroller, and dragging down is how you get back to
+        // the top of it — it was opening search instead, from any position in the list.
+        //
+        // Native touch scrolling cannot be driven in this browser (a bare control scroller does
+        // not move under dispatched touch either), so the scroll position is set directly and
+        // what is asserted is the decision the engine makes about the gesture.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await seeded(page, 20);
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(1000);
+
+        const scrollable = await page.evaluate(() => {
+            const s = document.getElementById('wallet-scroll');
+            return s.scrollHeight - s.clientHeight;
+        });
+        expect(scrollable, 'twenty passes did not overflow the viewport, so this proves nothing')
+            .toBeGreaterThan(200);
+
+        const dragDown = async () => {
+            const cdp = await page.context().newCDPSession(page);
+            const send = (type, y) => cdp.send('Input.dispatchTouchEvent',
+                { type, touchPoints: type === 'touchEnd' ? [] : [{ x: 195, y }] });
+            await send('touchStart', 300);
+            for (let y = 300; y <= 620; y += 32) { await send('touchMove', y); await page.waitForTimeout(16); }
+            await send('touchEnd', 620);
+            await page.waitForTimeout(500);
+            const open = await page.evaluate(() => window.GestureManager.isSearchActive);
+            await page.evaluate(() => window.GestureManager.closeSearch());
+            await page.waitForTimeout(300);
+            await cdp.detach();
+            return open;
+        };
+
+        // Mid-list: the drag is the list's.
+        await page.evaluate(() => { document.getElementById('wallet-scroll').scrollTop = 260; });
+        await page.waitForTimeout(200);
+        expect(await dragDown(), 'dragging down a scrolled wallet opened search').toBe(false);
+
+        // At the very top there is nothing above to pull back to, so it is search again —
+        // the same rule iOS uses, and the home screen must keep working.
+        await page.evaluate(() => { document.getElementById('wallet-scroll').scrollTop = 0; });
+        await page.waitForTimeout(200);
+        expect(await dragDown(), 'pull-to-search stopped working at the top of the list').toBe(true);
+    });
+
     test('every format the app can encode has a name', async ({ page }) => {
         // FORMAT_NAMES was a hand-written literal holding five of the eleven symbologies in
         // CODE_FORMATS. The other six fell through to the raw bcid at all five places that
