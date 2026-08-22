@@ -7,3 +7,11 @@ motion-audit/
 .capture/
 _*.mjs
 tests/fixtures/sw-freshness.html
+
+# Android build outputs. The project sources under android/ are tracked; everything Gradle
+# generates is not, and neither is the SDK it needs.
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk

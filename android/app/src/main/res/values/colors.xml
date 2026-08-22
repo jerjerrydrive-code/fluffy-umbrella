@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches theme_color in the web manifest, so the window the system paints before the
+         WebView has drawn anything is the same colour as what appears in it. -->
+    <color name="launch_bg">#0a0a12</color>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- No action bar and a translucent status bar: the web layer draws the clock and the
+         bottom bar itself, so any system chrome above it is a duplicate. -->
+    <style name="Theme.XanCode" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/launch_bg</item>
+    </style>
+</resources>

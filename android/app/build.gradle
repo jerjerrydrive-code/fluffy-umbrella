@@ -1,0 +1,70 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.xancode.os'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.xancode.os"
+        // 24, not lower: WebViewAssetLoader and ServiceWorkerControllerCompat both need it,
+        // and without the asset loader this app cannot work at all — see MainActivity.
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // The web app is NOT copied into the Android tree.
+    //
+    // A second copy of index.html under app/src/main/assets would be 630KB of duplicate that
+    // drifts the first time somebody edits one and not the other, and nothing would report it.
+    // The single source of truth stays at the repo root and is staged into the build directory
+    // at assemble time.
+    sourceSets.main.assets.srcDirs = ["${buildDir}/webassets"]
+}
+
+def webRoot = rootProject.projectDir.parentFile
+
+// Sync, not Copy. A Copy task writes its inputs into the destination and leaves whatever
+// else is already there — so adding the exclude below removed nothing, and the stale file
+// shipped in the next APK anyway. Sync makes the destination match the inputs exactly.
+tasks.register('copyWebApp', Sync) {
+    from(webRoot) {
+        include 'index.html', 'manifest.json', 'sw.js'
+        include 'vendor/**', 'icons/**'
+        // tailwind.src.css is the input the vendored build is generated FROM. Nothing at
+        // runtime loads it and shipping it puts a source file in a user's installed app.
+        exclude 'vendor/tailwind.src.css'
+    }
+    into layout.buildDirectory.dir('webassets')
+}
+tasks.configureEach { t -> if (t.name == 'preBuild') t.dependsOn('copyWebApp') }
+
+// appcompat 1.7 pulls kotlin-stdlib 1.8.22 while something below it still asks for the
+// kotlin-stdlib-jdk7/jdk8 1.6.21 shims. Kotlin folded those two artifacts into the main stdlib
+// at 1.8, so both end up on the classpath carrying the same classes and D8 refuses the build
+// with several hundred "duplicate class" lines. Pinning the shims to the stdlib's own version
+// makes them the empty forwarding artifacts they became.
+configurations.configureEach {
+    resolutionStrategy {
+        force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

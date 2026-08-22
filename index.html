@@ -3452,7 +3452,9 @@
 
         const DEFAULT_STATE = {
             currentPage: 0, gridCols: 4, gridRows: 6, isEditMode: false, autoArrange: true,
-            gridSize: 'auto', wallpaper: null, skin: 'dock', accent: '#3b82f6', palette: null,
+            // Cloud is what this branch is: a first run lands in the light UI rather than
+            // in the dark one with a light skin available three taps away in Settings.
+            gridSize: 'auto', wallpaper: null, skin: 'cloud', accent: '#3b82f6', palette: null,
             haptics: true, animations: true, history: [], pageNames: [],
             // No sample codes. A first run — and every guest session — starts on an empty
             // home screen, because three fake codes belonging to nobody are clutter to delete
