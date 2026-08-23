@@ -8646,6 +8646,78 @@ test.describe('The wallet', () => {
 // ============================================================================================
 //  The suite and the app agree on what exists
 // ============================================================================================
+test.describe('A wallet with a real number of passes in it', () => {
+    const many = async (page, n) => {
+        await page.addInitScript((count) => {
+            const dock = [['nav_home','Home','grid'],['nav_gen','Create','plus-circle'],
+                          ['nav_wifi','WiFi','wifi'],['nav_lib','Library','layout-list'],
+                          ['nav_scan','Scan','scan-line']];
+            const apps = dock.map(([id, title, icon], i) => ({ id, title, icon, type: 'dock', order: i }));
+            for (let i = 0; i < count; i++) {
+                apps.push({ id: 'm' + i, title: 'Saved Code Number ' + i, type: 'grid',
+                            bcid: 'qrcode', data: 'm-' + i,
+                            page: Math.floor(i / 24), order: i % 24 });
+            }
+            localStorage.setItem('xancode_v2_state', JSON.stringify({
+                apps, gridSize: 'auto', skin: 'cloud', accent: '#516091',
+                palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
+                autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
+            }));
+        }, n);
+        await page.goto('/index.html');
+        await page.waitForFunction(() => window.WalletView, null, { timeout: 25000 });
+        await page.waitForTimeout(1500);
+    };
+
+    test('opening it does not block the main thread', async ({ page }) => {
+        // Measured with 120 passes: this froze for 383ms. Almost none of it was building the
+        // DOM — render() is 55ms — it was paint. Every card carries two blurred shadows, a
+        // filter driven by --depth and its own compositor layer, and in a wallet of any size
+        // most of them are below the fold where none of that can be seen. content-visibility
+        // on the card took it to 127ms.
+        //
+        // The ceiling is generous on purpose: this measures wall-clock work on a machine that
+        // may be running other browsers, and it exists to catch a return to the 400ms class of
+        // freeze, not to police 20ms.
+        await many(page, 120);
+        await page.evaluate(() => {
+            window.__tasks = [];
+            new PerformanceObserver(l => l.getEntries()
+                .forEach(e => window.__tasks.push(Math.round(e.duration))))
+                .observe({ entryTypes: ['longtask'] });
+        });
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(1500);
+        const r = await page.evaluate(() => ({
+            tasks: window.__tasks.slice(),
+            cards: document.querySelectorAll('.wallet-card').length,
+            drawn: [...document.querySelectorAll('.wallet-canvas')].filter(c => c.width > 1).length,
+        }));
+        expect(r.cards, 'the wallet did not render every pass').toBe(120);
+        expect(r.drawn, 'more than the front card rasterised a barcode').toBe(1);
+        const worst = Math.max(0, ...r.tasks);
+        expect(worst, `opening a 120-pass wallet blocked for ${worst}ms: ${JSON.stringify(r.tasks)}`)
+            .toBeLessThan(300);
+    });
+
+    test('the stack still overlaps and the front card still opens', async ({ page }) => {
+        // content-visibility skips off-screen cards, and a skipped card that reports the wrong
+        // height would show up here as a stack that no longer overlaps.
+        await many(page, 60);
+        await page.evaluate(() => window.WalletView.open());
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => {
+            const c = [...document.querySelectorAll('.wallet-card')];
+            const a = c[1].getBoundingClientRect(), b = c[2].getBoundingClientRect();
+            const front = document.querySelector('.wallet-card.is-active');
+            return { pitch: b.top - a.top, cardH: a.height,
+                     frontH: front.getBoundingClientRect().height };
+        });
+        expect(r.pitch, 'the stack stopped overlapping').toBeLessThan(r.cardH * 0.8);
+        expect(r.frontH, 'the open card did not grow for its code').toBeGreaterThan(r.cardH * 1.8);
+    });
+});
+
 test.describe('The one look holds on the screens the sweeps do not settle on', () => {
     const lum = (c) => {
         const n = (c.match(/[\d.]+/g) || []).map(Number);

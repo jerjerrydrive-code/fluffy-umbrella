@@ -628,6 +628,28 @@
             transition: transform 0.25s var(--spring-smooth), filter 0.25s ease,
                         box-shadow 0.25s ease, height 0.44s var(--spring-smooth);
             will-change: transform;
+            /* Off-screen cards are not rendered at all.
+               
+               Measured with 120 passes: opening the wallet blocked the main thread for 383ms.
+               Almost none of that is building the DOM — render() itself is 55ms — it is paint.
+               Every card carries two 12px-blur shadows, a filter driven by --depth and its own
+               compositor layer, and a wallet of any real size has most of them below the fold
+               where none of that can be seen.
+               
+               contain-intrinsic-size keeps the scrollbar honest for the ones being skipped, and
+               `auto` lets the browser remember each card's real height once it has been rendered
+               once — which matters here because the open card is more than twice the height of
+               a closed one.
+               
+               Measured, all with 120 passes and identical layout afterwards:
+                 as it was ............ 383ms
+                 will-change removed .. 210ms
+                 this ................. 127ms
+                 both ................. 141ms
+               So will-change stays: once the off-screen cards are skipped it is helping again
+               rather than promoting a hundred layers nobody looks at. */
+            content-visibility: auto;
+            contain-intrinsic-size: auto var(--wallet-card-h);
             cursor: pointer;
         }
         .wallet-card:active {
@@ -2268,6 +2290,11 @@
             background: var(--cl-ground);
             border: none;
             box-shadow: var(--cl-lift);
+            /* Same reason as the wallet card: a moulded row is two blurred shadows, and a
+               Library of 120 codes paints 120 of them on open when eight fit on the screen.
+               The rows are a fixed height here, so the intrinsic size is exact. */
+            content-visibility: auto;
+            contain-intrinsic-size: auto 96px;
         }
         body[data-skin="cloud"] #library-list > div:active { box-shadow: var(--cl-press); }
         body[data-skin="cloud"] .viewer-shelf {
