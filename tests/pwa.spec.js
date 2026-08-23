@@ -68,19 +68,34 @@ test.describe('Offline', () => {
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => window.Renderer && window.OS_STATE, null, { timeout: 25000 });
 
-        const state = await page.evaluate(() => ({
-            icons: document.querySelectorAll('#workspace-pager .app-icon-wrapper').length,
-            // A number here means the stylesheet loaded. Unstyled, this is 0px — which is exactly
-            // how the app looked when Tailwind came from a CDN and the CDN was unreachable, while
-            // every behavioural test stayed green.
-            dockRadius: parseFloat(getComputedStyle(document.getElementById('main-dock')).borderRadius),
-            bwip: typeof window.bwipjs,
-            qr: typeof window.Html5Qrcode,
-            lucide: typeof window.lucide,
-        }));
+        const state = await page.evaluate(() => {
+            // The proxy for "the stylesheet loaded" has to come FROM that stylesheet.
+            //
+            // This measured the dock's border-radius and required it to be non-zero, which was a
+            // fine stand-in for as long as the dock was a rounded floating pill. It is a
+            // full-width bar with square corners now, so a perfectly healthy offline boot
+            // reported "stylesheet did not load offline" — the assertion had quietly become a
+            // test of the dock's shape.
+            //
+            // A bare .flex probe cannot be confused with anything else: display:flex on a div
+            // exists only in vendor/tailwind.css, so it is block when that file is missing and
+            // flex when it is there, whatever the app's design does later.
+            const probe = document.createElement('div');
+            probe.className = 'flex';
+            document.body.appendChild(probe);
+            const probeDisplay = getComputedStyle(probe).display;
+            probe.remove();
+            return {
+                icons: document.querySelectorAll('#workspace-pager .app-icon-wrapper').length,
+                probeDisplay,
+                bwip: typeof window.bwipjs,
+                qr: typeof window.Html5Qrcode,
+                lucide: typeof window.lucide,
+            };
+        });
 
         expect(state.icons, 'no codes rendered offline').toBeGreaterThan(0);
-        expect(state.dockRadius, 'stylesheet did not load offline').toBeGreaterThan(0);
+        expect(state.probeDisplay, 'vendor/tailwind.css did not load offline').toBe('flex');
         expect(state.bwip).toBe('object');
         expect(state.qr).toBe('function');
         expect(state.lucide).toBe('object');
