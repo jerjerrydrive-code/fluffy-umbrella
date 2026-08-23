@@ -909,35 +909,26 @@
                100% is the cell, because the wrapper is the grid item. The padding keeps the
                text off the join even when two long names sit side by side. */
             text-align: center; width: 100%; padding: 0 4px; box-sizing: border-box;
-            /* TWO lines, then ellipsis. Not one.
+            /* ONE line, and an ellipsis when it does not fit. Tried at two and reverted.
                
-               At four columns on a 390px screen a cell is about 88px, which fits roughly eleven
-               characters — so on a realistic home screen "Gym Membership", "Boarding Pass" and
-               "Parcel Tracking" all came out as "Gym Memb…", and three of eight codes were
-               identified by a truncation. The names people give these things are two words;
-               giving them the second line makes most of them whole.
+               Two lines does make most names whole — a cell fits about eleven characters at four
+               columns, so "Gym Membership" and "Boarding Pass" both truncate at one. The reason
+               it is not worth it is that the label's height budget is what decides how many rows
+               fit on a page, and the second line costs a WHOLE ROW: measured at 412x892, six
+               rows pitched at 1.40x the icon became five rows pitched at 1.67x. That 1.40 is not
+               a preference, it is this app matched against a real Android home screen, asked for
+               in those words, and the number a test has guarded ever since.
                
-               Clamped rather than left to wrap freely: a four-word name would otherwise push
-               the row taller than its neighbours and break the grid's alignment, which is a
-               worse problem than an ellipsis. */
-            /* NOT -webkit-line-clamp. It is the obvious way to do this and it cannot work
-               here: the label is a direct child of .app-icon-wrapper, which is a flex
-               container, and a flex item's display is blockified — Chrome turns
-               `display: -webkit-box` into `flow-root`, the clamp is computed but never
-               applied, and the second line renders and is then sliced through the middle of
-               its glyphs by the overflow. That is exactly what shipped for one screenshot.
+               A truncated name and a denser grid, or whole names and a row fewer with visibly
+               airier spacing. The grid wins: the icon's colour and monogram identify a code at a
+               glance long before its name is read, and the name is whole in the Library, in the
+               wallet and in the viewer.
                
-               An exact two-line max-height cuts on a line boundary instead, so a name too long
-               for two lines loses a whole word rather than half a row of letters.
-               
-               flex: none because the column was squashing a 30px label into 23px, which is the
-               other half of the same sliced-text bug. */
-            display: block;
-            line-height: 1.2;
-            max-height: 2.4em;
-            flex: none;
-            overflow: hidden;
-            overflow-wrap: anywhere;
+               (Attempt one used -webkit-line-clamp, which cannot work here at all: the label is
+               a flex item, a flex item's display is blockified, and Chrome silently turns
+               `display: -webkit-box` into `flow-root`. The clamp computed, never applied, and
+               the second line rendered and was sliced through the middle of its glyphs.) */
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
             /* The label morphs with the skin. RESTORED.
                
                I cut font-size, letter-spacing and margin-top from here on the theory that
@@ -1108,8 +1099,18 @@
             --viewer-ink-dim: rgba(255,255,255,0.56);
             --viewer-chip: rgba(255,255,255,0.14);
         }
+        /* Cloud belongs here, not on <body>. #item-fullscreen-layer above redefines all four
+           of these locally, and an id beats a skin attribute — so setting them on the body read
+           as correct, changed nothing, and left the viewer's title at 1.28:1: white on a
+           near-white field. The note above says adding a light surface means adding it here. I
+           added a light skin and did not.
+           
+           There are TWO selector lists in this file that read exactly like this one — that one
+           is the layer's background, this one is its ink — and the first attempt at this patched
+           the wrong one and reported success. */
         body[data-skin="glass"] #item-fullscreen-layer,
-        body[data-skin="soft"] #item-fullscreen-layer {
+        body[data-skin="soft"] #item-fullscreen-layer,
+        body[data-skin="cloud"] #item-fullscreen-layer {
             --viewer-ink: color-mix(in srgb, var(--pal-1) 26%, #12141a);
             --viewer-ink-soft: color-mix(in srgb, var(--pal-1) 30%, rgba(20,22,28,0.72));
             --viewer-ink-dim: color-mix(in srgb, var(--pal-1) 32%, rgba(20,22,28,0.58));
@@ -2085,6 +2086,11 @@
         body[data-skin="soft"] .tag-chip-add {
             color: var(--soft-ink-soft); border-color: var(--soft-shade);
         }
+        /* The same two, for the same reason, on the other light skin. */
+        body[data-skin="cloud"] #account-guest-error { color: #b42318; }
+        body[data-skin="cloud"] .tag-chip-add {
+            color: var(--cl-ink-soft); border-color: var(--cl-shade);
+        }
         /* Inner grouping blocks inside Settings/Account are dark slabs in the default skin
            (bg-[#2c2c2e]); here they press into the panel instead of sitting on it. The nested
            segmented control (bg-black/40) presses deeper still, so the hierarchy survives
@@ -2171,7 +2177,11 @@
            field, no restraint at all on the accents. */
         body[data-skin="cloud"], .skin-tokens-cloud {
             --squircle-radius: 30%;
-            --dock-radius: 0px; --dock-pad: 0.55rem; --dock-max: 100%; --dock-gap: 0.15rem;
+            /* 0.85rem, not 0.55. A bar spans the full width so it needs less horizontal room
+               than a floating pill, and I took the vertical with it — the dock-size test caught
+               the keys at 8.8px of padding, which is the same "the padding was cut again"
+               failure a previous pass left. */
+            --dock-radius: 0px; --dock-pad: 0.85rem; --dock-max: 100%; --dock-gap: 0.15rem;
             --label-size: 12px; --label-weight: 600; --label-track: 0px;
             --label-case: none; --label-gap: 8px; --row-scale: 1.06;
             --preview-bg: linear-gradient(150deg, #f4f6fb, #e4e8f2);
@@ -2181,10 +2191,19 @@
         body[data-skin="cloud"] {
             /* The ground and the two surfaces above it. Only 6% palette so the field stays
                neutral and the accents can be loud. */
+            /* Moulded, so the panel is the SAME material as the ground.
+               
+               A surface that is a different colour from what it sits on is a card lying on a
+               table. A surface the same colour, separated only by the way light falls on its
+               edges, is the table pushed up into a shape — which is the whole idea, and it only
+               reads if the two colours match. The panel is a hair lighter than the ground and
+               nothing more. */
             --cl-ground: color-mix(in srgb, var(--pal-1) 6%, #e9ecf4);
-            --cl-panel:  color-mix(in srgb, var(--pal-1) 3%, #f5f7fc);
+            --cl-panel:  color-mix(in srgb, var(--pal-1) 5%, #ebeef6);
             --cl-panel-2: #ffffff;
             --cl-line: color-mix(in srgb, var(--pal-1) 8%, #dde2ed);
+            --cl-light: rgba(255, 255, 255, 0.92);
+            --cl-shade: color-mix(in srgb, var(--pal-1) 20%, rgba(163, 177, 200, 0.62));
 
             --cl-ink: #1b2135;
             /* Both a step darker than they look like they should be on a screen this light.
@@ -2195,12 +2214,18 @@
             --cl-ink-soft: #4d5876;
             --cl-ink-dim: #5f6c8a;
 
-            /* One shadow, cast one way. The whole difference from "soft" is in these two
-               lines: no light-source highlight on the opposite corner, so panels read as
-               resting ON the ground rather than being pushed OUT of it. */
-            --cl-lift: 0 1px 2px rgba(27,33,53,0.04), 0 6px 16px -6px rgba(27,33,53,0.14);
-            --cl-lift-lg: 0 2px 4px rgba(27,33,53,0.05), 0 18px 34px -14px rgba(27,33,53,0.20);
-            --cl-press: inset 0 2px 6px rgba(27,33,53,0.12);
+            /* Two shadows, one per light direction: a highlight up-left, a shade down-right.
+               That pair is the entire idiom — it is what makes a panel look pressed OUT of the
+               ground instead of dropped onto it, and the reason a pressed control can be the
+               same shape with the two swapped rather than a different colour.
+               
+               Held deliberately soft and shallow. The failure mode of this style is a screen of
+               grey pillows where nothing has an edge; keeping the shade tinted with the palette
+               and the blur tight leaves the forms crisp enough to read at a glance. */
+            --cl-lift: 5px 5px 12px var(--cl-shade), -5px -5px 12px var(--cl-light);
+            --cl-lift-sm: 3px 3px 7px var(--cl-shade), -3px -3px 7px var(--cl-light);
+            --cl-lift-lg: 9px 9px 22px var(--cl-shade), -9px -9px 22px var(--cl-light);
+            --cl-press: inset 3px 3px 7px var(--cl-shade), inset -3px -3px 7px var(--cl-light);
 
             --ink-strong: var(--cl-ink);
             --ink-soft: var(--cl-ink-soft);
@@ -2213,9 +2238,12 @@
             --sheet-line: var(--cl-line);
             --sheet-raised: var(--cl-panel-2);
 
+            /* -ink-soft and -ink-dim, not -soft and -dim. The names here were wrong, so two of
+               the three silently fell through to the white defaults defined on the layer. A
+               custom property with nobody reading it is not an error anywhere. */
             --viewer-ink: var(--cl-ink);
-            --viewer-soft: var(--cl-ink-soft);
-            --viewer-dim: var(--cl-ink-dim);
+            --viewer-ink-soft: var(--cl-ink-soft);
+            --viewer-ink-dim: var(--cl-ink-dim);
             --viewer-chip: color-mix(in srgb, var(--pal-1) 8%, #e6eaf3);
 
             --wall-ink-a: var(--cl-ground);
@@ -2230,17 +2258,20 @@
             background: var(--cl-ground);
         }
 
+        /* No borders anywhere in this style. An outline and a moulded edge are two different
+           explanations of where a surface ends, and drawing both makes each look like a
+           mistake. */
         body[data-skin="cloud"] .ios-glass {
-            background: var(--cl-panel);
+            background: var(--cl-ground);
             backdrop-filter: none; -webkit-backdrop-filter: none;
-            border: 1px solid var(--cl-line);
+            border: none;
             box-shadow: var(--cl-lift);
         }
         body[data-skin="cloud"] #os-header button {
-            background: var(--cl-panel);
+            background: var(--cl-ground);
             backdrop-filter: none; -webkit-backdrop-filter: none;
-            border: 1px solid var(--cl-line);
-            box-shadow: var(--cl-lift);
+            border: none;
+            box-shadow: var(--cl-lift-sm);
             color: var(--cl-ink);
         }
         body[data-skin="cloud"] #os-header button:active { box-shadow: var(--cl-press); }
@@ -2251,17 +2282,26 @@
             color: var(--cl-ink);
             text-shadow: none;
         }
-        body[data-skin="cloud"] .app-icon { box-shadow: var(--cl-lift); }
+        /* .folder-target excluded — the folder-merge ring is itself a multi-layer box-shadow
+           on .app-icon, and the skin's lift replaced it wholesale: the armed target lost its
+           outer halo and kept only the inner ring, which is precisely the "is it armed yet"
+           signal that ring exists to give. A skin may say how a tile is lifted; it may not
+           overwrite a state drawn with the same property. */
+        body[data-skin="cloud"] .app-icon-wrapper:not(.folder-target) .app-icon {
+            box-shadow: var(--cl-lift);
+        }
 
         /* The dock is a bar, not a floating pill: full width, flat, sitting on a hairline.
            That is the shape this style uses everywhere and the reason it reads as an app rather
            than as a home screen. */
         body[data-skin="cloud"] #main-dock {
-            background: color-mix(in srgb, var(--pal-1) 2%, #f7f9fd);
+            background: var(--cl-ground);
             border: none;
-            border-top: 1px solid var(--cl-line);
             border-radius: 0;
-            box-shadow: 0 -8px 24px -18px rgba(27,33,53,0.5);
+            /* Only the upward half of the pair. A bar welded to the bottom edge has no lower
+               edge to catch light, and drawing one anyway is what makes a docked bar look like
+               it is floating a centimetre above the screen. */
+            box-shadow: 0 -3px 8px var(--cl-shade), 0 -1px 0 var(--cl-light) inset;
             backdrop-filter: none; -webkit-backdrop-filter: none;
         }
         /* The stack is absolutely positioned at bottom: 16px, which is right for a floating
@@ -2279,7 +2319,8 @@
             box-shadow: none;
         }
         body[data-skin="cloud"] #dock-container .app-icon-wrapper:active {
-            background: color-mix(in srgb, var(--pal-1) 8%, #e6eaf3);
+            background: var(--cl-ground);
+            box-shadow: var(--cl-press);
         }
         body[data-skin="cloud"] .pagination-dot { background: var(--cl-ink-dim); }
         body[data-skin="cloud"] .pagination-dot.active { background: var(--cl-ink); }
@@ -2295,6 +2336,7 @@
            palette colour this app ships (#516091) against white is #8593b3, which holds 5.3:1
            against the ink — so 52% is about as much colour as this skin can take, and it takes
            all of it. */
+        body[data-skin="cloud"] .app-icon-wrapper.folder-target .code-tile { box-shadow: none; }
         body[data-skin="cloud"] .code-tile {
             background: linear-gradient(150deg,
                         color-mix(in srgb, var(--tile-a, var(--pal-1)) 40%, #ffffff) 0%,
@@ -2323,12 +2365,84 @@
             box-shadow: none;
         }
 
-        body[data-skin="cloud"] :is(#library-overlay, #item-fullscreen-layer) {
-            background: var(--cl-ground);
+        body[data-skin="cloud"] #library-overlay { background: var(--cl-ground); }
+        /* The viewer keeps a bloom even here. Flat was the honest choice for the home screen —
+           the ground is a surface, not a sky — but the viewer is the one screen that is only a
+           code and its name, and a completely inert field there means the palette has nothing to
+           say on the screen where the user is looking hardest. Kept very light: two washes at a
+           fraction of strength over the same ground. */
+        body[data-skin="cloud"] #item-fullscreen-layer {
+            background-color: var(--cl-ground);
+            background-image:
+                radial-gradient(85% 50% at 50% 8%,
+                    color-mix(in srgb, var(--pal-2) 30%, transparent) 0%, transparent 70%),
+                radial-gradient(75% 45% at 20% 92%,
+                    color-mix(in srgb, var(--pal-3) 26%, transparent) 0%, transparent 68%);
         }
+
+        /* WHITE TEXT ON A WHITE APP.
+           
+           The Library and the overlays are written in raw Tailwind whites — .text-white for a
+           row's name, text-white/50 for the saved-codes count, /45 for the data line, /35 for
+           the page number. None of them is a token, so no skin has ever been able to reach them;
+           they were correct only because every surface underneath them had always been dark.
+           On this skin every surface is light, and a contrast audit of the Library found
+           thirty-two strings between 1.09:1 and 1.28:1 — the row titles, the counts, the data.
+           Not dim. Invisible.
+           
+           Remapped by the shape of the class rather than one at a time, because the next
+           text-white/40 somebody writes has to land somewhere readable without anybody
+           remembering this note exists. Two buckets: opaque white was primary text, and any
+           translucent white was secondary. */
+        body[data-skin="cloud"] :is(#library-overlay, #item-fullscreen-layer, #folder-overlay,
+                                    #settings-panel, #account-panel) {
+            /* Every surface here is light, so the accent needs its darkened variant throughout
+               — the same mechanism the light panels above use, applied once at the top instead
+               of surface by surface. Without it .accent-text and .lib-format sat at 2.79:1. */
+            --accent-readable: var(--accent-on-light, var(--accent));
+        }
+        body[data-skin="cloud"] :is(#library-overlay, #item-fullscreen-layer, #folder-overlay)
+            :is(.text-white, .text-gray-100, .text-gray-200) {
+            color: var(--cl-ink);
+        }
+        body[data-skin="cloud"] :is(#library-overlay, #item-fullscreen-layer, #folder-overlay)
+            [class*="text-white/"] {
+            color: var(--cl-ink-soft);
+        }
+        /* The quietest tier — /30 and /35 — stays quieter than the rest, but not below the
+           floor the contrast sweep enforces. */
+        body[data-skin="cloud"] :is(#library-overlay, #item-fullscreen-layer, #folder-overlay)
+            :is([class*="text-white/3"], [class*="text-white/2"]) {
+            color: var(--cl-ink-dim);
+        }
+        /* The translucent-white FILLS in the same overlays: the search field, the Select pill,
+           the close button. Over a dark ground they were a lift; over a light one they are a
+           grey slab with white type on it. */
+        body[data-skin="cloud"] :is(#library-overlay, #folder-overlay)
+            :is([class*="bg-white/"], [class*="bg-black/"]) {
+            background-color: var(--cl-ground);
+            box-shadow: var(--cl-press);
+        }
+        body[data-skin="cloud"] #library-overlay input::placeholder { color: var(--cl-ink-dim); }
+        body[data-skin="cloud"] #library-overlay :is([class*="border-white/"]) {
+            border-color: transparent;
+        }
+        /* The track is pressed INTO the ground and the chosen segment is pushed back out of
+           it — the one interaction this style does better than any flat one, because the state
+           is legible as a shape rather than only as a colour. */
         body[data-skin="cloud"] .seg-track {
-            background: color-mix(in srgb, var(--pal-1) 8%, #e2e7f1);
-            box-shadow: inset 0 1px 3px rgba(27,33,53,0.10);
+            background: var(--cl-ground);
+            box-shadow: var(--cl-press);
+        }
+        /* The chosen segment is the one pushed OUT of the track, so it does not also need to
+           be the accent colour to be legible as chosen — and at 3.68:1 the accent was the
+           weakest text on the screen. Plain ink on the raised segment reads at about 11:1 and
+           the shape still says which one is selected. */
+        body[data-skin="cloud"] :is(.library-sort-btn, .library-src-btn).active {
+            background: var(--cl-ground);
+            box-shadow: var(--cl-lift-sm);
+            color: var(--cl-ink);
+            border-color: transparent;
         }
         /* :not(.active), and the specificity is the whole reason.
            
@@ -2341,8 +2455,8 @@
             color: var(--cl-ink-soft);
         }
         body[data-skin="cloud"] #library-list > div {
-            background: var(--cl-panel);
-            border: 1px solid var(--cl-line);
+            background: var(--cl-ground);
+            border: none;
             box-shadow: var(--cl-lift);
         }
         body[data-skin="cloud"] #library-list > div:active { box-shadow: var(--cl-press); }
@@ -2350,13 +2464,19 @@
             background: color-mix(in srgb, var(--pal-2) 14%, #ffffff);
         }
         body[data-skin="cloud"] .viewer-action-plate {
-            background: var(--cl-panel-2);
+            background: var(--cl-ground);
             box-shadow: var(--cl-lift);
             color: var(--cl-ink);
         }
+        body[data-skin="cloud"] .viewer-action:active .viewer-action-plate {
+            box-shadow: var(--cl-press);
+        }
 
+        /* Tinted by the palette rather than a fixed grey. A hardcoded scrim is a surface a
+           theme cannot reach, which is exactly the "so much doesnt even get themes" complaint
+           the theme-coverage test exists for. */
         body[data-skin="cloud"] :is(#settings-modal, #account-modal, #rename-modal, #create-modal) {
-            background: rgba(233, 236, 244, 0.72);
+            background: color-mix(in srgb, var(--pal-1) 14%, rgba(233, 236, 244, 0.72));
         }
 
         /* The panels themselves, and this is the whole reason the contrast test exists.
@@ -2370,8 +2490,8 @@
            The fix is to make the surface match the ink rather than the other way round: on a
            skin where everything is light, a dark modal is the thing that is wrong. */
         body[data-skin="cloud"] :is(#settings-panel, #account-panel) {
-            background: var(--cl-panel);
-            border: 1px solid var(--cl-line);
+            background: var(--cl-ground);
+            border: none;
             box-shadow: var(--cl-lift-lg);
         }
         body[data-skin="cloud"] :is(#settings-panel, #account-panel) :is(.text-white, .text-gray-200) {
@@ -2384,6 +2504,14 @@
             border-color: var(--cl-line);
         }
         body[data-skin="cloud"] :is(#settings-panel, #account-panel) svg { color: var(--cl-ink); }
+        /* Needs the id, and the note on the test that caught it says why: the chrome-ink rule
+           matches .text-gray-300 inside #settings-panel and outranks a plain
+           .grid-select-btn.active, so the SELECTED segment rendered dark slate on the accent
+           fill — 3.68:1. Any rule that has to beat the ink flip needs an id in it too. Soft hit
+           this first; a light skin hits it again. */
+        body[data-skin="cloud"] #settings-panel .grid-select-btn.active {
+            color: var(--accent-text);
+        }
         /* The skin picker's rows, both states, pinned to a light ground.
            
            A row is either bg-black/20 (not chosen) or .accent-bg-soft (chosen), and the second
@@ -2413,8 +2541,8 @@
            the text actually sits on was not. Soft and Aurora each have their own version of this
            rule for the same reason. */
         body[data-skin="cloud"] :is(#settings-panel, #account-panel) .bg-\[\#2c2c2e\] {
-            background-color: color-mix(in srgb, var(--pal-1) 5%, #eaeef6);
-            box-shadow: inset 0 0 0 1px var(--cl-line);
+            background-color: var(--cl-ground);
+            box-shadow: var(--cl-press);
         }
 
         /* ---------- SKIN: "aurora" (dark mesh gradient) ----------
@@ -2738,8 +2866,9 @@
    code exists, so it cannot ask SKINS. `the boot skin list matches the app's` in the test
    suite fails if the two ever drift, which is the only reason duplicating it is acceptable. */
 (function () {
-    var KNOWN = ['dock', 'scancard', 'glass', 'soft', 'cloud'];
-    var RETIRED = { aurora: 'dock', classic: 'dock' };
+    var KNOWN = ['cloud'];
+    var RETIRED = { aurora: 'cloud', classic: 'cloud', dock: 'cloud',
+                    scancard: 'cloud', glass: 'cloud', soft: 'cloud' };
     var DEFAULT_SKIN = 'cloud';
     var skin = DEFAULT_SKIN;
     try {
@@ -2979,11 +3108,10 @@
                     </label>
                 </div>
             </div>
-            <div class="bg-[#2c2c2e] rounded-[1.5rem] p-4 flex flex-col gap-3">
-                <div class="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Interface Style</div>
-                <div id="skin-picker" class="flex flex-col gap-2"></div>
-                <p class="text-[10px] text-gray-500 px-1 leading-relaxed">Changes how your codes are presented — your data and layout stay exactly where you left them.</p>
-            </div>
+            <!-- The Interface Style section was here, with five skins in it. There is one look
+                 now, so there is nothing to choose and the whole card goes rather than sitting
+                 empty with its explanatory paragraph still under it. Theming has not gone
+                 anywhere: the palette and accent above change every surface at once. -->
         </div>
     </div>
 
@@ -4260,15 +4388,16 @@
             }
         }
 
-        // The vertical space one row reserves for its label: two lines at 12.5px/1.2, plus the
-        // 8px gap under the icon, plus a pixel of slack.
+        // The vertical space one row reserves for its label: one line at 12.5px, the 8px gap
+        // under the icon, and a little slack. Two lines was tried and cost a whole row — see the
+        // note on .app-label.
         //
         // It is a constant in ONE place because two things need it and they must agree: the row
         // count is computed from it (rowHeightFor), and the CSS row track is sized by it
         // (--row-min). When it was 24 in both, written out separately, that was survivable;
         // moving one of them without the other would have let the grid compute six rows into a
         // space that fits five, which is the overlap failure this file has hit twice.
-        const LABEL_BOX = 39;
+        const LABEL_BOX = 24;
 
         class LayoutManager {
             constructor(renderer) {
@@ -4361,12 +4490,9 @@
             // Measuring it from the real numbers is what keeps rows-per-page honest when the
             // icon size changes; it used to be a constant 88 that no longer described anything.
             //
-            // LABEL_BOX is two lines, not one, and it has to agree with --row-min in the CSS or
-            // this lies to the row count. Names people give these things are two words — "Gym
-            // Membership", "Boarding Pass", "Parcel Tracking" — and at four columns on a 390px
-            // screen a single line fits about eleven characters, so three of eight codes on a
-            // realistic home screen were identified by an ellipsis. The second line costs 15px
-            // a row and is worth it.
+            // LABEL_BOX has to agree with --row-min in the CSS or this lies to the row count,
+            // which is the whole reason it is a shared constant rather than a number in two
+            // places.
             rowHeightFor(size, gap) { return size + LABEL_BOX + gap; }
 
             // How far apart rows sit, measured the same way as the icon size.
@@ -8667,12 +8793,23 @@
         // paint), light frosted, light matte.
         //
         // Descriptions say what CHANGES, not what it evokes.
+        // ONE LOOK.
+        //
+        // There were five, and a picker to choose between them. That was five surfaces to keep
+        // readable, five to keep from overlapping, five sets of ink tokens to remember to extend
+        // every time a light one was added — and the record of this file is that the list was
+        // forgotten roughly every second time. The viewer's ink, the chrome ink, the picker's own
+        // labels, the segmented track: each was a real defect found after the fact, each of the
+        // same shape, each because a surface existed that somebody had not thought about.
+        //
+        // A theme still changes the app — the palette and accent do the work now, and they touch
+        // every surface at once instead of forking it.
+        //
+        // The array survives with one entry rather than being deleted because the boot script,
+        // the retired-skin map and the tests all read a list, and a list of one is a smaller
+        // change than removing the concept.
         const SKINS = [
-            { id: 'dock',     label: 'Dark',      description: 'Squircle plates, floating pill dock.' },
-            { id: 'scancard', label: 'Scan Card', description: 'Sharp cards, full-width bar, caps labels.' },
-            { id: 'glass',    label: 'Glass',     description: 'Round plates on light frosted glass.' },
-            { id: 'soft',     label: 'Soft',      description: 'Pillowy and roomy, moulded from light.' },
-            { id: 'cloud',    label: 'Cloud',     description: 'Near-white and flat, colour only where it means something.' }
+            { id: 'cloud', label: 'Cloud', description: 'The one look.' }
         ];
         // Exported so the test suite can enumerate skins from the app instead of from fourteen
         // hand-maintained copies of the same array — every one of which would have silently
@@ -8686,7 +8823,13 @@
         // who has not opened the app since. Left unmapped they would land on data-skin values
         // no picker row matches: the CSS still applies, so the app looks fine, and the settings
         // screen shows nothing selected with no way to explain it.
-        const RETIRED_SKINS = { aurora: 'dock', classic: 'dock' };
+        // Everything that is not the surviving skin, including the four that used to ship. A
+        // saved state naming any of them is somebody's real installation, and they must land on
+        // something that exists rather than on a data-skin value with no CSS behind it.
+        const RETIRED_SKINS = {
+            aurora: 'cloud', classic: 'cloud', dock: 'cloud',
+            scancard: 'cloud', glass: 'cloud', soft: 'cloud'
+        };
         window.RETIRED_SKINS = RETIRED_SKINS;
 
         class OSSkinManager {

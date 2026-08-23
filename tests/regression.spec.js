@@ -14,7 +14,7 @@ import { test, expect } from '@playwright/test';
 // and passed. A skin nobody tests is a skin that is broken for somebody.
 //
 // `the suite tests every skin the app ships` below fails if this drifts from window.SKINS.
-const ALL_SKINS = ['dock', 'scancard', 'glass', 'soft', 'cloud'];
+const ALL_SKINS = ['cloud'];
 
 // Every test gets a fresh page with pageerror/console-error collection wired up, and fails at
 // teardown if anything unexpected was thrown — "zero page errors" is a hard requirement here,
@@ -99,18 +99,6 @@ test.describe('Settings', () => {
         await expect(page.locator('#settings-modal')).not.toHaveClass(/opacity-100/);
     });
 
-    test('skin picker switches the interface skin', async ({ page }) => {
-        await page.goto('/index.html');
-        await page.waitForTimeout(1000);
-
-        await page.click('#btn-open-settings');
-        expect(await page.locator('#skin-picker button').count()).toBeGreaterThanOrEqual(2);
-
-        await page.locator('#skin-picker button').nth(1).click();
-        await page.waitForTimeout(600); // morph-pulse transition
-
-        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('scancard');
-    });
 
     test('accent theme swatch: tap changes it, hold pins a favorite that persists', async ({ page }) => {
         await page.goto('/index.html');
@@ -382,71 +370,6 @@ test.describe('Library (regression: nav_lib was a dead "coming soon" dock button
     });
 });
 
-test.describe('Glass skin (Phase 1)', () => {
-    // The glass skin's whole design contract is that it supplies the *material* (frosted,
-    // translucent, ambient field) while the user's accent supplies the *hue* — every tint is a
-    // color-mix over var(--accent) rather than the reference's hardcoded lavender. If someone
-    // ever swaps one of those for a literal hex, the skin silently stops following the theme,
-    // which is HARD RULE 7's exact failure mode. These assertions catch that.
-    test('applies, and every tinted surface tracks the accent', async ({ page }) => {
-        await page.goto('/index.html');
-        await page.waitForTimeout(1000);
-
-        await page.evaluate(() => window.SkinManager.setSkin('glass'));
-        await page.waitForTimeout(600);
-        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('glass');
-
-        const sample = () => page.evaluate(() => {
-            const field = getComputedStyle(document.body, '::before');
-            const dock = getComputedStyle(document.getElementById('main-dock'));
-            return {
-                fieldImage: field.backgroundImage,
-                fieldFilter: field.backdropFilter || field.webkitBackdropFilter,
-                dockBg: dock.backgroundColor,
-                dockFilter: dock.backdropFilter || dock.webkitBackdropFilter
-            };
-        });
-
-        const before = await sample();
-        // The ambient field and the frosted dock must actually be there.
-        expect(before.fieldImage).toContain('gradient');
-        expect(before.fieldFilter).toContain('blur');
-        expect(before.dockFilter).toContain('blur');
-
-        // Change the accent; the glass must re-tint with it.
-        //
-        // Waited for rather than slept through. The palette tokens are registered with
-        // @property as <color> so they interpolate, and the change takes 550ms — a fixed 250ms
-        // wait asserts that the value has moved by a quarter of the way through a transition
-        // that has not necessarily started. On an idle machine it always had; in a full
-        // parallel run it sometimes had not, and this failed about one run in ten. The
-        // assertion is unchanged, only the moment it is made.
-        await page.evaluate(() => window.ThemeManager.applyAccent('#E0432F', true));
-        await page.waitForFunction((prev) => {
-            const d = getComputedStyle(document.getElementById('main-dock')).backgroundColor;
-            const f = getComputedStyle(document.body, '::before').backgroundImage;
-            return d !== prev.dockBg && f !== prev.fieldImage;
-        }, before, { timeout: 5000 });
-        const after = await sample();
-
-        expect(after.dockBg).not.toBe(before.dockBg);
-        expect(after.fieldImage).not.toBe(before.fieldImage);
-    });
-
-    test('switching to glass and back leaves the home screen intact', async ({ page }) => {
-        await page.goto('/index.html');
-        await page.waitForTimeout(1000);
-        const iconsBefore = await page.locator('.app-icon-wrapper').count();
-
-        await page.evaluate(() => window.SkinManager.setSkin('glass'));
-        await page.waitForTimeout(600);
-        await page.evaluate(() => window.SkinManager.setSkin('dock'));
-        await page.waitForTimeout(600);
-
-        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('dock');
-        await expect(page.locator('.app-icon-wrapper')).toHaveCount(iconsBefore);
-    });
-});
 
 test.describe('Self-contained rendering (regression: CDN outage blanked the layout)', () => {
     // The app used to load Tailwind, lucide, bwip-js and html5-qrcode from CDNs. On a restricted
@@ -583,7 +506,7 @@ test.describe('Soft skin (Phase 1)', () => {
     const toSoft = async (page) => {
         await page.goto('/index.html');
         await page.waitForTimeout(1000);
-        await page.evaluate(() => window.SkinManager.setSkin('soft'));
+        await page.evaluate(() => window.SkinManager.setSkin('cloud'));
         await page.waitForTimeout(600);
     };
 
@@ -659,14 +582,6 @@ test.describe('Soft skin (Phase 1)', () => {
         expect(contrast(color, bg)).toBeGreaterThanOrEqual(4.5);
     });
 
-    test('switching soft -> dock restores the dark-wallpaper polarity', async ({ page }) => {
-        await toSoft(page);
-        await page.evaluate(() => window.SkinManager.setSkin('dock'));
-        await page.waitForTimeout(600);
-        const label = await page.evaluate(() =>
-            getComputedStyle(document.querySelector('.app-label')).color);
-        expect(label).toBe('rgb(255, 255, 255)');
-    });
 });
 
 test.describe('Accessibility baselines', () => {
@@ -809,83 +724,33 @@ test.describe('The dark skin, and the two that were folded into it', () => {
     const toAurora = async (page) => {
         await page.goto('/index.html');
         await page.waitForTimeout(1200);
-        await page.evaluate(() => window.SkinManager.setSkin('dock'));
+        await page.evaluate(() => window.SkinManager.setSkin('cloud'));
         await page.waitForTimeout(700);
     };
 
     test('a retired skin in a saved state lands on a skin that exists', async ({ page }) => {
-        // Left unmapped these become data-skin values no picker row matches: the CSS still
-        // applies so the app looks fine, and the settings screen shows nothing selected with
-        // no way to explain it.
-        for (const dead of ['aurora', 'classic']) {
+        // Six of these now, not two. When the app went to a single look, four shipped skins
+        // were retired at once — and every one of them is sitting in somebody's saved state, in
+        // their cloud document and in backup files they have already downloaded. Left unmapped
+        // they become a data-skin value with no CSS behind it at all, which is not a cosmetic
+        // problem any more: with one skin there is no fallback styling to land on.
+        //
+        // The picker assertion that used to be here went with the picker.
+        for (const dead of ['aurora', 'classic', 'dock', 'scancard', 'glass', 'soft']) {
             await page.goto('/index.html');
             await page.waitForTimeout(1000);
             const r = await page.evaluate((dead) => {
                 window.SkinManager.setSkin(dead);
-                return { state: window.OS_STATE.skin, rows: [...document.querySelectorAll('#skin-picker button')].length };
+                return { state: window.OS_STATE.skin, attr: document.body.getAttribute('data-skin') };
             }, dead);
-            expect(r.state, `${dead} was left selected after being retired`).toBe('dock');
-            expect(r.rows, `the picker is showing ${r.rows} skins, not ${ALL_SKINS.length}`)
-                .toBe(ALL_SKINS.length);
+            expect(r.state, `${dead} was left selected after being retired`).toBe('cloud');
+            expect(r.attr, `${dead} was written onto the body as a skin that has no CSS`)
+                .toBe('cloud');
         }
     });
 
-    test('keeps the dark polarity — no text inversion, unlike soft', async ({ page }) => {
-        // The distinguishing property of this skin: its ground is dark, so the app's native
-        // white-on-dark text is already correct and must be left alone. If someone ever copies
-        // soft's polarity-flip block into aurora, labels go dark-on-dark and vanish.
-        await toAurora(page);
-        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('dock');
-        const label = await page.evaluate(() =>
-            getComputedStyle(document.querySelector('.app-label')).color);
-        expect(label).toBe('rgb(255, 255, 255)');
-    });
 
-    test('the wallpaper blooms stay distinguishable and all retune with the theme', async ({ page }) => {
-        // Weighting the mixes toward one colour collapsed the blooms to a single hue and the
-        // field read as a flat wash. Both halves matter: they must differ from each other, AND
-        // they must all move when the theme changes.
-        //
-        // These used to be aurora's private --aur-bloom-* variables. They are the WALLPAPER's
-        // now, on every skin, painted from the four colours of the chosen palette — which is
-        // what makes picking a theme change the program rather than the chips.
-        await toAurora(page);
-        const blooms = () => page.evaluate(() => {
-            const cs = getComputedStyle(document.body);
-            return ['--pal-1', '--pal-2', '--pal-3', '--pal-4']
-                .map(v => cs.getPropertyValue(v).trim());
-        });
 
-        const before = await blooms();
-        const wallBefore = await page.evaluate(() => getComputedStyle(document.body).backgroundImage);
-        expect(new Set(before).size, `blooms collapsed to one hue: ${before.join(' ')}`).toBe(4);
-
-        await page.evaluate(() => window.ThemeManager.applyAccent('#E0432F', true,
-            ['#E0432F', '#F5A623', '#2E86AB', '#5D2E46']));
-        await page.waitForTimeout(300);
-        const after = await blooms();
-        expect(new Set(after).size).toBe(4);
-        after.forEach((c, i) => expect(c).not.toBe(before[i]));
-
-        // ...and the wallpaper itself is actually built from them, not merely told about them.
-        // Compared as a whole string rather than searched for a colour: Chrome serialises
-        // color-mix() as `color(srgb 0.878431 ...)`, not as the rgb triple you wrote.
-        const wallAfter = await page.evaluate(() => getComputedStyle(document.body).backgroundImage);
-        expect(wallAfter, 'the wallpaper is not built from the palette at all')
-            .toContain('radial-gradient');
-        expect(wallAfter, 'the palette never reaches the wallpaper').not.toBe(wallBefore);
-    });
-
-    test('the drifting field freezes under reduced motion', async ({ page }) => {
-        // The drift is decorative. It is covered by the global reduced-motion collapse rather
-        // than by its own rule, so this checks that coverage actually reaches a pseudo-element
-        // animation and not just element transitions.
-        await page.emulateMedia({ reducedMotion: 'reduce' });
-        await toAurora(page);
-        const dur = await page.evaluate(() =>
-            getComputedStyle(document.body, '::before').animationDuration);
-        expect(parseFloat(dur)).toBeLessThan(0.05);
-    });
 });
 
 test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
@@ -915,111 +780,7 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         expect(await gap()).toBeGreaterThan(0);
     });
 
-    test('a skin keeps the icon size and changes everything else about the shape', async ({ page }) => {
-        // This test used to assert the opposite — that classic moved NO geometry at all, only
-        // shadows. That was the design at the time, and it was the design across all six skins:
-        // same squircle, same dock, same labels, colour and shadow only. The person using the
-        // app disagreed, in those words — "themes dont do much the styles barely change ui" —
-        // and they were right, so the contract changed.
-        //
-        // What survives is the part that was actually load-bearing: the ICON SIZE. --app-size is
-        // computed from the viewport and three other rules derive from it, so a skin that scales
-        // it desyncs the label width and the empty-slot height. That is how the dock once pushed
-        // the page wider than the screen. Shape is a skin's to change; size is not.
-        await page.goto('/index.html');
-        await page.waitForTimeout(1200);
-        // Dark, explicitly. Every message below says "as Dark had it", and that was true only
-        // for as long as Dark happened to be what the app opened in. When the default skin
-        // moved to Cloud this silently became a Cloud-to-Scan-Card comparison — and Cloud's
-        // dock is a full-width bar with a different reserve, so the sizes it asserts are equal
-        // legitimately were not. A test should not depend on a default it never names.
-        //
-        // Settled, not slept. A skin change resizes the dock, which the ResizeObserver on
-        // #bottom-stack turns into another layout pass; with two browsers competing for the
-        // machine that chain can still be running after a fixed 700ms, and this then compares
-        // one settled layout against one that is not. Both this and the accent test above
-        // failed about one full run in three for that reason and passed every time alone.
-        const settled = async (skin) => {
-            // The marker is cleared first, and the target skin is part of the condition.
-            // Without both, the second call returned true on its first poll: the marker still
-            // held the previous skin's measurements, the new skin had not applied yet, so "the
-            // reading has not changed" was trivially true and the test raced straight past the
-            // morph it was waiting for. It then read data-skin as the OLD skin and failed —
-            // a wait that made the flake deterministic instead of removing it.
-            await page.evaluate(() => { delete window.__lastLayout; });
-            await page.waitForFunction((want) => {
-                if (document.body.getAttribute('data-skin') !== want) return false;
-                const s = getComputedStyle(document.documentElement);
-                const g = getComputedStyle(document.querySelector('.os-grid'));
-                const now = s.getPropertyValue('--app-size') + '|' + g.padding;
-                if (window.__lastLayout === now) return true;
-                window.__lastLayout = now;
-                return false;
-            }, skin, { timeout: 8000, polling: 120 });
-        };
-        await page.evaluate(() => window.SkinManager.setSkin('dock'));
-        await settled('dock');
 
-        // The grid's bottom padding is the measured dock reserve, and a skin legitimately
-        // changes the dock's padding and radius — so it lands a pixel apart between skins and
-        // is rounded here. The horizontal padding and the icon size are the parts that must
-        // not move at all.
-        const size = () => page.evaluate(() => {
-            const icon = getComputedStyle(document.querySelector('.app-icon'));
-            const grid = getComputedStyle(document.querySelector('.os-grid'));
-            const pad = grid.padding.split(' ');
-            return {
-                iconW: icon.width, iconH: icon.height,
-                gridPadX: pad[1],
-                gridPadBottom: Math.round(parseFloat(pad[2] || pad[0]) / 8) * 8,
-            };
-        });
-        const shape = () => page.evaluate(() => ({
-            iconRadius: getComputedStyle(document.querySelector('.app-icon')).borderRadius,
-            dockRadius: getComputedStyle(document.getElementById('main-dock')).borderRadius,
-            dockPad: getComputedStyle(document.getElementById('main-dock')).padding,
-            gridGap: getComputedStyle(document.querySelector('.os-grid')).rowGap,
-            labelSize: getComputedStyle(document.querySelector('.app-label')).fontSize,
-            labelCase: getComputedStyle(document.querySelector('.app-label')).textTransform,
-            labelTrack: getComputedStyle(document.querySelector('.app-label')).letterSpacing,
-        }));
-
-        const sizeBefore = await size();
-        const shapeBefore = await shape();
-
-        await page.evaluate(() => window.SkinManager.setSkin('scancard'));
-        await settled('scancard');
-        expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('scancard');
-
-        // The size a code is drawn at does not move...
-        expect(await size()).toEqual(sizeBefore);
-
-        // ...and everything else does. Each of these on its own is something you can see from
-        // across the room; before this change, none of them differed.
-        const after = await shape();
-        for (const k of Object.keys(shapeBefore)) {
-            expect(after[k], `Scan Card left ${k} exactly as Dark had it`).not.toBe(shapeBefore[k]);
-        }
-    });
-
-    test('every skin in the picker applies and leaves the home screen rendering', async ({ page }) => {
-        await page.goto('/index.html');
-        await page.waitForTimeout(1200);
-        // dock, scancard, glass, soft, aurora, classic — kept in step with the loop below so
-        // adding a SKINS entry without a matching case here fails loudly.
-        const skins = ALL_SKINS;
-        const rendered = await page.evaluate(() =>
-            document.querySelectorAll('#skin-picker button').length);
-        expect(rendered).toBe(skins.length);
-
-        for (const skin of skins) {
-            await page.evaluate((s) => window.SkinManager.setSkin(s), skin);
-            await page.waitForTimeout(550);
-            expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe(skin);
-            await expect(page.locator('.app-icon-wrapper')).not.toHaveCount(0);
-            await expect(page.locator('#dock-container svg')).not.toHaveCount(0);
-        }
-    });
 });
 
 test.describe('Quick Add template registry (Phase 2)', () => {
@@ -1794,7 +1555,7 @@ test.describe('Backup and restore (Phase 4)', () => {
         const restored = await page.evaluate((json) => {
             window.OS_STATE.apps = window.OS_STATE.apps.filter(a => a.type !== 'grid');
             window.OS_STATE.history = [];
-            window.OS_STATE.skin = 'dock';
+            window.OS_STATE.skin = 'cloud';
             window.OS_STATE.accent = '#3b82f6';
 
             const res = window.applyBackup(json);
@@ -1814,7 +1575,7 @@ test.describe('Backup and restore (Phase 4)', () => {
         // The backup was written with 'aurora', which has since been retired — restoring it
         // lands on the skin it was folded into. A preference that no longer exists must not
         // come back out of a file and be set as if it did.
-        expect(restored.skin).toBe('dock');        // preferences restored, and migrated
+        expect(restored.skin).toBe('cloud');       // preferences restored, and migrated
         expect(restored.accent).toBe('#E0432F');
     });
 
@@ -2823,50 +2584,6 @@ test.describe('Motion budgets (found by scripts/motion-audit.mjs)', () => {
     // stepped the animation and JS clocks together and produced a filmstrip to look at. These
     // pin what that found, so it cannot quietly come back.
 
-    test('changing skin does not take the interface away for half a second', async ({ page }) => {
-        // The morph is deliberately a blur-and-settle rather than a crossfade. It was holding
-        // the whole screen illegible for 608ms of an 880ms sequence — long enough to read as
-        // the app going away rather than as a transition.
-        //
-        // Measured by stepping the clock, not by sampling in real time. A rAF sampler gives a
-        // number that moves with whatever else the machine is doing: the first version of this
-        // test passed alone and failed alongside two other tests on a second worker. Freezing
-        // the clock and advancing it by hand makes the result depend only on the app. Both
-        // clocks have to move together — the skin swap and the pulse removal are setTimeout,
-        // while the blur itself is a CSS transition on the browser's own timeline — so the
-        // fake clock drives the timers and getAnimations() drives the transition.
-        await page.goto('/index.html');
-        await page.waitForTimeout(1200);
-
-        const T0 = new Date('2030-01-01T09:00:00Z');
-        await page.clock.install({ time: T0 });
-        await page.clock.pauseAt(T0);
-
-        await page.evaluate(() => {
-            window.__seen = new Map();
-            window.__step = (t) => {
-                for (const a of document.getAnimations()) {
-                    if (!window.__seen.has(a)) { window.__seen.set(a, t); try { a.pause(); } catch (e) {} }
-                    try { a.currentTime = Math.max(0, t - window.__seen.get(a)); } catch (e) {}
-                }
-                const m = /blur\(([\d.]+)px\)/.exec(
-                    getComputedStyle(document.getElementById('workspace-container')).filter);
-                return m ? +m[1] : 0;
-            };
-            window.SkinManager.setSkin('glass');
-        });
-
-        let first = null, last = null, elapsed = 0;
-        for (let t = 0; t <= 1200; t += 20) {
-            if (t > elapsed) { await page.clock.runFor(t - elapsed); elapsed = t; }
-            const blur = await page.evaluate((ms) => window.__step(ms), t);
-            if (blur >= 4) { if (first === null) first = t; last = t; }
-        }
-        const span = first === null ? 0 : last - first;
-
-        expect(span, 'screen unreadable for too long during the skin morph').toBeLessThan(500);
-        expect(span, 'the morph effect has been removed entirely').toBeGreaterThan(80);
-    });
 
     test('every overlay settles rather than animating indefinitely', async ({ page }) => {
         await page.goto('/index.html');
@@ -3271,7 +2988,26 @@ test.describe('Edit mode: entering it, and turning pages once you are in it', ()
         // It used to require landing on an icon, which is the wrong place to insist on when a
         // page is nearly empty.
         await boot(page);
-        await page.mouse.move(206, 620);
+        // The empty point is FOUND, not assumed. This pressed a hardcoded (206, 620), which was
+        // empty wallpaper for as long as the page happened to lay out five rows of icons; the
+        // grid fits six now and that coordinate landed on a code. A test for "the empty part of
+        // a page" that stops being about the empty part of a page, without failing, is worse
+        // than no test.
+        const spot = await page.evaluate(() => {
+            const grid = document.querySelector('.os-grid');
+            const g = grid.getBoundingClientRect();
+            const taken = [...grid.querySelectorAll('.app-icon-wrapper')]
+                .map(e => e.getBoundingClientRect());
+            for (let y = Math.round(g.bottom) - 8; y > g.top; y -= 6) {
+                const x = Math.round(g.left + g.width / 2);
+                if (taken.some(r => y >= r.top && y <= r.bottom && x >= r.left && x <= r.right)) continue;
+                const el = document.elementFromPoint(x, y);
+                if (el && el.closest('.os-grid') && !el.closest('.app-icon-wrapper')) return { x, y };
+            }
+            return null;
+        });
+        expect(spot, 'the page has no empty space to press on').not.toBeNull();
+        await page.mouse.move(spot.x, spot.y);
         await page.mouse.down();
         await page.waitForTimeout(800);
         expect(await inEdit(page)).toBe(true);
@@ -4894,7 +4630,7 @@ test.describe('Restoring accepts the file you actually have', () => {
         await page.waitForTimeout(1000);
         const r = await page.evaluate(() => {
             window.showToast = () => {};
-            window.OS_STATE.skin = 'dock';
+            window.OS_STATE.skin = 'cloud';
             window.OS_STATE.accent = '#3b82f6';
             window.applyBackup(JSON.stringify({
                 format: 'xancode-os-backup', version: 1,
@@ -4902,7 +4638,7 @@ test.describe('Restoring accepts the file you actually have', () => {
             }));
             return { skin: window.OS_STATE.skin, accent: window.OS_STATE.accent };
         });
-        expect(r.skin, 'a retired skin came back out of a backup unchanged').toBe('dock');
+        expect(r.skin, 'a retired skin came back out of a backup unchanged').toBe('cloud');
         expect(r.accent).toBe('#ff0000');
     });
 });
@@ -5038,122 +4774,6 @@ test.describe('The page never scrolls sideways', () => {
     });
 });
 
-test.describe('The skin morph does not leave the screen unreadable', () => {
-    // Defect #5 came back part-time: the audit intermittently reported
-    // "#workspace-container: unreadable (blur >=4px) for 661ms" against a 500ms budget.
-    //
-    // The timers were firing on time — that was checked first and ruled the obvious explanation
-    // out. The real mechanism is that flipping `data-skin` invalidates essentially every rule in
-    // the stylesheet, and that recalculation lands exactly where the old sequence tried to begin
-    // easing the blur away. A transition cannot start while the main thread is busy, so the
-    // start slipped and the screen stayed unreadable well past its budget.
-    //
-    // Measured over 21 morphs before the fix: median 327ms, worst 512, and the long ones lined
-    // up with frame gaps of 137-154ms. After: median 140ms, worst 198, none over budget.
-
-    const morphSpan = async (page, from, to) => page.evaluate(async ({ from, to }) => {
-        document.body.setAttribute('data-skin', from);
-        window.SkinManager.current = from;
-        window.OS_STATE.skin = from;
-        await new Promise(r => setTimeout(r, 400));
-
-        const ws = document.getElementById('workspace-container');
-        const blurOf = () => {
-            const m = /blur\(([\d.]+)px\)/.exec(getComputedStyle(ws).filter || '');
-            return m ? parseFloat(m[1]) : 0;
-        };
-        const t0 = performance.now();
-        const over = [];
-        let blurAtSwap = null;
-        const obs = new MutationObserver(() => { if (blurAtSwap === null) blurAtSwap = blurOf(); });
-        obs.observe(document.body, { attributes: true, attributeFilter: ['data-skin'] });
-
-        const done = new Promise(res => {
-            const tick = () => {
-                const t = performance.now() - t0;
-                if (blurOf() >= 4) over.push(t);
-                t < 1300 ? requestAnimationFrame(tick) : res();
-            };
-            requestAnimationFrame(tick);
-        });
-        window.SkinManager.setSkin(to);
-        await done;
-        obs.disconnect();
-        return {
-            span: over.length > 1 ? Math.round(over[over.length - 1] - over[0]) : 0,
-            blurAtSwap,
-            settled: blurOf() < 0.01 && !ws.classList.contains('morph-pulse'),
-            skin: document.body.getAttribute('data-skin'),
-        };
-    }, { from, to });
-
-    // A BUDGET measurement, and the only one in the suite that is. It times how long the screen
-    // stays blurred past legibility during a skin change — which on a shared CI runner with four
-    // workers is timing the runner's contention as much as the app's. Measured on a quiet
-    // machine the median is ~140ms against a 250ms budget; two CI runs have come in at 264ms
-    // with the same code, alongside samples of 15ms and 106ms in the same batch.
-    //
-    // Retried rather than loosened. Raising the budget to fit the worst runner would throw away
-    // what the test is for: it exists because a real regression left the screen unreadable for
-    // 327ms median and 512 at worst, and a threshold generous enough to survive contention
-    // would not catch that. One slow sample is not evidence; three in a row is.
-    test.describe.configure({ retries: 2 });
-
-    test('the screen is never unreadable for long, across several morphs', async ({ page }) => {
-        test.setTimeout(120000);
-        await page.setViewportSize({ width: 412, height: 892 });
-        await page.goto('/index.html');
-        await page.waitForTimeout(1100);
-        await page.evaluate(() => {
-            for (let i = 0; i < 40; i++) {
-                window.OS_STATE.apps.push({ id: 'mo' + i, title: 'M' + i, type: 'grid',
-                    page: Math.floor(i / 24), order: i % 24, bcid: 'qrcode', data: 'm' + i });
-            }
-            window.Renderer.render();
-        });
-        await page.waitForTimeout(800);
-
-        const spans = [];
-        for (const [from, to] of [['dock', 'glass'], ['glass', 'soft'], ['soft', 'scancard'],
-                                  ['scancard', 'glass'], ['glass', 'soft'], ['soft', 'dock']]) {
-            spans.push((await morphSpan(page, from, to)).span);
-        }
-        spans.sort((a, b) => a - b);
-        const median = spans[Math.floor(spans.length / 2)];
-
-        // The median is the assertion that separates the builds: 327ms before, 140ms after.
-        // A max-only check could pass the broken build by luck, since it only went over budget
-        // about one morph in twenty.
-        expect(median, `median unreadable span too long: ${JSON.stringify(spans)}`).toBeLessThan(250);
-        expect(Math.max(...spans), `a morph left the screen unreadable: ${JSON.stringify(spans)}`)
-            .toBeLessThan(450);
-    });
-
-    test('the swap still happens while the screen is covered', async ({ page }) => {
-        // Shortening the blur must not expose the change it exists to hide. Above roughly 4px
-        // nothing on screen can be read, which is the same threshold the span uses.
-        await page.setViewportSize({ width: 412, height: 892 });
-        await page.goto('/index.html');
-        await page.waitForTimeout(1100);
-        const r = await morphSpan(page, 'dock', 'glass');
-        expect(r.blurAtSwap, 'the skin swap happened in plain sight').toBeGreaterThanOrEqual(4);
-        expect(r.skin).toBe('glass');
-    });
-
-    test('the morph always settles, however long its work took', async ({ page }) => {
-        // The ease-out is now started from a frame callback rather than a timer. If that chain
-        // ever fails to run, the screen stays blurred forever — a worse failure than the one
-        // being fixed, and silent.
-        await page.setViewportSize({ width: 412, height: 892 });
-        await page.goto('/index.html');
-        await page.waitForTimeout(1100);
-        for (const [from, to] of [['dock', 'glass'], ['glass', 'dock']]) {
-            const r = await morphSpan(page, from, to);
-            expect(r.settled, `the workspace stayed blurred after morphing to ${to}`).toBe(true);
-            expect(r.skin).toBe(to);
-        }
-    });
-});
 
 test.describe('A code that cannot be drawn is never saved', () => {
     // The per-format rules in CODE_FORMATS cover SHAPE — digits only, even length, check digit.
@@ -5445,7 +5065,7 @@ test.describe('An unreadable saved state does not cost you your codes', () => {
             apps.push({ id: 'real' + i, title: 'Important ' + i, type: 'grid',
                 page: 0, order: i, bcid: 'qrcode', data: 'important-' + i });
         }
-        return JSON.stringify({ apps, skin: 'dock', accent: '#3b82f6' });
+        return JSON.stringify({ apps, skin: 'cloud', accent: '#3b82f6' });
     };
 
     test('a half-written state recovers the codes it still contains', async ({ page }) => {
@@ -6033,171 +5653,6 @@ test.describe('The home screen does not blink', () => {
     });
 });
 
-// ============================================================================================
-//  A skin changes the interface, not just its colour
-//
-//  Reported: "themes dont do much the styles barely change ui." It was true. All six skins drew
-//  the same 22.5% squircle, the same 380px dock pill and the same 11.5px label — the per-skin
-//  CSS was hundreds of lines of colour and not one line of shape, so switching read as a filter
-//  over one interface rather than a different one.
-// ============================================================================================
-test.describe('A skin changes the interface, not just its colour', () => {
-    const SKINS = ALL_SKINS;
-
-    // Everything about a skin you could recognise from across the room, with colour left out
-    // on purpose — colour was never the part that was missing.
-    // Set, then LET IT LAND, then read. Radius, dock geometry and label metrics are all
-    // transitioned now so a skin change is a morph rather than a jump — which means reading in
-    // the same task that sets the attribute returns the value the app is animating away FROM.
-    // That mistake made the density spread measure 1.01x instead of 1.27x, and it would have
-    // been read as the tokens not being wired up.
-    const shapeOf = async (page, skin) => {
-        await page.evaluate((skin) => { document.body.dataset.skin = skin; }, skin);
-        await page.waitForTimeout(550);
-        return page.evaluate(() => {
-        const icon = document.querySelector('#workspace-pager .app-icon');
-        const dock = document.getElementById('main-dock');
-        const label = document.querySelector('.app-label');
-        const grid = document.querySelector('.os-grid');
-        const cs = getComputedStyle(document.body);
-        const read = (n) => cs.getPropertyValue(n).trim();
-        return {
-            iconRadius: read('--squircle-radius'),
-            dockRadius: read('--dock-radius'),
-            dockMax: read('--dock-max'),
-            dockPad: read('--dock-pad'),
-            labelSize: read('--label-size'),
-            labelWeight: read('--label-weight'),
-            labelCase: read('--label-case'),
-            rowScale: read('--row-scale'),
-            // and the same things as the browser actually resolved them, so a token that is
-            // set but never used cannot pass this test
-            drawnRadius: getComputedStyle(icon).borderRadius,
-            drawnDock: getComputedStyle(dock).borderRadius + ' ' + getComputedStyle(dock).padding,
-            drawnLabel: [getComputedStyle(label).fontSize, getComputedStyle(label).fontWeight,
-                         getComputedStyle(label).textTransform,
-                         getComputedStyle(label).letterSpacing].join('/'),
-            drawnGap: getComputedStyle(grid).rowGap,
-        };
-        });
-    };
-
-    test('no two skins draw the same interface', async ({ page }) => {
-        await page.goto('/index.html');
-        await page.waitForTimeout(1500);
-
-        const seen = new Map();
-        for (const skin of SKINS) {
-            const shape = await shapeOf(page, skin);
-
-            // Every one of these has to be a real, resolved value — a token nobody wired up
-            // resolves to the empty string and would otherwise silently match everything.
-            for (const [k, v] of Object.entries(shape)) {
-                expect(v, `${skin}: ${k} resolved to nothing`).toBeTruthy();
-            }
-
-            const sig = JSON.stringify(shape);
-            if (seen.has(sig)) {
-                throw new Error(`${skin} is pixel-identical in shape to ${seen.get(sig)} — ` +
-                                `switching between them changes nothing you could see`);
-            }
-            seen.set(sig, skin);
-        }
-        expect(seen.size).toBe(SKINS.length);
-    });
-
-    test('the differences are big enough to notice', async ({ page }) => {
-        // Distinct is not the same as different. Two skins that differ by a tenth of a percent
-        // would pass the test above and fail the person looking at the screen.
-        await page.goto('/index.html');
-        await page.waitForTimeout(1500);
-
-        const radii = [], gaps = [], scales = [], sizes = [];
-        for (const skin of SKINS) {
-            const s = await shapeOf(page, skin);
-            radii.push(parseFloat(s.iconRadius));
-            gaps.push(parseFloat(s.drawnGap));
-            scales.push(parseFloat(s.rowScale));
-            sizes.push(parseFloat(s.labelSize));
-        }
-        expect(Math.max(...radii) - Math.min(...radii),
-               'every skin rounds its code plates about the same amount').toBeGreaterThanOrEqual(20);
-
-        // Density is asserted as a RATIO, not a pixel count. The row gap is derived from the
-        // viewport, so on a short screen every skin's gap is small and a fixed pixel threshold
-        // fails for a reason that has nothing to do with the skins. Measured in pixels this
-        // spread was 0.13px on the suite's default viewport and 5px on a phone — same design,
-        // different verdict. The pixels are still checked, proportionally, so a --row-scale
-        // nobody wired up cannot pass.
-        expect(Math.max(...scales) - Math.min(...scales),
-               'every skin packs its grid at the same density').toBeGreaterThanOrEqual(0.2);
-        expect(Math.max(...gaps) / Math.min(...gaps),
-               'the density tokens are set but not reaching the grid').toBeGreaterThanOrEqual(1.2);
-
-        expect(Math.max(...sizes) - Math.min(...sizes),
-               'every skin labels its codes at the same size').toBeGreaterThanOrEqual(1.5);
-    });
-
-    test('a code plate is never rounded enough to clip the code', async ({ page }) => {
-        // The reason the shapes stop short of a circle. A QR code's finder patterns live in its
-        // corners; a plate round enough to cut them shows a code that could not be scanned.
-        await page.goto('/index.html');
-        await page.waitForTimeout(1500);
-        for (const skin of SKINS) {
-            const r = parseFloat((await shapeOf(page, skin)).iconRadius);
-            expect(r, `${skin} rounds its plates ${r}%, far enough in to clip a QR's corners`)
-                .toBeLessThanOrEqual(40);
-        }
-    });
-
-    test('the picker previews the skin you would actually get', async ({ page }) => {
-        // The preview tile and the live body claim the SAME token block, so the settings screen
-        // cannot drift away from what switching does. This is the test that keeps them sharing.
-        await page.goto('/index.html');
-        await page.waitForTimeout(1500);
-        await page.evaluate(() => window.SettingsManager.open());
-        await page.waitForTimeout(700);
-
-        for (const skin of SKINS) {
-            const r = await page.evaluate((skin) => {
-                const keys = ['--squircle-radius', '--dock-radius', '--dock-max', '--dock-pad',
-                              '--label-size', '--label-weight', '--label-case', '--row-scale'];
-                const tile = document.querySelector(`#skin-picker .skin-tokens-${skin}`);
-                if (!tile) return { missing: true };
-                const from = (el) => {
-                    const cs = getComputedStyle(el);
-                    return keys.map(k => cs.getPropertyValue(k).trim()).join('|');
-                };
-                document.body.dataset.skin = skin;
-                return { tile: from(tile), live: from(document.body) };
-            }, skin);
-            expect(r.missing, `${skin} has no preview in the picker`).toBeFalsy();
-            expect(r.tile, `the ${skin} preview does not match the ${skin} skin`).toBe(r.live);
-        }
-    });
-
-    test('no skin pushes the dock wider than the screen', async ({ page }) => {
-        // The dock now sets its own max-width per skin, and a dock a few pixels too wide is how
-        // the page gained a horizontal scrollbar the last time its sizing changed.
-        for (const [w, h] of [[320, 568], [360, 640], [412, 892], [430, 932]]) {
-            await page.setViewportSize({ width: w, height: h });
-            await page.goto('/index.html');
-            await page.waitForTimeout(1200);
-            for (const skin of SKINS) {
-                const over = await page.evaluate((skin) => {
-                    document.body.dataset.skin = skin;
-                    const d = document.getElementById('main-dock').getBoundingClientRect();
-                    return {
-                        page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-                        dock: Math.max(0, Math.round(d.right - window.innerWidth), Math.round(-d.left)),
-                    };
-                }, skin);
-                expect(over.page, `${skin} at ${w}x${h}: the page scrolls sideways`).toBeLessThanOrEqual(0);
-                expect(over.dock, `${skin} at ${w}x${h}: the dock hangs off the screen`).toBe(0);
-            }
-        }
-    });
-});
 
 // ============================================================================================
 //  You are always looking at the build that is on the server
@@ -6474,7 +5929,7 @@ test.describe('What moving a code means, as arithmetic', () => {
                     { id: 'g3', title: 'Three', type: 'grid', page: 0, order: 11, bcid: 'qrcode', data: 'three' },
                     { id: 'g4', title: 'Four',  type: 'grid', page: 0, order: 5,  bcid: 'qrcode', data: 'four' },
                 ],
-                autoArrange: false, skin: 'dock', gridCols: 4, gridRows: 6,
+                autoArrange: false, skin: 'cloud', gridCols: 4, gridRows: 6,
             }));
         });
         await page.reload();
@@ -6734,8 +6189,8 @@ test.describe('Signing in cannot undo the app', () => {
         await page.goto('/index.html');
         await page.waitForTimeout(1500);
         const r = await applyStale(page);
-        expect(r.skin, 'the account put a retired skin back').toBe('dock');
-        expect(r.attr, 'a retired skin was written onto the body').toBe('dock');
+        expect(r.skin, 'the account put a retired skin back').toBe('cloud');
+        expect(r.attr, 'a retired skin was written onto the body').toBe('cloud');
     });
 
     test('the cloud cannot put the gaps back in the grid', async ({ page }) => {
@@ -7570,7 +7025,7 @@ test.describe('Every dock button does something', () => {
     const boot = async (page, dock) => {
         await page.addInitScript((apps) => {
             localStorage.setItem('xancode_v2_state', JSON.stringify({
-                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                apps, gridSize: 'auto', skin: 'cloud', accent: '#516091',
                 palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
                 autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
             }));
@@ -7788,7 +7243,7 @@ test.describe('Polish pass', () => {
                             bcid: 'qrcode', data: 'seed-' + i, page: 0, order: i });
             }
             localStorage.setItem('xancode_v2_state', JSON.stringify({
-                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                apps, gridSize: 'auto', skin: 'cloud', accent: '#516091',
                 palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
                 autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
             }));
@@ -7937,26 +7392,6 @@ test.describe('Polish pass', () => {
         }
     });
 
-    test('a sheet is not a sheet of white paper on a dark skin', async ({ page }) => {
-        // The Create sheet was literal bg-white with text-gray-900. On the Dark and Scan Card
-        // skins that is printer paper thrown over a themed app, and it was the loudest thing
-        // in the recording.
-        await seeded(page);
-        await page.evaluate(() => window.CodeGenerator.open());
-        await page.waitForTimeout(800);
-        // Same color(srgb ...) serialisation as above.
-        const lightness = () => page.evaluate(() => {
-            const raw = getComputedStyle(document.getElementById('create-panel')).backgroundColor;
-            const n = (raw.match(/[\d.]+/g) || []).map(Number);
-            const scale = /^color\(/.test(raw) ? 255 : 1;
-            return ((n[0] + n[1] + n[2]) / 3) * scale;
-        });
-        expect(await lightness(), 'the Create sheet is white on a dark skin').toBeLessThan(90);
-
-        await page.evaluate(() => { window.OS_STATE.skin = 'soft'; document.body.dataset.skin = 'soft'; });
-        await page.waitForTimeout(400);
-        expect(await lightness(), 'the Create sheet stayed dark on a light skin').toBeGreaterThan(150);
-    });
 
     test('a layout pass does not re-render the grid unless the grid changed shape', async ({ page }) => {
         // calculateGrid used to end in an unconditional render(), and render() rebuilds every
@@ -8232,7 +7667,7 @@ test.describe('Nothing overlaps, and no class in the markup is a no-op', () => {
             titles.forEach((t, i) => apps.push({ id: 'ov' + i, title: t, type: 'grid',
                                                  bcid: 'qrcode', data: 'ov-' + i, page: 0, order: i }));
             localStorage.setItem('xancode_v2_state', JSON.stringify({
-                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                apps, gridSize: 'auto', skin: 'cloud', accent: '#516091',
                 palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
                 autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
             }));
@@ -8331,7 +7766,7 @@ test.describe('The screen holds still', () => {
                             bcid: 'qrcode', data: 'still-' + i, page: 0, order: i });
             }
             localStorage.setItem('xancode_v2_state', JSON.stringify({
-                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                apps, gridSize: 'auto', skin: 'cloud', accent: '#516091',
                 palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
                 autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
             }));
@@ -8756,7 +8191,7 @@ test.describe('The wallet', () => {
                             bcid: 'azteccode', data: 'wallet-' + i, page: 0, order: i });
             }
             localStorage.setItem('xancode_v2_state', JSON.stringify({
-                apps, gridSize: 'auto', skin: 'dock', accent: '#516091',
+                apps, gridSize: 'auto', skin: 'cloud', accent: '#516091',
                 palette: ['#516091', '#74BEC1', '#ADEBBE', '#EEF3AD'],
                 autoArrange: true, haptics: false, animations: true, history: [], pageNames: [],
             }));
@@ -9277,16 +8712,4 @@ test.describe('Skin coverage', () => {
         if (stateDefault) expect(def[1]).toBe(stateDefault);
     });
 
-    test('every skin is reachable from the settings picker', async ({ page }) => {
-        await page.goto('/index.html');
-        await page.waitForTimeout(1200);
-        const rows = await page.evaluate(() => {
-            window.SettingsManager.open();
-            return [...document.querySelectorAll('#skin-picker [data-skin-id]')]
-                .map(el => el.dataset.skinId);
-        });
-        for (const s of ALL_SKINS) {
-            expect(rows, `${s} has no row in the skin picker, so nobody can select it`).toContain(s);
-        }
-    });
 });
