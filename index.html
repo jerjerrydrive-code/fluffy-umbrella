@@ -229,9 +229,7 @@
         }
 
         :root { --accent-readable: var(--accent-on-dark, var(--accent)); }
-        #create-panel, #rename-panel, #item-fullscreen-layer,
-        body[data-skin="glass"] #library-overlay,
-        body[data-skin="glass"] #item-fullscreen-layer {
+        #create-panel, #rename-panel, #item-fullscreen-layer{
             --accent-readable: var(--accent-on-light, var(--accent));
         }
 
@@ -283,10 +281,7 @@
 
         /* The Scan Card skin's stat table. */
         .stat-row { border-bottom-color: color-mix(in srgb, var(--accent) 18%, rgba(0,0,0,0.06)); }
-        body[data-skin="scancard"] .fullscreen-stats {
-            background: var(--surface-light-2);
-            border-color: color-mix(in srgb, var(--accent) 12%, #f3f4f6);
-        }
+        
 
         /* Restated after the tinting rules so nothing above can reach the plate a code is
            drawn on. Specificity here is equal-or-higher and these come later in the sheet. */
@@ -1027,9 +1022,8 @@
 
            Listed per surface instead. Adding a light surface means adding it here, which is
            the point: the failure above is what happens when the two drift apart. */
-        body[data-skin="soft"] :is(#os-header, #main-dock, #library-overlay, #settings-panel,
-                                   #account-panel, #folder-overlay),
-        body[data-skin="glass"] :is(#os-header, #main-dock, #library-overlay) {
+         #main-dock, #library-overlay, #settings-panel,
+                                   #account-panel, #folder-overlay), #main-dock, #library-overlay) {
             --ink-strong: color-mix(in srgb, var(--pal-1) 22%, #16181f);
             --ink-soft: color-mix(in srgb, var(--pal-1) 26%, rgba(28,31,40,0.80));
             --ink-dim: color-mix(in srgb, var(--pal-1) 30%, rgba(30,33,42,0.64));
@@ -1082,10 +1076,8 @@
                 radial-gradient(70% 45% at 88% 78%,
                     color-mix(in srgb, var(--pal-4) 40%, transparent) 0%, transparent 62%);
         }
-        body[data-skin="glass"] #item-fullscreen-layer,
-        body[data-skin="soft"] #item-fullscreen-layer {
-            background-color: color-mix(in srgb, var(--pal-1) 16%, #ffffff);
-        }
+        
+        
 
         /* Viewer ink follows the viewer's own ground, not the app's.
            The layer used to be bg-white/85 and everything on it was text-gray-500/900. Giving
@@ -1108,8 +1100,8 @@
            There are TWO selector lists in this file that read exactly like this one — that one
            is the layer's background, this one is its ink — and the first attempt at this patched
            the wrong one and reported success. */
-        body[data-skin="glass"] #item-fullscreen-layer,
-        body[data-skin="soft"] #item-fullscreen-layer,
+        
+        
         body[data-skin="cloud"] #item-fullscreen-layer {
             --viewer-ink: color-mix(in srgb, var(--pal-1) 26%, #12141a);
             --viewer-ink-soft: color-mix(in srgb, var(--pal-1) 30%, rgba(20,22,28,0.72));
@@ -1682,25 +1674,11 @@
            corners, and a plate round enough to clip them shows a code that could not be
            scanned. */
 
-        .skin-tokens-dock {
-            --squircle-radius: 22.5%;
-            --dock-radius: 2.4rem; --dock-pad: 1.05rem; --dock-max: 440px; --dock-gap: 0.55rem;
-            --label-size: 12.5px; --label-weight: 500; --label-track: 0.2px;
-            --label-case: none; --label-gap: 6px; --row-scale: 1;
-            --preview-bg: linear-gradient(150deg, #3a3a44, #1d1d24);
-            --dock-preview-w: 88%;
-        }
+        
 
         /* A wallet of cards: crisp corners, a squared-off bar the full width of the screen,
            and small hard-set caps under each code. */
-        body[data-skin="scancard"], .skin-tokens-scancard {
-            --squircle-radius: 10%;
-            --dock-radius: 1.15rem; --dock-pad: 0.95rem; --dock-max: 100%; --dock-gap: 0.4rem;
-            --label-size: 10.5px; --label-weight: 800; --label-track: 0.75px;
-            --label-case: uppercase; --label-gap: 7px; --row-scale: 0.88;
-            --preview-bg: linear-gradient(150deg, #4a4a55, #26262e);
-            --dock-preview-w: 100%;
-        }
+        
 
         /* Almost-round plates on a narrow circle-ended pill, with light, airy labels. */
         /* The two light skins put the palette's blooms on a pale ground instead of a dark
@@ -1710,68 +1688,18 @@
            #eef0fb to #dfe6f2 is not light, it is grey: a big flat near-white field no theme
            could tint, which reads as glare rather than as a light interface. Mixed with the
            palette it becomes a tinted daylight instead of a blank one. */
-        body[data-skin="glass"] {
-            --sheet-bg: color-mix(in srgb, var(--pal-1) 10%, #ffffff);
-            --sheet-ink: color-mix(in srgb, var(--pal-1) 24%, #14161c);
-            --sheet-sub: color-mix(in srgb, var(--pal-1) 28%, rgba(24,27,34,0.72));
-            --sheet-fill: color-mix(in srgb, var(--pal-1) 14%, rgba(16,18,24,0.06));
-            --sheet-line: color-mix(in srgb, var(--pal-2) 26%, rgba(16,18,24,0.10));
-            --sheet-raised: #ffffff;
-            --wall-ink-a: color-mix(in srgb, var(--pal-1) 52%, #ffffff);
-            --wall-ink-b: color-mix(in srgb, var(--pal-3) 56%, #f4f6fd);
-            --wall-bloom: 84%;
-            --wall-tint-base: #ffffff;      /* light skins tint towards light, symmetrically */
-        }
-        body[data-skin="soft"] {
-            --sheet-bg: color-mix(in srgb, var(--pal-1) 10%, #ffffff);
-            --sheet-ink: color-mix(in srgb, var(--pal-1) 24%, #14161c);
-            --sheet-sub: color-mix(in srgb, var(--pal-1) 28%, rgba(24,27,34,0.72));
-            --sheet-fill: color-mix(in srgb, var(--pal-1) 14%, rgba(16,18,24,0.06));
-            --sheet-line: color-mix(in srgb, var(--pal-2) 26%, rgba(16,18,24,0.10));
-            --sheet-raised: #ffffff;
-            --wall-ink-a: color-mix(in srgb, var(--pal-1) 32%, #f7f9fd);
-            --wall-ink-b: color-mix(in srgb, var(--pal-3) 38%, #eef2f8);
-            --wall-bloom: 62%;
-            --wall-tint-base: #ffffff;
-        }
+        
+        
 
-        body[data-skin="glass"], .skin-tokens-glass {
-            --squircle-radius: 38%;
-            --dock-radius: 999px; --dock-pad: 1.1rem; --dock-max: 420px; --dock-gap: 0.6rem;
-            --label-size: 12px; --label-weight: 400; --label-track: 0.35px;
-            --label-case: none; --label-gap: 9px; --row-scale: 1.08;
-            --preview-bg: linear-gradient(150deg, #cfd6f5, #eef0ff);
-            --dock-preview-w: 76%;
-        }
+        
 
         /* Pillowy and generous — everything a little rounder and further apart. */
-        body[data-skin="soft"], .skin-tokens-soft {
-            --squircle-radius: 32%;
-            --dock-radius: 2.9rem; --dock-pad: 1.15rem; --dock-max: 428px; --dock-gap: 0.6rem;
-            --label-size: 12px; --label-weight: 600; --label-track: 0.1px;
-            --label-case: none; --label-gap: 8px; --row-scale: 1.12;
-            --preview-bg: linear-gradient(150deg, #eef1f7, #dfe4ee);
-            --dock-preview-w: 80%;
-        }
+        
 
-        body[data-skin="aurora"], .skin-tokens-aurora {
-            --squircle-radius: 28%;
-            --dock-radius: 1.9rem; --dock-pad: 0.8rem; --dock-max: 400px; --dock-gap: 0.25rem;
-            --label-size: 12.5px; --label-weight: 500; --label-track: 0.45px;
-            --label-case: none; --label-gap: 7px; --row-scale: 1.04;
-            --preview-bg: linear-gradient(150deg, #4c2f7a, #0b1a3a);
-            --dock-preview-w: 92%;
-        }
+        
 
         /* Chunky and close-packed: the least round tiles of the six, on a wide squared dock. */
-        body[data-skin="classic"], .skin-tokens-classic {
-            --squircle-radius: 17%;
-            --dock-radius: 1.35rem; --dock-pad: 0.625rem; --dock-max: 420px; --dock-gap: 0.25rem;
-            --label-size: 13px; --label-weight: 700; --label-track: 0.05px;
-            --label-case: none; --label-gap: 5px; --row-scale: 0.94;
-            --preview-bg: linear-gradient(150deg, #2b2f38, #14161b);
-            --dock-preview-w: 96%;
-        }
+        
 
         /* The picker's tile: the real tokens, at 1/6 scale. */
         .skin-preview {
@@ -1792,33 +1720,14 @@
                9px bar, and the clamp keeps 999px from becoming a lozenge. */
             border-radius: clamp(1px, calc(var(--dock-radius) / 5), 4.5px);
         }
-        .skin-tokens-glass .sp-grid span, .skin-tokens-soft .sp-grid span {
-            background: #ffffff; box-shadow: 0 1px 2px rgba(60, 60, 90, 0.25);
-        }
-        .skin-tokens-glass .sp-dock, .skin-tokens-soft .sp-dock {
-            background: rgba(255, 255, 255, 0.85);
-            box-shadow: 0 1px 3px rgba(60, 60, 90, 0.18);
-        }
+         
+         
 
-        body[data-skin="scancard"] #fullscreen-item-data { display: none; }
-        body[data-skin="scancard"] .fullscreen-badge {
-            display: inline-flex; align-items: center; align-self: center;
-            margin-top: 1.1rem; padding: 0.3rem 0.9rem; border-radius: 999px;
-            background: color-mix(in srgb, var(--accent) 16%, white);
-            color: var(--accent); font-size: 0.7rem; font-weight: 800;
-            letter-spacing: 0.05em; text-transform: uppercase;
-        }
-        body[data-skin="scancard"] .fullscreen-stats {
-            display: flex; flex-direction: column; width: 100%; margin-top: 1.25rem;
-            background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 1.25rem; padding: 0.9rem 1.1rem;
-        }
-        body[data-skin="scancard"] .fullscreen-canvas-panel {
-            border-radius: 1.5rem;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-        }
-        body[data-skin="scancard"] .fullscreen-actions {
-            width: 100%; justify-content: space-between; gap: 0.75rem; margin-top: 1.5rem;
-        }
+        
+        
+        
+        
+        
         .stat-row {
             display: flex; align-items: center; justify-content: space-between;
             padding: 0.6rem 0.1rem; border-bottom: 1px solid rgba(0,0,0,0.06);
@@ -1838,111 +1747,52 @@
            rendered on a translucent surface can fail to scan, and scannability is
            functional, not decorative. The frosted world surrounds the code; it never
            covers it. */
-        body[data-skin="glass"]::before {
-            content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-            background:
-                /* All four palette colours, not the accent three times over. */
-                radial-gradient(120% 80% at 15% 0%, color-mix(in srgb, var(--pal-1) 55%, transparent) 0%, transparent 60%),
-                radial-gradient(100% 70% at 95% 15%, color-mix(in srgb, var(--pal-2) 45%, transparent) 0%, transparent 55%),
-                radial-gradient(130% 90% at 50% 105%, color-mix(in srgb, var(--pal-3) 45%, #ffffff) 0%, transparent 65%),
-                radial-gradient(90% 60% at 8% 88%, color-mix(in srgb, var(--pal-4) 35%, transparent) 0%, transparent 58%),
-                linear-gradient(160deg, rgba(233,232,255,0.55) 0%, rgba(214,240,246,0.45) 100%);
-            backdrop-filter: blur(60px) saturate(150%);
-            -webkit-backdrop-filter: blur(60px) saturate(150%);
-        }
+        
 
-        body[data-skin="glass"] .ios-glass {
-            background: color-mix(in srgb, var(--accent) 14%, rgba(255, 255, 255, 0.42));
-            backdrop-filter: blur(40px) saturate(200%);
-            -webkit-backdrop-filter: blur(40px) saturate(200%);
-            border: 1px solid rgba(255, 255, 255, 0.55);
-            box-shadow: 0 12px 40px -8px color-mix(in srgb, var(--accent) 35%, transparent),
-                        inset 0 1px 0 rgba(255, 255, 255, 0.6);
-        }
+        
 
-        body[data-skin="glass"] #os-header button {
-            background: rgba(255, 255, 255, 0.35);
-            backdrop-filter: blur(20px) saturate(180%);
-            -webkit-backdrop-filter: blur(20px) saturate(180%);
-            border: 1px solid rgba(255, 255, 255, 0.5);
-        }
+        
 
         /* Accent-tinted halo around each code tile — the plate itself stays opaque. */
-        body[data-skin="glass"] .app-icon {
-            box-shadow: 0 6px 20px -4px color-mix(in srgb, var(--accent) 45%, transparent),
-                        0 0 0 1px rgba(255, 255, 255, 0.45);
-        }
+        
         /* Dark ink, like Soft. Glass is a LIGHT skin and its labels were white with a shadow
            under them — which is what the app does on a dark wallpaper and is exactly wrong here.
            On a pale ground it reads as a glow around nothing, and the brighter the theme the
            less of a label there is. A shadow cannot rescue white text on white; the polarity has
            to flip, and Soft has been doing this since it was written. */
-        body[data-skin="glass"] .app-label {
-            color: #241f3d;
-            text-shadow: 0 1px 0 rgba(255, 255, 255, 0.65);
-        }
-        body[data-skin="glass"] #os-clock,
-        body[data-skin="glass"] .pagination-dot { color: #241f3d; }
-        body[data-skin="glass"] #os-clock { text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6); }
-        body[data-skin="glass"] :is(#os-header, #main-dock) svg { color: #2c2646; }
-        body[data-skin="glass"] .pagination-dot { background: rgba(36, 31, 61, 0.35); }
-        body[data-skin="glass"] .pagination-dot.active { background: #241f3d; }
-        body[data-skin="glass"] .pagination-dot { background: rgba(255, 255, 255, 0.6); }
+        
+        
+        
+         #main-dock) svg { color: #2c2646; }
+        
+        
+        
 
         /* Overlays and panels: frosted, accent-tinted, light. */
-        body[data-skin="glass"] #library-overlay,
-        body[data-skin="glass"] #item-fullscreen-layer {
-            background: color-mix(in srgb, var(--accent) 18%, rgba(255, 255, 255, 0.72));
-            backdrop-filter: blur(40px) saturate(200%);
-            -webkit-backdrop-filter: blur(40px) saturate(200%);
-        }
-        body[data-skin="glass"] #library-overlay .bg-white\/10,
-        body[data-skin="glass"] #library-list > div {
-            background: rgba(255, 255, 255, 0.5);
-            border-color: rgba(255, 255, 255, 0.65);
-        }
-        body[data-skin="glass"] #library-overlay h2,
-        body[data-skin="glass"] #library-list h4 { color: #241f3d; }
-        body[data-skin="glass"] #library-overlay #library-count,
-        body[data-skin="glass"] #library-list p { color: rgba(36, 31, 61, 0.6); }
-        body[data-skin="glass"] #library-search { color: #241f3d; }
-        body[data-skin="glass"] #library-search::placeholder { color: rgba(36, 31, 61, 0.45); }
-        body[data-skin="glass"] #btn-close-library {
-            background: rgba(255, 255, 255, 0.55);
-            border: 1px solid rgba(255, 255, 255, 0.7);
-        }
+        
+        
+        
+        
+        
+        
+        
         /* lucide replaces each <i data-lucide> with an <svg>, so an `i` selector stops matching
            once icons render — target svg. Lucide draws with stroke:currentColor, so setting
            color here is enough. The empty-state icon keeps its accent via .accent-text's
            !important, which deliberately outranks this. */
-        body[data-skin="glass"] #library-overlay svg { color: rgba(36, 31, 61, 0.5); }
-        body[data-skin="glass"] #library-list .lib-meta { color: rgba(36, 31, 61, 0.5); }
-        body[data-skin="glass"] .seg-track {
-            background: rgba(255, 255, 255, 0.45);
-            box-shadow: inset 0 1px 2px rgba(36, 31, 61, 0.10);
-        }
-        body[data-skin="glass"] :is(.library-sort-btn, .library-src-btn) {
+        
+        
+        
+         .library-src-btn) {
             color: rgba(36, 31, 61, 0.65);
         }
-        body[data-skin="glass"] :is(.library-sort-btn, .library-src-btn).active {
+         .library-src-btn).active {
             background: color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.6));
             color: color-mix(in srgb, var(--accent) 75%, #241f3d);
         }
 
-        body[data-skin="glass"] #settings-panel,
-        body[data-skin="glass"] #account-panel {
-            background: color-mix(in srgb, var(--accent) 22%, rgba(28, 24, 48, 0.82));
-            backdrop-filter: blur(40px) saturate(200%);
-            -webkit-backdrop-filter: blur(40px) saturate(200%);
-            border: 1px solid rgba(255, 255, 255, 0.22);
-        }
-        body[data-skin="glass"] #create-panel,
-        body[data-skin="glass"] #rename-panel {
-            background: color-mix(in srgb, var(--accent) 10%, rgba(255, 255, 255, 0.88));
-            backdrop-filter: blur(40px) saturate(200%);
-            -webkit-backdrop-filter: blur(40px) saturate(200%);
-            border: 1px solid rgba(255, 255, 255, 0.7);
-        }
+        
+        
 
         /* ---------- SKIN: "soft" (neumorphism) ----------
            Surfaces are the SAME colour as the ground and are separated only by a two-light
@@ -1963,106 +1813,53 @@
            Neumorphism's usual failure is illegible low-contrast text. Avoided on purpose: the
            surfaces are soft, the TYPE is not. --soft-ink on --soft-bg is ~11:1, comfortably past
            WCAG AA, and the accent is only ever used for state, never for body copy. */
-        body[data-skin="soft"] {
-            /* Tinted by the palette, like everything else. A flat #e4e9f0 meant every soft
-               surface — the dock, the header buttons, the panels — stayed the same grey however
-               the theme changed, which is half of why a theme "did nothing". Kept close to the
-               original lightness so the raised/inset shadows still read as moulded. */
-            --soft-bg: color-mix(in srgb, var(--pal-1) 26%, #f2f5fa);
-            --soft-light: color-mix(in srgb, var(--pal-2) 22%, rgba(255, 255, 255, 0.95));
-            --soft-shade: color-mix(in srgb, var(--pal-1) 28%, rgba(158, 172, 196, 0.55));
-            --soft-ink: color-mix(in srgb, var(--pal-1) 14%, #2b3442);
-            --soft-ink-soft: #66718a;
-            --soft-raised: 6px 6px 14px var(--soft-shade), -6px -6px 14px var(--soft-light);
-            --soft-raised-sm: 4px 4px 9px var(--soft-shade), -4px -4px 9px var(--soft-light);
-            --soft-inset: inset 4px 4px 9px var(--soft-shade), inset -4px -4px 9px var(--soft-light);
-        }
+        
         /* Soft's ground covers the wallpaper completely, so without this the one skin the
            user actually liked was also the one skin a theme could not touch at all. The blooms
            come through at a fraction of their strength: enough that the palette is present,
            light enough that the moulded-from-one-material look survives, which is the whole
            point of this skin. */
-        body[data-skin="soft"]::before {
-            content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-            background:
-                radial-gradient(62% 46% at 18% 10%, color-mix(in srgb, var(--pal-1) 52%, transparent) 0%, transparent 66%),
-                radial-gradient(58% 44% at 88% 30%, color-mix(in srgb, var(--pal-2) 46%, transparent) 0%, transparent 62%),
-                radial-gradient(66% 50% at 55% 96%, color-mix(in srgb, var(--pal-3) 50%, transparent) 0%, transparent 64%),
-                var(--soft-bg);
-        }
+        
 
-        body[data-skin="soft"] .ios-glass {
-            background: var(--soft-bg);
-            backdrop-filter: none; -webkit-backdrop-filter: none;
-            border: none;
-            box-shadow: var(--soft-raised);
-        }
-        body[data-skin="soft"] #os-header button {
-            background: var(--soft-bg);
-            backdrop-filter: none; -webkit-backdrop-filter: none;
-            border: none;
-            box-shadow: var(--soft-raised-sm);
-        }
-        body[data-skin="soft"] #os-header button:active { box-shadow: var(--soft-inset); }
+        
+        
+        
 
         /* The code plate stays opaque white — same rule as "glass": scannability is functional.
            Here it reads as a card pressed into the soft ground. */
-        body[data-skin="soft"] .app-icon { box-shadow: var(--soft-raised); }
-        body[data-skin="soft"] .app-label {
-            color: var(--soft-ink);
-            text-shadow: 0 1px 0 var(--soft-light);
-        }
-        body[data-skin="soft"] .pagination-dot {
-            background: var(--soft-shade);
-            box-shadow: inset 1px 1px 2px rgba(160, 174, 196, 0.8);
-        }
-        body[data-skin="soft"] .pagination-dot.active { background: var(--accent); }
+        
+        
+        
+        
 
         /* Polarity flip. Explicit container list — the scanner modal is excluded on purpose. */
-        body[data-skin="soft"] :is(#os-header, #main-dock, #library-overlay, #settings-panel, #account-panel) :is(.text-white, .text-gray-300, .text-gray-400, .text-gray-500) {
+         #main-dock, #library-overlay, #settings-panel, #account-panel) :is(.text-white, .text-gray-300, .text-gray-400, .text-gray-500) {
             color: var(--soft-ink);
         }
-        body[data-skin="soft"] :is(#os-header, #main-dock, #library-overlay) svg { color: var(--soft-ink); }
-        body[data-skin="soft"] #os-clock { color: var(--soft-ink); text-shadow: 0 1px 0 var(--soft-light); }
+         #main-dock, #library-overlay) svg { color: var(--soft-ink); }
+        
 
-        body[data-skin="soft"] #library-overlay,
-        body[data-skin="soft"] #item-fullscreen-layer {
-            background: var(--soft-bg);
-            backdrop-filter: none; -webkit-backdrop-filter: none;
-        }
-        body[data-skin="soft"] #library-overlay .bg-white\/10,
-        body[data-skin="soft"] #library-list > div {
-            background: var(--soft-bg);
-            border: none;
-            box-shadow: var(--soft-raised-sm);
-        }
-        body[data-skin="soft"] #library-list > div:active { box-shadow: var(--soft-inset); }
-        body[data-skin="soft"] #library-overlay h2,
-        body[data-skin="soft"] #library-list h4 { color: var(--soft-ink); }
-        body[data-skin="soft"] #library-overlay #library-count,
-        body[data-skin="soft"] #library-list p,
-        body[data-skin="soft"] #library-list .lib-meta { color: var(--soft-ink-soft); }
-        body[data-skin="soft"] #library-search { color: var(--soft-ink); }
-        body[data-skin="soft"] #library-search::placeholder { color: var(--soft-ink-soft); }
-        body[data-skin="soft"] #btn-close-library {
-            background: var(--soft-bg); border: none; box-shadow: var(--soft-raised-sm);
-        }
+        
+        
+        
+        
+        
+        
+        
+        
         /* Both pill families, deliberately together. .library-src-btn was added later and
            only .library-sort-btn was listed here, so the Saved/Scanned/Created row kept the
            dark skin's 55%-white text on a pale panel: 1.22:1, which is not dim but gone. Naming
            both means the next one to be added is a visible omission rather than a silent one. */
-        body[data-skin="soft"] .seg-track {
-            background: var(--soft-bg);
-            box-shadow: var(--soft-inset);
-        }
-        body[data-skin="soft"] :is(.library-sort-btn, .library-src-btn) {
+        
+         .library-src-btn) {
             background: transparent; border: none; box-shadow: none;
             color: var(--soft-ink-soft);
         }
         /* Raised, not inset. On every other skin the selected segment is a filled pill sitting
            in the track; on a moulded one the track is already pressed in, so the thing that
            reads as chosen is the segment pushed back OUT of it. */
-        body[data-skin="soft"] :is(.library-sort-btn, .library-src-btn).active {
+         .library-src-btn).active {
             background: var(--soft-bg);
             box-shadow: var(--soft-raised-sm);
             color: var(--accent-readable, var(--accent));
@@ -2072,9 +1869,9 @@
            the darkened variant. Set once on the skin rather than per panel: --accent-readable
            inherits, so anything using .accent-text inside picks it up, including controls that
            do not exist yet. */
-        body[data-skin="soft"] { --accent-readable: var(--accent-on-light, var(--accent)); }
+        
 
-        body[data-skin="soft"] :is(#settings-panel, #account-panel, #create-panel, #rename-panel) {
+         #account-panel, #create-panel, #rename-panel) {
             background: var(--soft-bg);
             border: none;
             box-shadow: var(--soft-raised), 0 24px 60px -20px rgba(90, 104, 128, 0.45);
@@ -2082,10 +1879,8 @@
 
         /* Two more that inherited colours chosen for a dark background: the sign-in error was a
            pale red at 2.27:1, and the viewer's "+ Tag" chip a light grey at 2.08:1. */
-        body[data-skin="soft"] #account-guest-error { color: #b42318; }
-        body[data-skin="soft"] .tag-chip-add {
-            color: var(--soft-ink-soft); border-color: var(--soft-shade);
-        }
+        
+        
         /* The same two, for the same reason, on the other light skin. */
         body[data-skin="cloud"] #account-guest-error { color: #b42318; }
         body[data-skin="cloud"] .tag-chip-add {
@@ -2096,15 +1891,15 @@
            segmented control (bg-black/40) presses deeper still, so the hierarchy survives
            without any colour difference to carry it. Getting this list wrong is very visible:
            a missed slab stays dark while the text on it has already flipped to dark ink. */
-        body[data-skin="soft"] :is(#settings-panel, #account-panel) .bg-\[\#2c2c2e\] {
+         #account-panel) .bg-\[\#2c2c2e\] {
             background: var(--soft-bg);
             box-shadow: var(--soft-inset);
         }
-        body[data-skin="soft"] :is(#settings-panel, #account-panel) :is(.bg-black\/40, .bg-black\/30, .bg-black\/20, .bg-white\/5) {
+         #account-panel) :is(.bg-black\/40, .bg-black\/30, .bg-black\/20, .bg-white\/5) {
             background: var(--soft-bg);
             box-shadow: var(--soft-inset);
         }
-        body[data-skin="soft"] :is(#settings-panel, #account-panel) :is(.bg-white\/10, .bg-white\/20) {
+         #account-panel) :is(.bg-white\/10, .bg-white\/20) {
             background: var(--soft-bg);
             box-shadow: var(--soft-raised-sm);
         }
@@ -2113,13 +1908,10 @@
            rule above already matches .text-gray-300 inside #settings-panel at (1,2,0), so a
            plain .grid-select-btn.active at (0,3,0) loses to it and the selected segment ends up
            painted in dark ink on the accent fill. Keep an ID in any rule that has to beat it. */
-        body[data-skin="soft"] #settings-panel .grid-select-btn { color: var(--soft-ink-soft); }
-        body[data-skin="soft"] #settings-panel .grid-select-btn.active {
-            color: var(--accent-text);
-            box-shadow: var(--soft-raised-sm);
-        }
+        
+        
         /* Skin picker rows read as raised cards on the pressed-in section. */
-        body[data-skin="soft"] #skin-picker button { box-shadow: var(--soft-raised-sm); }
+        
         /* The row's NAME, which is .text-white — a raw Tailwind colour that nothing remaps.
            
            The ink tokens cover .text-gray-* through .ui-chrome and the sheet tokens cover
@@ -2131,7 +1923,7 @@
            
            Cloud had the identical bug, found the same way one run earlier. Both light skins
            need this; the dark ones and Glass — whose panel really is dark — do not. */
-        body[data-skin="soft"] #skin-picker button :is(.text-white, .text-gray-400) {
+         .text-gray-400) {
             color: var(--soft-ink);
         }
 
@@ -2139,19 +1931,13 @@
            still read as foreign on the soft panel. Here "off" is a groove pressed into the
            ground and "on" fills with the live accent, so state is carried by depth and colour
            rather than by a floating dark chip. */
-        body[data-skin="soft"] .apple-toggle-bg {
-            background: var(--soft-bg);
-            box-shadow: inset 2px 2px 5px var(--soft-shade), inset -2px -2px 5px var(--soft-light);
-        }
-        body[data-skin="soft"] input:checked + .apple-toggle-bg {
-            background: var(--accent);
-            box-shadow: inset 2px 2px 5px rgba(0, 0, 0, 0.18);
-        }
-        body[data-skin="soft"] .apple-toggle-knob { box-shadow: var(--soft-raised-sm); }
+        
+        
+        
 
         /* A near-opaque black scrim would fight a light skin. Lighten it so the modal reads as
            lifted off the same soft ground rather than punched through a dark sheet. */
-        body[data-skin="soft"] :is(#settings-modal, #account-modal, #rename-modal, #create-modal) {
+         #account-modal, #rename-modal, #create-modal) {
             background: rgba(190, 200, 216, 0.55);
         }
 
@@ -2560,123 +2346,51 @@
            and body.no-motion collapse animation-duration globally, so it freezes on its first
            frame in either case with no separate handling here — the field still looks composed
            when static, which is why it animates transform only and never opacity. */
-        body[data-skin="aurora"] {
-            --aur-ink: #0a0a12;
-            /* Roughly even mixes on purpose. Weighting these toward the accent (85/15) made
-               every bloom collapse to the same hue and the field read as a single-colour
-               wash rather than an aurora — the variety IS the effect. Near-even keeps three
-               distinguishable hues while still visibly retuning with the accent. */
-            --aur-bloom-a: color-mix(in srgb, var(--accent) 55%, #ff4ecd);
-            --aur-bloom-b: color-mix(in srgb, var(--accent) 45%, #2de2e6);
-            --aur-bloom-c: color-mix(in srgb, var(--accent) 55%, #7b2ff7);
-            --aur-edge: color-mix(in srgb, var(--accent) 45%, transparent);
-        }
-        body[data-skin="aurora"]::before {
-            content: ''; position: fixed; inset: -12%; z-index: 0; pointer-events: none;
-            background:
-                radial-gradient(38% 30% at 18% 16%, var(--aur-bloom-a) 0%, transparent 62%),
-                radial-gradient(42% 34% at 84% 26%, var(--aur-bloom-b) 0%, transparent 60%),
-                radial-gradient(50% 38% at 62% 88%, var(--aur-bloom-c) 0%, transparent 64%),
-                radial-gradient(46% 32% at 12% 78%, var(--aur-bloom-b) 0%, transparent 58%),
-                var(--aur-ink);
-            filter: blur(46px) saturate(150%);
-            /* The slow drift that used to live here made this skin unusable, and nothing said so.
-             *
-             * Measured at 412x892 with 40 codes: aurora ran at 17fps while every other skin ran
-             * at 61. Not during a transition — at rest, permanently, for as long as the skin was
-             * selected. Every tap, swipe and animation in the app inherited it.
-             *
-             * The cause is this element, not the animation's contents. It is `position: fixed`,
-             * `inset: -12%`, and carries `filter: blur(46px)`, so it cannot be composited: any
-             * change re-rasterises a larger-than-viewport surface and re-blurs it every frame.
-             * Measured, one variable at a time:
-             *
-             *     translate + scale (as shipped)   14-17 fps
-             *     translate only                   17 fps
-             *     translate only + will-change     17 fps
-             *     opacity only                     23 fps
-             *     no animation                     61 fps
-             *
-             * So it is not the scale, and will-change does not rescue it. Any animation at all on
-             * a blurred full-viewport layer costs the whole frame budget.
-             *
-             * The field itself — four radial blooms under a heavy blur — is what the skin looks
-             * like, and it is kept in full. What is gone is a 38-second ambient drift that almost
-             * nobody would notice, traded for three and a half times the frame rate everywhere.
-             * Reinstating motion here needs a different structure: something that can live on its
-             * own compositor layer, e.g. a pre-blurred bitmap rather than a live filter. */
-        }
+        
+        
 
-        body[data-skin="aurora"] .ios-glass {
-            background: rgba(12, 12, 22, 0.55);
-            backdrop-filter: blur(30px) saturate(180%);
-            -webkit-backdrop-filter: blur(30px) saturate(180%);
-            border: 1px solid var(--aur-edge);
-            box-shadow: 0 14px 44px -10px rgba(0, 0, 0, 0.7),
-                        inset 0 1px 0 rgba(255, 255, 255, 0.12);
-        }
-        body[data-skin="aurora"] #os-header button {
-            background: rgba(12, 12, 22, 0.5);
-            border: 1px solid var(--aur-edge);
-        }
+        
+        
         /* Code plates stay opaque white (scannability, same as the other skins); the halo is what
            ties them to the field. */
-        body[data-skin="aurora"] .app-icon {
-            box-shadow: 0 8px 26px -6px color-mix(in srgb, var(--accent) 60%, transparent),
-                        0 0 0 1px rgba(255, 255, 255, 0.14);
-        }
-        body[data-skin="aurora"] .app-label { text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85); }
+        
+        
 
-        body[data-skin="aurora"] #library-overlay {
-            background: rgba(8, 8, 16, 0.72);
-            backdrop-filter: blur(34px) saturate(170%);
-            -webkit-backdrop-filter: blur(34px) saturate(170%);
-        }
-        body[data-skin="aurora"] #library-list > div,
-        body[data-skin="aurora"] #library-overlay .bg-white\/10 {
-            background: rgba(255, 255, 255, 0.07);
-            border-color: var(--aur-edge);
-        }
-        body[data-skin="aurora"] :is(.library-sort-btn, .library-src-btn).active {
+        
+        
+         .library-src-btn).active {
             background: color-mix(in srgb, var(--accent) 26%, transparent);
             border-color: var(--aur-edge);
         }
-        body[data-skin="aurora"] :is(#settings-panel, #account-panel) {
+         #account-panel) {
             background: rgba(14, 14, 24, 0.82);
             backdrop-filter: blur(34px) saturate(170%);
             -webkit-backdrop-filter: blur(34px) saturate(170%);
             border: 1px solid var(--aur-edge);
         }
-        body[data-skin="aurora"] :is(#settings-panel, #account-panel) .bg-\[\#2c2c2e\] {
+         #account-panel) .bg-\[\#2c2c2e\] {
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid rgba(255, 255, 255, 0.06);
         }
-        body[data-skin="aurora"] #item-fullscreen-layer {
-            background: rgba(10, 10, 18, 0.9);
-            backdrop-filter: blur(34px) saturate(170%);
-            -webkit-backdrop-filter: blur(34px) saturate(170%);
-            --accent-readable: var(--accent-on-dark, var(--accent));
-        }
+        
         /* The viewer is the only place this skin turns a light surface dark, and for a while
            only the surface was turned: the title kept text-gray-900 and rendered at 1.11:1 on
            near-black — present in the DOM and invisible on screen — with COPY/SAVE/RENAME at
            2.61:1 behind it. The text roles are flipped to match the surface they sit on. The
            white plate behind the code is untouched, as everywhere else. */
-        body[data-skin="aurora"] #item-fullscreen-layer :is(.text-gray-900, .text-black) {
+         .text-black) {
             color: #f4f5f8;
         }
-        body[data-skin="aurora"] #item-fullscreen-layer :is(.text-gray-600, .text-gray-700, .text-gray-800) {
+         .text-gray-700, .text-gray-800) {
             color: #c3c8d4;
         }
-        body[data-skin="aurora"] #item-fullscreen-layer :is(.text-gray-500, .text-gray-400) {
+         .text-gray-400) {
             color: #99a0b0;
         }
-        body[data-skin="aurora"] #item-fullscreen-layer :is(.bg-gray-100, .bg-black\/5) {
+         .bg-black\/5) {
             background: rgba(255, 255, 255, 0.10);
         }
-        body[data-skin="aurora"] #item-fullscreen-layer .tag-chip-add {
-            color: #99a0b0; border-color: rgba(255, 255, 255, 0.28);
-        }
+        
 
         /* ---------- SKIN: "classic" (polished original) ----------
            Not a new aesthetic. Same layout, same wallpaper, same everything structural — this is
@@ -2701,44 +2415,15 @@
               as a field of things.
            5. DOCK DEPTH. One flat 40px shadow, no saturation boost. Given the same two-layer
               treatment plus saturate(180%), so the glass reads as glass. */
-        body[data-skin="classic"] .app-label {
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.45);
-            letter-spacing: 0.05px;
-            margin-top: 5px;
-            -webkit-font-smoothing: antialiased;
-        }
-        body[data-skin="classic"] .app-icon {
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22),
-                        0 8px 20px -6px rgba(0, 0, 0, 0.38),
-                        inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
-        }
-        body[data-skin="classic"] .ios-glass {
-            background: rgba(22, 22, 26, 0.6);
-            backdrop-filter: blur(30px) saturate(180%);
-            -webkit-backdrop-filter: blur(30px) saturate(180%);
-            border: 0.5px solid rgba(255, 255, 255, 0.18);
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2),
-                        0 14px 40px -12px rgba(0, 0, 0, 0.55),
-                        inset 0 0.5px 0 rgba(255, 255, 255, 0.16);
-        }
-        body[data-skin="classic"] #os-header button {
-            background: rgba(255, 255, 255, 0.14);
-            border: 0.5px solid rgba(255, 255, 255, 0.16);
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
-        }
-        body[data-skin="classic"] #os-clock {
-            letter-spacing: 0.1px;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-        }
+        
+        
+        
+        
+        
         /* Inactive dots were a flat 40% white — too close to the active state to read as a
            position indicator. Widening the gap between the two states is the whole job. */
-        body[data-skin="classic"] .pagination-dot {
-            background: rgba(255, 255, 255, 0.32);
-            box-shadow: 0 0 1px rgba(0, 0, 0, 0.4);
-        }
-        body[data-skin="classic"] .pagination-dot.active {
-            background: rgba(255, 255, 255, 0.95);
-        }
+        
+        
 
         /* Brief whole-app blur/scale pulse while a skin swap is committed underneath it */
         /* Armed folder target: the icon a dwell would merge into. Ring plus a slight lift,
