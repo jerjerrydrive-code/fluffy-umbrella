@@ -2114,6 +2114,20 @@
         }
         /* Skin picker rows read as raised cards on the pressed-in section. */
         body[data-skin="soft"] #skin-picker button { box-shadow: var(--soft-raised-sm); }
+        /* The row's NAME, which is .text-white — a raw Tailwind colour that nothing remaps.
+           
+           The ink tokens cover .text-gray-* through .ui-chrome and the sheet tokens cover
+           .text-gray-900 and friends, but a hardcoded white was always assumed to be sitting on
+           something dark. On Soft the settings panel is pale, so every skin's name in the picker
+           was white type on a near-white row: measured at 1.84:1. It has been that way since
+           Soft shipped, and it went unseen because the picker sits far enough down the panel
+           that the contrast sweep only reaches it when the panel happens to be scrolled to it.
+           
+           Cloud had the identical bug, found the same way one run earlier. Both light skins
+           need this; the dark ones and Glass — whose panel really is dark — do not. */
+        body[data-skin="soft"] #skin-picker button :is(.text-white, .text-gray-400) {
+            color: var(--soft-ink);
+        }
 
         /* The off-state toggle track is a dark grey pill everywhere else — the one control that
            still read as foreign on the soft panel. Here "off" is a groove pressed into the
@@ -2370,6 +2384,29 @@
             border-color: var(--cl-line);
         }
         body[data-skin="cloud"] :is(#settings-panel, #account-panel) svg { color: var(--cl-ink); }
+        /* The skin picker's rows, both states, pinned to a light ground.
+           
+           A row is either bg-black/20 (not chosen) or .accent-bg-soft (chosen), and the second
+           carries !important and resolves to the raw accent at 16% over whatever is behind it.
+           The contrast sweep reported "Scan Card" at 1.31:1 on this skin in a full run and I
+           could not reproduce it in isolation or by replaying the same sequence by hand, so I
+           do not know which of the two states produced it.
+           
+           What is certain is that near-black ink is only safe on a light ground, and that both
+           states are supposed to BE light here. Pinning both removes the whole class rather
+           than the one instance I could not pin down — and !important is needed because the
+           chosen state's own rule has it. */
+        body[data-skin="cloud"] #skin-picker button {
+            background-color: color-mix(in srgb, var(--pal-1) 6%, #eaeef6) !important;
+            border-color: var(--cl-line) !important;
+        }
+        body[data-skin="cloud"] #skin-picker button.accent-bg-soft {
+            background-color: color-mix(in srgb, var(--accent) 14%, #ffffff) !important;
+            border-color: color-mix(in srgb, var(--accent) 45%, #ffffff) !important;
+        }
+        body[data-skin="cloud"] #skin-picker button :is(.text-white, .text-gray-400) {
+            color: var(--cl-ink);
+        }
         /* The section cards inside the panel, which are their own dark surface — bg-[#2c2c2e],
            remapped to --surface-2. Lightening the panel and stopping there is what left "Screen
            Grid" at 1.29:1 on a card that was still nearly black: the panel was fixed, the thing
@@ -2680,6 +2717,42 @@
     </style>
 </head>
 <body class="w-full h-full text-white relative transition-colors duration-300">
+<script>
+/* THE SKIN, BEFORE THE FIRST PAINT.
+
+   data-skin was stamped on <body> by OSSkinManager, which is constructed at the very bottom of
+   a 630KB script. Everything above it — the whole document — therefore painted with no skin at
+   all: the dark default, white body text. Then the attribute landed and the app flipped to
+   whatever the user actually chose. And because <body> carries `transition-colors
+   duration-300`, the flip was not even a snap; it was a third of a second of the background
+   wiping from near-black to near-white.
+
+   On a desktop that is a couple of frames. In the Android WebView, parsing and running that
+   script takes long enough to be unmistakable, which is what "i seen some ui flashing when i
+   used the apk on my phone" is.
+
+   This runs inline, immediately after <body> opens, so it executes before any of the body's
+   content has been painted. It reads the same key the app saves to and nothing else.
+
+   The skin list is duplicated here on purpose — this has to run before any of the app's own
+   code exists, so it cannot ask SKINS. `the boot skin list matches the app's` in the test
+   suite fails if the two ever drift, which is the only reason duplicating it is acceptable. */
+(function () {
+    var KNOWN = ['dock', 'scancard', 'glass', 'soft', 'cloud'];
+    var RETIRED = { aurora: 'dock', classic: 'dock' };
+    var DEFAULT_SKIN = 'cloud';
+    var skin = DEFAULT_SKIN;
+    try {
+        var raw = localStorage.getItem('xancode_v2_state');
+        if (raw) {
+            var saved = JSON.parse(raw).skin;
+            if (RETIRED[saved]) saved = RETIRED[saved];
+            if (KNOWN.indexOf(saved) !== -1) skin = saved;
+        }
+    } catch (e) { /* private mode, corrupt JSON: the default is a fine answer */ }
+    document.body.setAttribute('data-skin', skin);
+})();
+</script>
 
     <div id="workspace-container" class="w-full h-full flex flex-col relative z-10">
         
@@ -8605,6 +8678,9 @@
         // hand-maintained copies of the same array — every one of which would have silently
         // skipped a new skin rather than failing.
         window.SKINS = SKINS;
+        // Exposed for the same reason as SKINS: the pre-paint boot script at the top of <body>
+        // carries its own copy of the default, and a test has to be able to compare them.
+        window.DEFAULT_STATE_SKIN = DEFAULT_STATE.skin;
 
         // A retired skin still lives in somebody's saved state, and in the settings of anyone
         // who has not opened the app since. Left unmapped they would land on data-skin values

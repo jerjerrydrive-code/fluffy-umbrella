@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Matches theme_color in the web manifest, so the window the system paints before the
-         WebView has drawn anything is the same colour as what appears in it. -->
-    <color name="launch_bg">#0a0a12</color>
+    <!-- The Cloud skin's ground. This is what the system paints before the WebView has drawn
+         anything, so it has to be the colour the app OPENS in, not the theme_color left over
+         from when this was a dark app — #0a0a12 there meant every cold start flashed black and
+         then white. MainActivity overrides this with the colour the page actually was last
+         time, so a dark skin gets a dark launch; this value only has to be right for a first
+         run, which is Cloud. -->
+    <color name="launch_bg">#E9ECF4</color>
 </resources>

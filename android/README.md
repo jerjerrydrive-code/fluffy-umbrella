@@ -63,6 +63,29 @@ directory path and 404s in an APK. It caches each URL in its own `try`/`catch` r
 `cache.addAll`, so the install survives it. With `addAll` the service worker would have failed
 to install on device and passed every local test.
 
+### Google sign-in does not work in the APK, and cannot be made to from here
+
+Google refuses OAuth from an embedded WebView (`disallowed_useragent`). It is a policy block on
+their side, not a bug in this wrapper, and no WebView setting gets around it.
+
+`shouldOverrideUrlLoading` no longer ejects the auth hosts to Chrome — doing that ended the flow
+permanently, because whatever happened over there redirected back into Chrome and this app never
+learned about it. Popups are supported now too. Both make the failure legible rather than making
+it work.
+
+Completing sign-in in an app like this needs a **native** Google token — Credential Manager,
+`GoogleAuthProvider.credential(idToken)`, `signInWithCredential` — which needs two things that
+live in the project owner's console and cannot be committed here:
+
+1. The project's **Web OAuth client ID** (`...apps.googleusercontent.com`). Firebase creates one
+   per project; it is not in the `firebaseConfig` block in `index.html`.
+2. This app's signing certificate **SHA-1**, registered against an Android app in the Firebase
+   project. For the debug keystore that built this APK it is
+   `BF:72:A0:D9:74:45:1B:A5:C8:D7:B1:4D:2C:43:50:31:69:62:9F:58`. A release build has a
+   different one.
+
+Anonymous cloud sync is unaffected — `signInAnonymously` uses no OAuth and works today.
+
 **Not verified: this has never been run on a real device or emulator** — there is no Android
 runtime in the environment it was built in. The camera permission flow, the hardware back
 button, and the edge-to-edge window are written to the documented contracts and are unproven.

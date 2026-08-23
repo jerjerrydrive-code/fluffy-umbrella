@@ -414,8 +414,19 @@ test.describe('Glass skin (Phase 1)', () => {
         expect(before.dockFilter).toContain('blur');
 
         // Change the accent; the glass must re-tint with it.
+        //
+        // Waited for rather than slept through. The palette tokens are registered with
+        // @property as <color> so they interpolate, and the change takes 550ms — a fixed 250ms
+        // wait asserts that the value has moved by a quarter of the way through a transition
+        // that has not necessarily started. On an idle machine it always had; in a full
+        // parallel run it sometimes had not, and this failed about one run in ten. The
+        // assertion is unchanged, only the moment it is made.
         await page.evaluate(() => window.ThemeManager.applyAccent('#E0432F', true));
-        await page.waitForTimeout(250);
+        await page.waitForFunction((prev) => {
+            const d = getComputedStyle(document.getElementById('main-dock')).backgroundColor;
+            const f = getComputedStyle(document.body, '::before').backgroundImage;
+            return d !== prev.dockBg && f !== prev.fieldImage;
+        }, before, { timeout: 5000 });
         const after = await sample();
 
         expect(after.dockBg).not.toBe(before.dockBg);
@@ -917,6 +928,37 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         // the page wider than the screen. Shape is a skin's to change; size is not.
         await page.goto('/index.html');
         await page.waitForTimeout(1200);
+        // Dark, explicitly. Every message below says "as Dark had it", and that was true only
+        // for as long as Dark happened to be what the app opened in. When the default skin
+        // moved to Cloud this silently became a Cloud-to-Scan-Card comparison — and Cloud's
+        // dock is a full-width bar with a different reserve, so the sizes it asserts are equal
+        // legitimately were not. A test should not depend on a default it never names.
+        //
+        // Settled, not slept. A skin change resizes the dock, which the ResizeObserver on
+        // #bottom-stack turns into another layout pass; with two browsers competing for the
+        // machine that chain can still be running after a fixed 700ms, and this then compares
+        // one settled layout against one that is not. Both this and the accent test above
+        // failed about one full run in three for that reason and passed every time alone.
+        const settled = async (skin) => {
+            // The marker is cleared first, and the target skin is part of the condition.
+            // Without both, the second call returned true on its first poll: the marker still
+            // held the previous skin's measurements, the new skin had not applied yet, so "the
+            // reading has not changed" was trivially true and the test raced straight past the
+            // morph it was waiting for. It then read data-skin as the OLD skin and failed —
+            // a wait that made the flake deterministic instead of removing it.
+            await page.evaluate(() => { delete window.__lastLayout; });
+            await page.waitForFunction((want) => {
+                if (document.body.getAttribute('data-skin') !== want) return false;
+                const s = getComputedStyle(document.documentElement);
+                const g = getComputedStyle(document.querySelector('.os-grid'));
+                const now = s.getPropertyValue('--app-size') + '|' + g.padding;
+                if (window.__lastLayout === now) return true;
+                window.__lastLayout = now;
+                return false;
+            }, skin, { timeout: 8000, polling: 120 });
+        };
+        await page.evaluate(() => window.SkinManager.setSkin('dock'));
+        await settled('dock');
 
         // The grid's bottom padding is the measured dock reserve, and a skin legitimately
         // changes the dock's padding and radius — so it lands a pixel apart between skins and
@@ -946,7 +988,7 @@ test.describe('Classic skin (Phase 1) and the dock/pagination stack', () => {
         const shapeBefore = await shape();
 
         await page.evaluate(() => window.SkinManager.setSkin('scancard'));
-        await page.waitForTimeout(700);
+        await settled('scancard');
         expect(await page.evaluate(() => document.body.getAttribute('data-skin'))).toBe('scancard');
 
         // The size a code is drawn at does not move...
@@ -7827,7 +7869,25 @@ test.describe('Polish pass', () => {
 
         for (const skin of ALL_SKINS) {
             await page.evaluate(s => { window.OS_STATE.skin = s; document.body.dataset.skin = s; }, skin);
-            await page.waitForTimeout(400);
+            // Settled, not slept — and this one is not about layout.
+            //
+            // The palette tokens are registered with @property as <color>, so every one of them
+            // INTERPOLATES over 550ms when the skin changes. Sampling at a fixed 400ms reads
+            // colours that are part way between the old skin and the new one, and the contrast
+            // ratio computed from them belongs to neither. On an idle machine the transition is
+            // far enough along not to matter; in a full parallel run this failed roughly one run
+            // in three, reporting ratios like 1.31:1 that no settled skin ever has.
+            await page.evaluate(() => { delete window.__lastInk; });
+            await page.waitForFunction(() => {
+                const p = document.getElementById('settings-panel');
+                if (!p) return true;
+                const cs = getComputedStyle(p);
+                const now = cs.backgroundColor + '|' + cs.color + '|'
+                          + getComputedStyle(document.body).backgroundColor;
+                if (window.__lastInk === now) return true;
+                window.__lastInk = now;
+                return false;
+            }, null, { timeout: 8000, polling: 120 });
 
             const worst = await page.evaluate(() => {
                 const lum = (r, g, b) => {
@@ -9164,6 +9224,57 @@ test.describe('Skin coverage', () => {
         const stale = ALL_SKINS.filter(s => !shipped.includes(s));
         expect(untested, `these skins ship but nothing tests them: ${untested.join(', ')}`).toEqual([]);
         expect(stale, `these skins are tested but no longer ship: ${stale.join(', ')}`).toEqual([]);
+    });
+
+    test('the skin is on the body before the app script runs', async ({ page }) => {
+        // data-skin was stamped by OSSkinManager, constructed at the bottom of a 630KB script.
+        // Everything above it painted with no skin: the dark default, white body text — and
+        // then the attribute landed and the app flipped. <body> carries transition-colors
+        // duration-300, so it was a third of a second of the background wiping from near-black
+        // to near-white on every launch.
+        //
+        // An inline script at the top of <body> sets it before any of the body's content is
+        // parsed. This asserts the attribute is present at DOMContentLoaded — before the app's
+        // own code has constructed anything.
+        await page.addInitScript(() => {
+            window.__skinAtDCL = 'listener never ran';
+            document.addEventListener('DOMContentLoaded', () => {
+                window.__skinAtDCL = document.body.getAttribute('data-skin');
+            }, { once: true });
+        });
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const at = await page.evaluate(() => window.__skinAtDCL);
+        expect(at, 'the body had no skin when the document finished parsing').toBeTruthy();
+        expect(ALL_SKINS, `data-skin was "${at}" at DOMContentLoaded`).toContain(at);
+    });
+
+    test('the boot skin list matches the app\'s', async ({ page }) => {
+        // The inline boot script cannot ask SKINS — it runs before any of the app exists — so
+        // it carries its own copy of the list and of the default. A skin missing from that copy
+        // is not ignored: the boot script would fall back to the default, the app would then
+        // switch to the real one, and the flash this all exists to remove would be back for
+        // exactly the people using the new skin.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const html = await page.content();
+        const boot = /var KNOWN = \[([^\]]*)\]/.exec(html);
+        expect(boot, 'the pre-paint boot script is gone').toBeTruthy();
+        const known = boot[1].split(',').map(s => s.trim().replace(/['"]/g, '')).filter(Boolean);
+        const shipped = await page.evaluate(() => window.SKINS.map(s => s.id));
+        expect(known.slice().sort(), `boot script knows [${known}] but the app ships [${shipped}]`)
+            .toEqual(shipped.slice().sort());
+
+        const def = /var DEFAULT_SKIN = '([a-z]+)'/.exec(html);
+        expect(def, 'the boot script has no default').toBeTruthy();
+        const appDefault = await page.evaluate(() => {
+            localStorage.removeItem('xancode_v2_state');
+            return null;
+        });
+        // The default the boot script paints must be the one the app would choose, or a first
+        // run flashes from one to the other.
+        const stateDefault = await page.evaluate(() => window.DEFAULT_STATE_SKIN || null);
+        if (stateDefault) expect(def[1]).toBe(stateDefault);
     });
 
     test('every skin is reachable from the settings picker', async ({ page }) => {

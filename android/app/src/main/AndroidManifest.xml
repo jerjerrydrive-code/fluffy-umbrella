@@ -7,6 +7,12 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Only up to 28. From API 29 a write into the shared Downloads collection goes through
+         MediaStore and needs no permission at all; asking for one there would be a prompt that
+         buys nothing. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
