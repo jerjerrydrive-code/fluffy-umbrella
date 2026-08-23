@@ -8646,6 +8646,74 @@ test.describe('The wallet', () => {
 // ============================================================================================
 //  The suite and the app agree on what exists
 // ============================================================================================
+test.describe('The one look holds on the screens the sweeps do not settle on', () => {
+    const lum = (c) => {
+        const n = (c.match(/[\d.]+/g) || []).map(Number);
+        const v = /^color\(/.test(c) ? [n[0]*255, n[1]*255, n[2]*255] : [n[0], n[1], n[2]];
+        const f = (x) => { x /= 255; return x <= 0.03928 ? x/12.92 : Math.pow((x+0.055)/1.055, 2.4); };
+        return 0.2126*f(v[0]) + 0.7152*f(v[1]) + 0.0722*f(v[2]);
+    };
+    const ratio = (a, b) => {
+        const l1 = lum(a) + 0.05, l2 = lum(b) + 0.05;
+        return l1 > l2 ? l1/l2 : l2/l1;
+    };
+
+    test('the page under the app is the app\'s own colour, not black', async ({ page }) => {
+        // html/body were background-color: #000 with the real ground painted over the top by
+        // body::before. That was right when the app was dark. It is now a black sheet one paint
+        // away from the surface: anything that stops the pseudo covering — a stacking context
+        // added later, a paint landing a frame late on a slow device, an overscroll past the top
+        // — shows black behind a near-white app, and it is what the browser flashes during a
+        // navigation.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1200);
+        const r = await page.evaluate(() => ({
+            body: getComputedStyle(document.body).backgroundColor,
+            ground: getComputedStyle(document.body, '::before').backgroundColor,
+        }));
+        expect(lum(r.body), `the page under the app is ${r.body}`).toBeGreaterThan(0.5);
+        // ...and close to what is painted on top of it, so a partial paint is not a flash.
+        expect(ratio(r.body, r.ground),
+               `the page (${r.body}) and the ground (${r.ground}) are different colours`)
+            .toBeLessThan(1.4);
+    });
+
+    test('edit mode is readable', async ({ page }) => {
+        // The contrast sweeps run on a settled screen, so nothing looked at edit mode — and the
+        // page-name chip that only appears while rearranging was bg-black/35 with white type: a
+        // dark smudge at 1.28:1 on a near-white app.
+        await page.goto('/index.html');
+        await page.waitForTimeout(1300);
+        const r = await page.evaluate(async () => {
+            window.OS_STATE.isEditMode = true;
+            document.body.classList.add('edit-mode');
+            window.Renderer.render();
+            await new Promise(res => setTimeout(res, 500));
+            const chip = document.getElementById('page-name-chip');
+            const cs = getComputedStyle(chip);
+            const solid = (el) => {
+                let n = el;
+                while (n && n.nodeType === 1) {
+                    const before = getComputedStyle(n, '::before');
+                    if (before.content && before.content !== 'none') {
+                        const c = before.backgroundColor;
+                        if (c && !/rgba\(0, 0, 0, 0\)/.test(c)) return c;
+                    }
+                    const own = getComputedStyle(n).backgroundColor;
+                    if (own && !/rgba\(0, 0, 0, 0\)|transparent/.test(own)) return own;
+                    n = n.parentElement;
+                }
+                return 'rgb(233,236,244)';
+            };
+            return { shown: !chip.classList.contains('hidden'), color: cs.color,
+                     behind: solid(chip.parentElement) };
+        });
+        expect(r.shown, 'the page-name chip never appeared in edit mode').toBe(true);
+        expect(ratio(r.color, r.behind),
+               `the page-name chip is ${r.color} on ${r.behind}`).toBeGreaterThan(3.4);
+    });
+});
+
 test.describe('Skin coverage', () => {
     test('the suite tests every skin the app ships', async ({ page }) => {
         // The list above used to be fourteen separate literals. Adding a skin to the app and

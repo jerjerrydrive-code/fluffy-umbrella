@@ -361,7 +361,19 @@
 
         html, body {
             width: 100%; height: 100%; margin: 0; padding: 0;
-            overscroll-behavior: none; background-color: #000;
+            overscroll-behavior: none;
+            /* The ground, not black.
+               
+               This was #000 with the real ground painted over it by body::before, which was
+               right when the app was dark and is now a black sheet one paint away from the
+               surface. Anything that stops that pseudo-element covering — a stacking context
+               someone adds later, a paint that lands a frame late on a slow device, an
+               overscroll past the top on iOS — shows black behind a near-white app. It is also
+               what the browser flashes during navigation.
+               
+               Kept in step with --cl-ground by hand because this rule runs before any skin
+               block: if the ground colour ever moves, move it here too. */
+            background-color: #e9ecf4;
         }
 
         body {
@@ -2109,6 +2121,18 @@
             box-shadow: var(--cl-press);
         }
         body[data-skin="cloud"] .pagination-dot { background: var(--cl-ink-dim); }
+        /* The page-name chip in edit mode: bg-black/35 with white type, which was a scrim on a
+           dark wallpaper and is a dark smudge with white text at 1.28:1 on this one. It only
+           appears while rearranging, which is why nothing had reported it — the contrast sweeps
+           run on a settled screen. */
+        body[data-skin="cloud"] #page-name-chip {
+            background: var(--cl-ground);
+            backdrop-filter: none; -webkit-backdrop-filter: none;
+            border: none;
+            box-shadow: var(--cl-lift-sm);
+            color: var(--cl-ink);
+        }
+        body[data-skin="cloud"] #page-name-chip:active { box-shadow: var(--cl-press); }
         body[data-skin="cloud"] .pagination-dot.active { background: var(--cl-ink); }
 
         /* A code tile is a pastel card with dark type on it, not a saturated plate with white
